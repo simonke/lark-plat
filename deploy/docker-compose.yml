@@ -1,11 +1,11 @@
-services:
+﻿services:
   postgres:
     image: postgres:16-alpine
     container_name: lark-postgres
     environment:
-      POSTGRES_USER: lark
-      POSTGRES_PASSWORD: lark
-      POSTGRES_DB: lark_plat
+      POSTGRES_USER: ${POSTGRES_USER:-lark}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required (see backend/.env.example)}
+      POSTGRES_DB: ${POSTGRES_DB:-lark_plat}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -36,7 +36,7 @@ services:
     env_file:
       - ../backend/.env
     environment:
-      DATABASE_URL: postgresql+psycopg2://lark:lark@postgres:5432/lark_plat
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-lark}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-lark_plat}
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2
@@ -60,7 +60,7 @@ services:
     env_file:
       - ../backend/.env
     environment:
-      DATABASE_URL: postgresql+psycopg2://lark:lark@postgres:5432/lark_plat
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-lark}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-lark_plat}
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2
@@ -79,7 +79,7 @@ services:
     env_file:
       - ../backend/.env
     environment:
-      DATABASE_URL: postgresql+psycopg2://lark:lark@postgres:5432/lark_plat
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-lark}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-lark_plat}
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2

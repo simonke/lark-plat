@@ -1,4 +1,9 @@
+from typing import Self
+
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+WEAK_SECRET_KEYS = {"change-me-to-a-long-random-string", "change-me-32-bytes-random-key", ""}
 
 
 class Settings(BaseSettings):
@@ -38,6 +43,19 @@ class Settings(BaseSettings):
     # Agent heartbeat/offline
     agent_heartbeat_timeout_sec: int = 90
     agent_heartbeat_interval_sec: int = 30
+
+    @model_validator(mode="after")
+    def _fail_fast_on_weak_secrets(self) -> Self:
+        if self.app_env == "prod":
+            if self.secret_key in WEAK_SECRET_KEYS or len(self.secret_key) < 32:
+                raise ValueError(
+                    "SECRET_KEY must be set via env (>=32 chars, not the default) in prod"
+                )
+            if self.credential_encrypt_key in WEAK_SECRET_KEYS or len(self.credential_encrypt_key) < 16:
+                raise ValueError(
+                    "CREDENTIAL_ENCRYPT_KEY must be set via env (>=16 chars, not the default) in prod"
+                )
+        return self
 
 
 settings = Settings()

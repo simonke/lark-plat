@@ -86,12 +86,13 @@ class AuditMiddleware(BaseHTTPMiddleware):
         if any(path.startswith(p) for p in AUDIT_EXCLUDED_PREFIXES):
             return
         try:
-            if not body:
-                return
-            try:
-                params = json.loads(body)
-            except Exception:
-                params = {"_raw": body.decode("utf-8", errors="replace")[:2000]}
+            if body:
+                try:
+                    params = json.loads(body)
+                except Exception:
+                    params = {"_raw": body.decode("utf-8", errors="replace")[:2000]}
+            else:
+                params = None
 
             db = self.db_factory()
             try:

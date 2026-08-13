@@ -148,12 +148,6 @@ def list_audit_logs(
     return Result.ok(system_service.list_audit_logs(db, module, action, username, ip, start, end, page, size))
 
 
-@router.get("/audit-logs/{log_id}", response_model=Result)
-def audit_log_detail(db: DbDep, user: UserDep, log_id: int):
-    user.require_perm("system:audit:list")
-    return Result.ok(system_service.audit_log_detail(db, log_id))
-
-
 @router.get("/audit-logs/export")
 def export_audit_logs(
     db: DbDep,
@@ -176,3 +170,9 @@ def export_audit_logs(
 
     return Response(content=buf.getvalue(), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": "attachment; filename=audit-logs.csv"})
+
+
+@router.get("/audit-logs/{log_id}", response_model=Result)
+def audit_log_detail(db: DbDep, user: UserDep, log_id: int):
+    user.require_perm("system:audit:list")
+    return Result.ok(system_service.audit_log_detail(db, log_id))

@@ -65,3 +65,8 @@ def task_logs(
     size: Annotated[int, Query(ge=1, le=1000)] = 200,
 ):
     return Result.ok(exec_service.get_logs(db, user, task_id, task_host_id, after_seq, size))
+
+
+@router.get("/tasks/{task_id}/hosts/{task_host_id}/ws-token", response_model=Result)
+def task_ws_token(db: DbDep, user: UserDep, task_id: int, task_host_id: int):
+    return Result.ok(exec_service.ws_token(db, user, task_id, task_host_id))

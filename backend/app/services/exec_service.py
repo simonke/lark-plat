@@ -259,6 +259,22 @@ def get_logs(db: Session, user, task_id: int, task_host_id: int, after_seq: int,
             "next_seq": next_seq}
 
 
+def ws_token(db: Session, user, task_id: int, task_host_id: int) -> dict:
+    user.require_perm("exec:task:log")
+    task = ExecTaskRepository(db).get(task_id)
+    if task is None:
+        raise NotFoundError("task not found")
+    if not user.is_admin and task.created_by != user.id:
+        raise ForbiddenError("no permission to view this task")
+    th_repo = ExecTaskHostRepository(db)
+    th = th_repo.by_id(task_host_id)
+    if th is None or th.exec_task_id != task_id:
+        raise NotFoundError("task host not found")
+    from app.ws.exec_ws import create_ws_token
+
+    return {"token": create_ws_token(task_host_id)}
+
+
 def stop_task(db: Session, user, task_id: int) -> dict:
     user.require_perm("exec:task:stop")
     repo = ExecTaskRepository(db)

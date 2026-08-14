@@ -17,6 +17,13 @@ export interface RoleBrief {
   name: string
 }
 
+export interface UserBrief {
+  id: number
+  username: string
+  real_name: string
+  roles: RoleBrief[]
+}
+
 export interface UserMe {
   id: number
   username: string
@@ -31,7 +38,7 @@ export interface TokenOut {
   access_token: string
   refresh_token: string
   token_type: string
-  user: UserMe
+  user: UserBrief
 }
 
 export interface LoginIn {

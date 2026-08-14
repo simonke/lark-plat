@@ -20,8 +20,9 @@ export const useAuthStore = defineStore('auth', () => {
   async function login(data: LoginIn): Promise<void> {
     const result = await apiLogin(data)
     setTokens(result.access_token, result.refresh_token)
-    user.value = result.user
-    loaded.value = true
+    user.value = null
+    loaded.value = false
+    await fetchMe()
   }
 
   async function fetchMe(): Promise<void> {
@@ -42,8 +43,9 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const result = await refresh(refresh_token)
       setTokens(result.access_token, result.refresh_token)
-      user.value = result.user
-      loaded.value = true
+      user.value = null
+      loaded.value = false
+      await fetchMe()
       return true
     } catch {
       clearTokens()

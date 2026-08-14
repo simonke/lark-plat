@@ -1,17 +1,14 @@
-import http from '../api/http'
+import { request } from './http'
+import type { ChangePasswordIn, LoginIn, TokenOut, UserMe } from './types'
 
-export interface LoginParams {
-  username: string
-  password: string
-}
+export const login = (data: LoginIn): Promise<TokenOut> => request({ url: '/auth/login', method: 'post', data })
 
-export interface LoginResult {
-  access_token: string
-  refresh_token: string
-  expires_in: number
-  user: { id: number; username: string; real_name: string }
-}
+export const refresh = (refresh_token: string): Promise<TokenOut> =>
+  request({ url: '/auth/refresh', method: 'post', data: { refresh_token } })
 
-export const login = (data: LoginParams) => http.post('/auth/login', data)
-export const getMe = () => http.get('/auth/me')
-export const logout = () => http.post('/auth/logout')
+export const logout = (): Promise<null> => request({ url: '/auth/logout', method: 'post' })
+
+export const getMe = (): Promise<UserMe> => request({ url: '/auth/me', method: 'get' })
+
+export const changePassword = (data: ChangePasswordIn): Promise<null> =>
+  request({ url: '/auth/password', method: 'put', data })

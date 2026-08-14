@@ -1,18 +1,51 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import LoginView from '../views/LoginView.vue'
+import type { RouteRecordRaw } from 'vue-router'
+import MainLayout from '../layouts/MainLayout.vue'
+import { hasToken } from '../api/tokens'
+
+const routes: RouteRecordRaw[] = [
+  { path: '/login', name: 'login', component: () => import('../views/LoginView.vue') },
+  {
+    path: '/',
+    component: MainLayout,
+    redirect: '/dashboard',
+    children: [
+      {
+        path: 'dashboard',
+        name: 'dashboard',
+        component: () => import('../views/DashboardView.vue'),
+      },
+      {
+        path: 'system/users',
+        name: 'system-users',
+        component: () => import('../views/users/UsersView.vue'),
+      },
+      {
+        path: 'system/roles',
+        name: 'system-roles',
+        component: () => import('../views/roles/RolesView.vue'),
+      },
+      {
+        path: 'system/audit-logs',
+        name: 'system-audit-logs',
+        component: () => import('../views/audit/AuditLogsView.vue'),
+      },
+    ],
+  },
+  { path: '/:pathMatch(.*)*', redirect: '/' },
+]
 
 const router = createRouter({
   history: createWebHistory(),
-  routes: [
-    { path: '/login', name: 'login', component: LoginView },
-    { path: '/', redirect: '/login' },
-  ],
+  routes,
 })
 
 router.beforeEach((to) => {
-  const token = localStorage.getItem('lark_token')
-  if (!token && to.name !== 'login') {
+  if (!hasToken() && to.name !== 'login') {
     return { name: 'login' }
+  }
+  if (hasToken() && to.name === 'login') {
+    return { path: '/' }
   }
   return true
 })

@@ -85,8 +85,8 @@ def login(db: Session, username: str, password: str) -> dict:
     clear_login_failures(username)
 
     access = create_access_token(user.id)
-    refresh_payload = decode_token(create_refresh_token(user.id))
     refresh = create_refresh_token(user.id)
+    refresh_payload = decode_token(refresh)
     store_refresh(user.id, refresh_payload["jti"])
 
     user.last_login_at = datetime.now(timezone.utc)

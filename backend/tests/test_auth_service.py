@@ -95,6 +95,25 @@ def test_login_user_is_basic_contract_shape(user_repo_fake, empty_role_ids, redi
 # ---------------------------------------------------------------- login guards
 
 
+def test_login_stores_jti_of_returned_refresh_token(user_repo_fake, empty_role_ids, monkeypatch):
+    """Guard: the jti persisted for refresh must match the token returned to the client.
+
+    Regression: login used to decode a throwaway token for its jti but return a
+    freshly minted one (different jti), so every /auth/refresh failed with 401.
+    """
+    monkeypatch.setattr(auth_service, "verify_password", lambda *a, **k: True)
+    user_repo_fake.by_username = lambda u: _user()
+    user_repo_fake.get = lambda i: _user()
+    stored = []
+    monkeypatch.setattr(auth_service, "store_refresh", lambda uid, jti: stored.append(jti))
+    monkeypatch.setattr(auth_service, "clear_login_failures", lambda *a, **k: None)
+
+    result = auth_service.login(_fake_db(commit=True), "alice", "pw")
+
+    returned_jti = auth_service.decode_token(result["refresh_token"], "refresh")["jti"]
+    assert stored == [returned_jti]
+
+
 def test_login_rejects_unknown_user(user_repo_fake, empty_role_ids, redis_ok, tokens_ok):
     user_repo_fake.by_username = lambda u: None
     with pytest.raises(UnauthorizedError):

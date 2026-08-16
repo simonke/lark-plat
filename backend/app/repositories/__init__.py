@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import String, delete, func, select
 from sqlalchemy.orm import Session
 
 from app.db.models import (
@@ -153,10 +153,10 @@ class HostRepository(BaseRepository[Host]):
                             else getattr(Host, key) == filters[key])
         if filters.get("group_id"):
             conds.append(Host.group_id == filters["group_id"])
-        if filters.get("group_ids"):
+        if filters.get("group_ids") is not None:
             conds.append(Host.group_id.in_(filters["group_ids"]))
         if filters.get("tag"):
-            conds.append(Host.tags.cast("text").ilike(f"%{filters['tag']}%"))
+            conds.append(Host.tags.cast(String).ilike(f"%{filters['tag']}%"))
         if conds:
             stmt = stmt.where(*conds)
         total = self.session.scalar(select(func.count()).select_from(stmt.subquery())) or 0

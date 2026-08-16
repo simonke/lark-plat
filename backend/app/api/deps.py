@@ -82,6 +82,7 @@ def get_current_user(
     role_repo = RoleRepository(db)
     permissions = perm_repo.codes_by_user(user_id) if role_ids else []
     visible_groups = role_repo.visible_group_ids(role_ids)
+    request.state.audit_user = user
     return CurrentUser(
         user_id=user.id,
         username=user.username,

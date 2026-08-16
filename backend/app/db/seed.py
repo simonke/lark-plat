@@ -294,6 +294,57 @@ def seed_roles(db: Session) -> int:
     return touched
 
 
+def seed_bootstrap_users(db: Session) -> dict[str, bool]:
+    """Create bootstrap admin/operator/viewer users bound to default roles (idempotent).
+
+    prod: skipped unless SEED_ADMIN_PASSWORD is explicitly set (fail-safe).
+    dev/test: falls back to documented defaults and logs a warning.
+    Returns {username: created_or_bound}.
+    """
+    if settings.seed_admin_password:
+        password = settings.seed_admin_password
+        source = "env"
+    elif settings.app_env != "prod":
+        password = "admin@larkplat"
+        source = "dev-default"
+    else:
+        logger.warning(
+            "seed: SEED_ADMIN_PASSWORD not set in prod - skipping bootstrap users"
+        )
+        return {}
+
+    specs = {
+        "admin": ("系统管理员", 1, "admin"),
+        "operator": ("运维操作员", 0, "operator"),
+        "viewer": ("只读观察员", 0, "viewer"),
+    }
+    result: dict[str, bool] = {}
+    for username, (real_name, is_admin, role_code) in specs.items():
+        user = db.scalar(select(User).where(User.username == username))
+        if user is None:
+            user = User(
+                username=username,
+                password_hash=hash_password(password),
+                real_name=real_name,
+                status=1,
+                is_admin=is_admin,
+            )
+            db.add(user)
+            db.flush()
+            result[username] = True
+            logger.info("seed: bootstrap user '%s' created (password from %s)", username, source)
+        role = db.scalar(select(Role).where(Role.code == role_code))
+        if role is None:
+            logger.warning("seed: role '%s' missing, skipping '%s' role binding", role_code, username)
+        elif not db.scalar(
+            select(UserRole).where(UserRole.user_id == user.id, UserRole.role_id == role.id)
+        ):
+            db.add(UserRole(user_id=user.id, role_id=role.id))
+            result[username] = result.get(username) or True
+            logger.info("seed: bootstrap user '%s' bound to role '%s'", username, role_code)
+    return result
+
+
 def seed_admin_user(db: Session) -> bool:
     """Create bootstrap admin (is_admin=1) guarded by SEED_ADMIN_PASSWORD env.
 
@@ -350,9 +401,10 @@ def seed_admin_user(db: Session) -> bool:
 def run_seed(db: Session) -> dict:
     perms = seed_permissions(db)
     roles = seed_roles(db)
-    admin = seed_admin_user(db)
+    users = seed_bootstrap_users(db)
+    admin = users.get("admin", False)
     db.commit()
-    summary = {"permissions": perms, "roles_bound": roles, "admin_created": admin}
+    summary = {"permissions": perms, "roles_bound": roles, "admin_created": admin, "users": users}
     if any(summary.values()):
         logger.info("seed: applied %s", summary)
     return summary

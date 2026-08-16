@@ -91,7 +91,7 @@ def connectivity(db: DbDep, user: UserDep, host_id: int):
 @router.get("/groups/tree", response_model=Result)
 def group_tree(db: DbDep, user: UserDep):
     user.require_perm("asset:group:list")
-    return Result.ok(asset_service.group_tree(db))
+    return Result.ok(asset_service.group_tree(db, user))
 
 
 @router.post("/groups", response_model=Result)

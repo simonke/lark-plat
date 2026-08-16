@@ -18,8 +18,11 @@ from app.schemas import asset as sch
 # ---------------------------------------------------------------- groups
 
 
-def group_tree(db: Session) -> list[dict]:
+def group_tree(db: Session, user=None) -> list[dict]:
     groups = GroupRepository(db).all_tree()
+    if user is not None and not user.is_admin:
+        visible = set(user.visible_group_ids)
+        groups = [g for g in groups if g.id in visible]
     by_id: dict[int, dict] = {}
     for g in groups:
         by_id[g.id] = {**sch.GroupOut.model_validate(g).model_dump(), "children": []}
@@ -163,11 +166,11 @@ def delete_host(db: Session, user, host_id: int) -> None:
     if not _host_visible(user, host):
         raise ForbiddenError("no data permission for this host")
     from app.db.models import ExecTask, ExecTaskHost, ScheduleTask
-    from sqlalchemy import func, select
+    from sqlalchemy import String, func, select
 
     task_refs = db.scalar(select(func.count()).select_from(ExecTaskHost).where(ExecTaskHost.host_id == host_id)) or 0
     sched_refs = db.scalar(select(func.count()).select_from(ScheduleTask).where(
-        ScheduleTask.target_host_ids.cast("text").like(f"%{host_id}%"))
+        ScheduleTask.target_host_ids.cast(String).like(f"%{host_id}%"))
     ) or 0
     if task_refs or sched_refs:
         raise ConflictError("host referenced by tasks or schedules")

@@ -80,3 +80,16 @@ def test_admin_user_bound_to_admin_role_in_seed_source():
     assert 'code == "admin"' in src
     assert "UserRole" in src
     assert "Role.code" in src
+
+
+def test_seed_bootstraps_operator_and_viewer_users():
+    """Seed gap: stage-1 live A~E needed operator/viewer principals (three-state
+    per module-design §12); the seed must create them bound to default roles."""
+    import inspect as _inspect
+
+    from app.db.seed import seed_bootstrap_users
+
+    src = _inspect.getsource(seed_bootstrap_users)
+    for role_code in ("admin", "operator", "viewer"):
+        assert role_code in src, f"seed_bootstrap_users must cover '{role_code}'"
+    assert "UserRole" in src

@@ -5,6 +5,7 @@ Contract: unified Result envelope, append-only audit, WebSocket gateways.
 
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -20,6 +21,7 @@ from app.core.exceptions import AppError
 from app.core.logging import setup_logging
 from app.core.redis_helper import close_redis, get_redis
 from app.core.response import CODE_BAD_REQUEST, CODE_SERVER_ERROR, Result
+from app.db.seed import run_seed
 from app.db.session import SessionLocal
 
 # Register all ORM models so Alembic autogenerate can see them.
@@ -30,6 +32,14 @@ import app.db.models  # noqa: F401  (import side effects)
 async def lifespan(app: FastAPI):
     setup_logging(settings.log_level)
     app.state.redis = get_redis()
+    db = SessionLocal()
+    try:
+        run_seed(db)
+    except Exception:
+        logger = logging.getLogger(__name__)
+        logger.exception("seed data failed; continuing startup")
+    finally:
+        db.close()
     yield
     close_redis()
 
@@ -41,6 +51,10 @@ app = FastAPI(
     openapi_url="/openapi.json",
     lifespan=lifespan,
 )
+
+# Public operations exempt from bearer auth (api-design v2.1 §1).
+PUBLIC_OPS = {("/api/v1/auth/login", "post"), ("/api/v1/auth/refresh", "post")}
+_HTTP_METHODS = ("get", "post", "put", "delete", "patch")
 
 
 def custom_openapi():
@@ -62,6 +76,12 @@ def custom_openapi():
         "in": "header",
         "name": "X-Agent-Token",
     })
+    for path, item in schema["paths"].items():
+        for method in _HTTP_METHODS:
+            op = item.get(method)
+            if op is None:
+                continue
+            op["security"] = [] if (path, method) in PUBLIC_OPS else [{"bearerAuth": []}]
     app.openapi_schema = schema
     return schema
 

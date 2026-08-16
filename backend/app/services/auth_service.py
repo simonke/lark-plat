@@ -34,6 +34,25 @@ def _role_ids(db: Session, user_id: int) -> list[int]:
     return list(db.scalars(select(UserRole.role_id).where(UserRole.user_id == user_id)).all())
 
 
+def _build_user_brief(db: Session, user: User, role_ids: list[int]) -> dict:
+    """Contract §2: login/refresh return only UserBrief{id,username,real_name,roles}.
+
+    Full profile (permissions/visible_group_ids/is_admin) is served by /auth/me.
+    """
+    role_repo = RoleRepository(db)
+    roles = []
+    for rid in role_ids:
+        role = role_repo.get(rid)
+        if role:
+            roles.append({"id": role.id, "code": role.code, "name": role.name})
+    return {
+        "id": user.id,
+        "username": user.username,
+        "real_name": user.real_name,
+        "roles": roles,
+    }
+
+
 def _build_me(db: Session, user: User, role_ids: list[int]) -> dict:
     role_repo = RoleRepository(db)
     perm_repo = PermissionRepository(db)
@@ -77,7 +96,7 @@ def login(db: Session, username: str, password: str) -> dict:
         "access_token": access,
         "refresh_token": refresh,
         "token_type": "bearer",
-        "user": _build_me(db, user, _role_ids(db, user.id)),
+        "user": _build_user_brief(db, user, _role_ids(db, user.id)),
     }
 
 
@@ -110,7 +129,7 @@ def refresh_tokens(db: Session, refresh_token: str) -> dict:
         "access_token": access,
         "refresh_token": new_refresh,
         "token_type": "bearer",
-        "user": _build_me(db, user, _role_ids(db, user.id)),
+        "user": _build_user_brief(db, user, _role_ids(db, user.id)),
     }
 
 

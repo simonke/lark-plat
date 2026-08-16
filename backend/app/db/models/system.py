@@ -69,6 +69,10 @@ class Permission(Base):
     sort: Mapped[int] = mapped_column(Integer, default=0)
     remark: Mapped[str] = mapped_column(String(256), default="")
 
+    roles: Mapped[list["Role"]] = relationship(
+        secondary="sys_role_permission", back_populates="permissions"
+    )
+
 
 class RolePermission(Base):
     __tablename__ = "sys_role_permission"

@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     agent_heartbeat_timeout_sec: int = 90
     agent_heartbeat_interval_sec: int = 30
 
+    # Bootstrap admin for seed (env-only; prod requires an explicit value)
+    seed_admin_password: str = ""
+
     @model_validator(mode="after")
     def _fail_fast_on_weak_secrets(self) -> Self:
         if self.app_env == "prod":

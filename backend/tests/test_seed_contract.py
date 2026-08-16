@@ -63,3 +63,20 @@ def test_operator_role_is_operational_only():
 def test_viewer_role_is_read_only():
     view = set(DEFAULT_ROLES["viewer"]["permissions"])
     assert all(p.endswith(":list") or p in {"dashboard:view", "exec:task:log", "terminal:view"} for p in view)
+
+
+def test_admin_user_bound_to_admin_role_in_seed_source():
+    """Seed 方案 a: bootstrap admin must be bound to the admin role (UserRole).
+
+    /auth/me therefore returns roles=['admin'] + full permissions (60) per
+    contract §2 full-profile shape; is_admin=1 retained as bypass.
+    """
+    import inspect
+
+    from app.db.seed import seed_admin_user
+
+    src = inspect.getsource(seed_admin_user)
+    assert "Role" in src
+    assert 'code == "admin"' in src
+    assert "UserRole" in src
+    assert "Role.code" in src

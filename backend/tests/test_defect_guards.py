@@ -25,7 +25,7 @@ def test_host_search_applies_empty_group_ids_deny():
     Regression: `if filters.get("group_ids"):` treated [] as "no filter", so an
     unbound viewer saw every host (US-03 violation).
     """
-    src = inspect.getsource(asset_service.HostRepository)
+    src = inspect.getsource(asset_service.HostRepository.search)
     import re
 
     assert re.search(r"group_ids.*is not None", src), (

@@ -119,6 +119,9 @@ class PermissionRepository(BaseRepository[Permission]):
         )
         return list(self.session.scalars(stmt).all())
 
+    def tree(self) -> list[Permission]:
+        return list(self.session.scalars(select(Permission).order_by(Permission.sort, Permission.id)).all())
+
 
 class GroupRepository(BaseRepository[AssetGroup]):
     model = AssetGroup

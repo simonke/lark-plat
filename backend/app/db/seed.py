@@ -299,6 +299,10 @@ def seed_admin_user(db: Session) -> bool:
 
     prod: skipped unless SEED_ADMIN_PASSWORD is explicitly set (fail-safe).
     dev/test: falls back to a documented default and logs a warning.
+
+    Binds admin -> admin role (UserRole) so /auth/me returns roles + full
+    permissions (60) per contract §2; is_admin=1 retained as bypass.
+    Returns True if any row was created/bound.
     """
     username = "admin"
     if settings.seed_admin_password:
@@ -325,11 +329,22 @@ def seed_admin_user(db: Session) -> bool:
         db.add(user)
         db.flush()
         logger.info("seed: bootstrap admin '%s' created (password from %s)", username, source)
-        return True
+        bind = True
+    else:
+        if not user.is_admin:
+            user.is_admin = 1
+        bind = False
 
-    if not user.is_admin:
-        user.is_admin = 1
-    return False
+    admin_role = db.scalar(select(Role).where(Role.code == "admin"))
+    if admin_role is None:
+        logger.warning("seed: admin role missing, skipping admin->admin role binding")
+    elif not db.scalar(
+        select(UserRole).where(UserRole.user_id == user.id, UserRole.role_id == admin_role.id)
+    ):
+        db.add(UserRole(user_id=user.id, role_id=admin_role.id))
+        bind = True
+        logger.info("seed: bootstrap admin '%s' bound to admin role", username)
+    return bind
 
 
 def run_seed(db: Session) -> dict:

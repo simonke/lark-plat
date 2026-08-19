@@ -30,6 +30,26 @@ const routes: RouteRecordRaw[] = [
         name: 'system-audit-logs',
         component: () => import('../views/audit/AuditLogsView.vue'),
       },
+      {
+        path: 'assets/hosts',
+        name: 'assets-hosts',
+        component: () => import('../views/assets/HostsView.vue'),
+      },
+      {
+        path: 'assets/hosts/:id',
+        name: 'assets-host-detail',
+        component: () => import('../views/assets/HostDetailView.vue'),
+      },
+      {
+        path: 'assets/groups',
+        name: 'assets-groups',
+        component: () => import('../views/assets/GroupsView.vue'),
+      },
+      {
+        path: 'assets/credentials',
+        name: 'assets-credentials',
+        component: () => import('../views/assets/CredentialsView.vue'),
+      },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/' },

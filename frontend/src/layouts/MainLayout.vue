@@ -16,6 +16,15 @@
           <el-menu-item index="/system/roles" v-if="auth.hasPerm('system:role:list')">角色与权限</el-menu-item>
           <el-menu-item index="/system/audit-logs" v-if="auth.hasPerm('system:audit:list')">审计日志</el-menu-item>
         </el-sub-menu>
+        <el-sub-menu index="assets">
+          <template #title>
+            <el-icon><Monitor /></el-icon>
+            <span>资产管理</span>
+          </template>
+          <el-menu-item index="/assets/hosts" v-if="auth.hasPerm('asset:host:list')">主机管理</el-menu-item>
+          <el-menu-item index="/assets/groups" v-if="auth.hasPerm('asset:group:list')">分组管理</el-menu-item>
+          <el-menu-item index="/assets/credentials" v-if="auth.hasPerm('asset:cred:list')">凭据管理</el-menu-item>
+        </el-sub-menu>
       </el-menu>
     </el-aside>
     <el-container>
@@ -63,7 +72,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { DataBoard, Setting, ArrowDown } from '@element-plus/icons-vue'
+import { DataBoard, Setting, ArrowDown, Monitor } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 import { changePassword } from '../api/auth'
 import { extractError } from '../api/http'

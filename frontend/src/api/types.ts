@@ -170,3 +170,92 @@ export interface AuditLogQuery {
   page?: number
   size?: number
 }
+
+export interface HostOut {
+  id: number
+  hostname: string
+  ip: string
+  os_type: string
+  os_version: string
+  group_id: number
+  group_name: string
+  env: string
+  tags: string[]
+  connector: string
+  sensitivity_level: string
+  status: string
+  remark: string
+  created_at: string
+  updated_at: string
+}
+
+export interface HostCreate {
+  hostname: string
+  ip: string
+  os_type: string
+  os_version?: string
+  group_id: number
+  env: string
+  tags?: string[]
+  connector?: string
+  sensitivity_level?: string
+  remark?: string
+}
+
+export interface HostUpdate {
+  hostname?: string | null
+  ip?: string | null
+  os_type?: string | null
+  os_version?: string | null
+  group_id?: number | null
+  env?: string | null
+  tags?: string[] | null
+  connector?: string | null
+  sensitivity_level?: string | null
+  remark?: string | null
+}
+
+export interface CredentialOut {
+  id: number
+  host_id: number
+  host_hostname: string
+  type: string
+  username: string
+  secret_mask: string
+  created_at: string
+}
+
+export interface CredentialCreate {
+  host_id: number
+  type: 'password' | 'key'
+  username: string
+  secret?: string
+  key?: string
+  passphrase?: string
+}
+
+export interface CredentialUpdate {
+  username?: string | null
+  secret?: string | null
+  key?: string | null
+  passphrase?: string | null
+}
+
+export interface HostStats {
+  total: number
+  online: number
+  offline: number
+  by_env: Record<string, number>
+}
+
+export interface ConnectionResult {
+  ok: boolean
+  latency_ms: number
+  detail: string
+}
+
+export interface OptionsOut {
+  groups: GroupOut[]
+  hostnames: string[]
+  envs: string[]
+}

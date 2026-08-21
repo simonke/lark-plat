@@ -194,7 +194,13 @@ const rules = {
   hostname: [{ required: true, message: '请输入主机名', trigger: 'blur' }],
   ip: [{ required: true, message: '请输入 IP 地址', trigger: 'blur' }],
   os_type: [{ required: true, message: '请选择操作系统', trigger: 'change' }],
-  group_id: [{ required: true, message: '请选择所属分组', trigger: 'change' }],
+  group_id: [{
+    validator: (_rule: unknown, value: number, callback: (err?: Error) => void) => {
+      if (!Number.isInteger(value) || value < 1) callback(new Error('请选择所属分组'))
+      else callback()
+    },
+    trigger: 'change'
+  }],
   env: [{ required: true, message: '请选择环境', trigger: 'change' }]
 }
 

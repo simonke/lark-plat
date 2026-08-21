@@ -6634,9 +6634,15 @@
       "GroupCreate": {
         "properties": {
           "parent_id": {
-            "type": "integer",
-            "title": "Parent Id",
-            "default": 0
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
           },
           "name": {
             "type": "string",
@@ -6781,8 +6787,10 @@
           "tags": {
             "anyOf": [
               {
-                "additionalProperties": true,
-                "type": "object"
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
               },
               {
                 "type": "null"
@@ -6794,6 +6802,11 @@
             "type": "string",
             "title": "Connector",
             "default": "agent"
+          },
+          "sensitivity_level": {
+            "type": "string",
+            "title": "Sensitivity Level",
+            "default": "normal"
           },
           "remark": {
             "type": "string",
@@ -6820,6 +6833,17 @@
               }
             ],
             "title": "Hostname"
+          },
+          "ip": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ip"
           },
           "os_type": {
             "anyOf": [
@@ -6868,8 +6892,10 @@
           "tags": {
             "anyOf": [
               {
-                "additionalProperties": true,
-                "type": "object"
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
               },
               {
                 "type": "null"
@@ -6887,6 +6913,17 @@
               }
             ],
             "title": "Connector"
+          },
+          "sensitivity_level": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sensitivity Level"
           },
           "remark": {
             "anyOf": [

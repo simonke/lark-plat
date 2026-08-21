@@ -118,7 +118,7 @@ const isCredEdit = ref(false)
 const credEditId = ref(0)
 const credSubmitLoading = ref(false)
 const credFormRef = ref<FormInstance>()
-const credForm = reactive({ username: '', type: 'password', secret: '', key: '', passphrase: '' })
+const credForm = reactive({ username: '', type: 'password' as 'password' | 'key', secret: '', key: '', passphrase: '' })
 
 const credRules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],

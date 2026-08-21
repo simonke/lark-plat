@@ -38,7 +38,7 @@
         </el-form-item>
       </el-form>
 
-      <el-table :data="hosts" v-loading="loading" border stripe height="500" :row-key="(row) => row.id" :max-height="500">
+      <el-table :data="hosts" v-loading="loading" border stripe height="500" :row-key="(row: HostOut) => row.id" :max-height="500">
         <el-table-column prop="hostname" label="主机名" min-width="150" />
         <el-table-column prop="ip" label="IP 地址" min-width="130" />
         <el-table-column prop="os_type" label="操作系统" width="100" />

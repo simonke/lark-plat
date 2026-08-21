@@ -143,6 +143,20 @@ export interface GroupOut {
   children: GroupOut[]
 }
 
+export interface GroupCreate {
+  parent_id?: number | null
+  name: string
+  sort?: number
+  remark?: string
+}
+
+export interface GroupUpdate {
+  name?: string | null
+  parent_id?: number | null
+  sort?: number | null
+  remark?: string | null
+}
+
 export interface AuditLogOut {
   id: number
   user_id: number | null

@@ -100,10 +100,20 @@ def list_hosts(db: Session, user, hostname: str | None, ip: str | None, os_type:
         filters["group_id"] = group_id
     filters = _visible_group_filter(user, filters)
     rows, total = HostRepository(db).search(filters, page, size)
+    groups = {g.id: g.name for g in GroupRepository(db).all_tree()}
     return {
-        "list": [sch.HostOut.model_validate(h).model_dump() for h in rows],
+        "list": [_host_out(h, groups) for h in rows],
         "total": total, "page": page, "size": size,
     }
+
+
+def _host_out(host: Host, groups: dict[int, str] | None = None) -> dict:
+    data = sch.HostOut.model_validate(host).model_dump()
+    name = (groups or {}).get(host.group_id)
+    if name is None and getattr(host, "group", None) is not None:
+        name = host.group.name
+    data["group_name"] = name or ""
+    return data
 
 
 def _host_visible(user, host: Host) -> bool:
@@ -119,7 +129,8 @@ def get_host(db: Session, user, host_id: int) -> dict:
         raise NotFoundError("host not found")
     if not _host_visible(user, host):
         raise ForbiddenError("no data permission for this host")
-    data = sch.HostOut.model_validate(host).model_dump()
+    groups = {g.id: g.name for g in GroupRepository(db).all_tree()}
+    data = _host_out(host, groups)
     cred = CredentialRepository(db).by_host(host_id)
     data["credential"] = None
     if cred:
@@ -151,7 +162,13 @@ def update_host(db: Session, user, host_id: int, data: sch.HostUpdate) -> None:
         raise NotFoundError("host not found")
     if not _host_visible(user, host):
         raise ForbiddenError("no data permission for this host")
-    for f in ("hostname", "os_type", "os_version", "group_id", "env", "tags", "connector", "remark"):
+    if data.ip is not None and data.ip != host.ip:
+        existing = repo.by_ip(data.ip)
+        if existing is not None and existing.id != host_id:
+            raise ConflictError("ip already exists")
+        host.ip = data.ip
+    for f in ("hostname", "os_type", "os_version", "group_id", "env", "tags", "connector",
+              "sensitivity_level", "remark"):
         v = getattr(data, f)
         if v is not None:
             setattr(host, f, v)
@@ -205,8 +222,9 @@ def import_hosts(db: Session, user, csv_bytes: bytes) -> dict:
             os_version=row.get("os_version") or "",
             group_id=group_id,
             env=row.get("env") or "prod",
-            tags={"label": row.get("tags")} if row.get("tags") else None,
+            tags=sch._normalize_tags(row.get("tags")),
             connector=row.get("connector") or "agent",
+            sensitivity_level=(row.get("sensitivity_level") or "").strip() or "normal",
             remark=row.get("remark") or "",
             created_by=user.id,
         )
@@ -221,10 +239,13 @@ def export_hosts(db: Session, user) -> str:
     rows, _ = HostRepository(db).search(filters, 1, 100000)
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["hostname", "ip", "os_type", "os_version", "env", "group", "status", "connector", "remark"])
+    writer.writerow(["hostname", "ip", "os_type", "os_version", "env", "group", "tags",
+                     "sensitivity_level", "status", "connector", "remark"])
     groups = {g.id: g.name for g in GroupRepository(db).all_tree()}
     for h in rows:
+        tags = ";".join(sch._normalize_tags(h.tags))
         writer.writerow([h.hostname, h.ip, h.os_type, h.os_version, h.env, groups.get(h.group_id, ""),
+                         tags, getattr(h, "sensitivity_level", "") or "normal",
                          h.status, h.connector, h.remark])
     return buf.getvalue()
 
@@ -279,9 +300,11 @@ def list_credentials(db: Session, user) -> list[dict]:
             "id": c.id, "host_id": c.host_id,
             "hostname": host.hostname if host else "",
             "ip": host.ip if host else "",
+            "host_hostname": host.hostname if host else "",
             "type": c.type, "username": c.username,
             "secret_mask": mask_secret(c.secret_enc),
             "key_version": c.key_version,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
             "updated_at": c.updated_at.isoformat() if c.updated_at else None,
         })
     return out
@@ -348,13 +371,11 @@ def delete_credential(db: Session, user, cred_id: int) -> None:
 
 
 def options(db: Session, user) -> dict:
-    groups = group_tree(db)
+    groups = group_tree(db, user)
     filters = _visible_group_filter(user, {})
     rows, _ = HostRepository(db).search(filters, 1, 100000)
     return {
         "groups": groups,
-        "hosts": [{"id": h.id, "hostname": h.hostname, "ip": h.ip, "group_id": h.group_id} for h in rows],
+        "hostnames": [h.hostname for h in rows],
         "envs": ["dev", "test", "prod"],
-        "os_types": ["linux", "windows"],
-        "connectors": ["agent", "ssh"],
     }

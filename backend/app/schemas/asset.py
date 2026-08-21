@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class GroupCreate(BaseModel):
-    parent_id: int = 0
+    parent_id: int | None = None
     name: str = Field(min_length=1, max_length=64)
     sort: int = 0
     remark: str = ""
@@ -38,20 +39,42 @@ class HostCreate(BaseModel):
     os_version: str = ""
     group_id: int | None = None
     env: str = "prod"
-    tags: dict | None = None
+    tags: list[str] | None = None
     connector: str = "agent"
+    sensitivity_level: str = "normal"
     remark: str = ""
 
 
 class HostUpdate(BaseModel):
     hostname: str | None = None
+    ip: str | None = None
     os_type: str | None = None
     os_version: str | None = None
     group_id: int | None = None
     env: str | None = None
-    tags: dict | None = None
+    tags: list[str] | None = None
     connector: str | None = None
+    sensitivity_level: str | None = None
     remark: str | None = None
+
+
+def _normalize_tags(value: Any) -> list[str]:
+    """Accept legacy shapes (None / "a,b" / {"label": "a;b"} / list) as list[str]."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [t.strip() for t in value.replace(";", ",").split(",") if t.strip()]
+    if isinstance(value, dict):
+        merged: list[str] = []
+        for v in value.values():
+            merged.extend(_normalize_tags(v))
+        return merged
+    if isinstance(value, (list, tuple, set)):
+        out: list[str] = []
+        for v in value:
+            out.extend(_normalize_tags(v))
+        return out
+    return [_normalize_tags(value)[0]] if _normalize_tags(value) else []
 
 
 class HostOut(BaseModel):
@@ -62,8 +85,10 @@ class HostOut(BaseModel):
     os_type: str
     os_version: str
     group_id: int | None
+    group_name: str = ""
     env: str
-    tags: dict | None
+    tags: list[str] = []
+    sensitivity_level: str = "normal"
     status: str
     connector: str
     agent_id: str | None
@@ -71,6 +96,12 @@ class HostOut(BaseModel):
     last_heartbeat_at: datetime | None
     remark: str
     created_at: datetime
+    updated_at: datetime
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _tags_as_list(cls, v: Any) -> list[str]:
+        return _normalize_tags(v)
 
 
 class ConnResult(BaseModel):
@@ -99,11 +130,15 @@ class CredentialUpdate(BaseModel):
 class CredentialOut(BaseModel):
     id: int
     host_id: int
+    hostname: str = ""
+    ip: str = ""
+    host_hostname: str = ""
     type: str
     username: str
     secret_mask: str | None
     key_version: int
-    updated_at: datetime
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class HostStats(BaseModel):

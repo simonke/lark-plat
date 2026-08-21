@@ -35,7 +35,8 @@ class Host(Base, TimestampMixin):
     os_version: Mapped[str] = mapped_column(String(128), default="")
     group_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("asset_group.id"), index=True)
     env: Mapped[str] = mapped_column(String(16), default="prod")  # dev/test/prod
-    tags: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    tags: Mapped[dict | list | None] = mapped_column(JSONB, nullable=True)
+    sensitivity_level: Mapped[str] = mapped_column(String(16), default="normal")  # normal/sensitive
     status: Mapped[str] = mapped_column(String(16), default="offline")  # online/offline
     connector: Mapped[str] = mapped_column(String(16), default="agent")  # agent/ssh
     agent_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)

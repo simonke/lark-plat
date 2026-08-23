@@ -84,6 +84,8 @@ async def agent_ws(
         return
     await websocket.accept()
     _agents[agent_id] = {"ws": websocket, "last_heartbeat": datetime.now(timezone.utc)}
+    # greeting hello_ack (frame 1 of 2): proves link+auth before client speaks;
+    # a second hello_ack answers the client's hello frame below (see tools/README.md).
     await websocket.send_text(json.dumps({"type": "hello_ack", "data": {"server_time": datetime.now(timezone.utc).isoformat()}}))
     try:
         await _handle_frames(websocket, agent_id)
@@ -105,6 +107,7 @@ async def _handle_frames(websocket, agent_id: str) -> None:
             if mtype == "hello":
                 _bind_host(agent_id, data)
                 _mark_online(agent_id, data)
+                # response hello_ack (frame 2 of 2): confirms hello/binding processed
                 await websocket.send_text(json.dumps({"type": "hello_ack", "data": {"server_time": datetime.now(timezone.utc).isoformat()}}))
             elif mtype == "heartbeat":
                 _agents[agent_id]["last_heartbeat"] = datetime.now(timezone.utc)

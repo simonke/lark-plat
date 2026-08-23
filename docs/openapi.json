@@ -6805,6 +6805,10 @@
           },
           "sensitivity_level": {
             "type": "string",
+            "enum": [
+              "normal",
+              "sensitive"
+            ],
             "title": "Sensitivity Level",
             "default": "normal"
           },
@@ -6917,7 +6921,11 @@
           "sensitivity_level": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "enum": [
+                  "normal",
+                  "sensitive"
+                ]
               },
               {
                 "type": "null"

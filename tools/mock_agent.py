@@ -60,7 +60,7 @@ class MockAgent:
         if self.args.verbose or msg.startswith("[MOCK]"):
             print(msg, flush=True)
 
-    async def connect(self) -> "websockets.ClientConnection":
+    async def connect(self) -> websockets.ClientConnection:
         uri = f"{self.args.server}{WS_PATH}?agent_id={self.args.agent_id}&token={{token}}"
         candidates: list[tuple[str, str]] = []
         if self.args.token:
@@ -116,7 +116,8 @@ class MockAgent:
         async for raw in ws:
             try:
                 frame = json.loads(raw)
-            except Exception:  # noqa: BLE001
+            except json.JSONDecodeError as exc:
+                print(f"[MOCK] bad frame skipped: {exc}", flush=True)
                 continue
             mtype = frame.get("type")
             if mtype in ("hello_ack", "heartbeat_ack"):
@@ -148,14 +149,17 @@ class MockAgent:
                 print("[MOCK] FAIL: first server frame is not hello_ack")
                 return 2
             await self.send(ws, {"type": "hello", "data": {
+                "hostname": self.args.hostname, "ip": self.args.ip,
                 "os_type": "linux", "os_version": "mock", "agent_version": "mock-1.0"}})
 
             recv_task = asyncio.create_task(self.receiver(ws))
-            acks = 0
             beat = {"os_type": "linux", "os_version": "mock", "agent_version": "mock-1.0"}
-            for i in range(1, self.args.count + 1):
+            i = 0
+            while self.args.count <= 0 or i < self.args.count:
+                i += 1
                 await self.send(ws, {"type": "heartbeat", "data": dict(beat)})
-                self.log(f"[MOCK] heartbeat #{i}/{self.args.count} sent (interval={self.args.interval}s)")
+                label = f"#{i}" if self.args.count > 0 else f"#{i} (infinite)"
+                self.log(f"[MOCK] heartbeat {label}/{self.args.count or 'inf'} sent (interval={self.args.interval}s)")
                 deadline = asyncio.get_event_loop().time() + self.args.interval
                 while asyncio.get_event_loop().time() < deadline:
                     if recv_task.done():
@@ -179,6 +183,10 @@ def main() -> int:
     p = argparse.ArgumentParser(description="lark-plat MockAgent fixture")
     p.add_argument("--server", default=os.environ.get("MOCK_AGENT_SERVER", DEFAULT_SERVER))
     p.add_argument("--agent-id", default="mock-agent-1")
+    p.add_argument("--hostname", default="mock-agent-host",
+                   help="hostname reported in hello frame (§12) used for auto-binding")
+    p.add_argument("--ip", default="10.254.0.99",
+                   help="ip reported in hello frame (§12) used for auto-binding")
     p.add_argument("--token", default="", help="explicit token; default auto-derive/bootstrap from SECRET_KEY")
     p.add_argument("--env", default=str(here / "backend" / ".env"))
     p.add_argument("--interval", type=int, default=10, help="heartbeat interval seconds (must be <=30)")

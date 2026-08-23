@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+SensitivityLevel = Literal["normal", "sensitive"]
 
 
 class GroupCreate(BaseModel):
@@ -41,7 +43,7 @@ class HostCreate(BaseModel):
     env: str = "prod"
     tags: list[str] | None = None
     connector: str = "agent"
-    sensitivity_level: str = "normal"
+    sensitivity_level: SensitivityLevel = "normal"
     remark: str = ""
 
 
@@ -54,7 +56,7 @@ class HostUpdate(BaseModel):
     env: str | None = None
     tags: list[str] | None = None
     connector: str | None = None
-    sensitivity_level: str | None = None
+    sensitivity_level: SensitivityLevel | None = None
     remark: str | None = None
 
 

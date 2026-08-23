@@ -216,6 +216,10 @@ def import_hosts(db: Session, user, csv_bytes: bytes) -> dict:
             group = db.query(AssetGroup).filter(AssetGroup.name == gname).first()
             if group:
                 group_id = group.id
+        sensitivity = (row.get("sensitivity_level") or "").strip() or "normal"
+        if sensitivity not in ("normal", "sensitive"):
+            failed.append({"row": idx, "error": "invalid sensitivity_level, must be normal or sensitive"})
+            continue
         host = Host(
             hostname=hostname, ip=ip,
             os_type=row.get("os_type") or "linux",
@@ -224,7 +228,7 @@ def import_hosts(db: Session, user, csv_bytes: bytes) -> dict:
             env=row.get("env") or "prod",
             tags=sch._normalize_tags(row.get("tags")),
             connector=row.get("connector") or "agent",
-            sensitivity_level=(row.get("sensitivity_level") or "").strip() or "normal",
+            sensitivity_level=sensitivity,
             remark=row.get("remark") or "",
             created_by=user.id,
         )

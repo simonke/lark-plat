@@ -3,6 +3,8 @@
 Protocol (api-design §12): hello/heartbeat/exec/stop/exec_log/exec_result/ping/pong.
 Security: X-Agent-Token header, agent_id/token ownership check (reviewer red line),
 90s no-heartbeat => offline.
+Binding (stage2 plan A): hello frame hostname/ip matches a pre-registered unbound
+host -> write back agent_id (contract §12 L229 payload carries hostname/ip).
 """
 
 from __future__ import annotations
@@ -84,6 +86,14 @@ async def agent_ws(
     _agents[agent_id] = {"ws": websocket, "last_heartbeat": datetime.now(timezone.utc)}
     await websocket.send_text(json.dumps({"type": "hello_ack", "data": {"server_time": datetime.now(timezone.utc).isoformat()}}))
     try:
+        await _handle_frames(websocket, agent_id)
+    finally:
+        _agents.pop(agent_id, None)
+        _mark_offline(agent_id)
+
+
+async def _handle_frames(websocket, agent_id: str) -> None:
+    try:
         while True:
             raw = await websocket.receive_text()
             try:
@@ -92,7 +102,11 @@ async def agent_ws(
                 continue
             mtype = frame.get("type")
             data = frame.get("data") or {}
-            if mtype == "heartbeat":
+            if mtype == "hello":
+                _bind_host(agent_id, data)
+                _mark_online(agent_id, data)
+                await websocket.send_text(json.dumps({"type": "hello_ack", "data": {"server_time": datetime.now(timezone.utc).isoformat()}}))
+            elif mtype == "heartbeat":
                 _agents[agent_id]["last_heartbeat"] = datetime.now(timezone.utc)
                 _mark_online(agent_id, data)
                 await websocket.send_text(json.dumps({"type": "heartbeat_ack", "data": {"now": datetime.now(timezone.utc).isoformat()}}))
@@ -106,9 +120,38 @@ async def agent_ws(
         pass
     except Exception:
         pass
+
+
+def _bind_host(agent_id: str, data: dict) -> None:
+    """Plan A: bind a pre-registered host by hello hostname/ip and write back agent_id.
+
+    Only unbound hosts are eligible (first-bind-wins); the agent_id must not already
+    be bound elsewhere; ambiguous (0 or >1) matches are refused. No host creation.
+    """
+    hostname = (data.get("hostname") or "").strip()
+    ip = (data.get("ip") or "").strip()
+    if not hostname and not ip:
+        return
+    db = SessionLocal()
+    try:
+        repo = HostRepository(db)
+        hosts = repo.list_all()
+        if any(h.agent_id == agent_id for h in hosts):
+            return
+        candidates = [
+            h for h in hosts
+            if h.agent_id is None
+            and ((ip and h.ip == ip) or (hostname and h.hostname == hostname))
+        ]
+        if len(candidates) != 1:
+            logger.warning("agent %s auto-bind skipped: %d candidate host(s)", agent_id, len(candidates))
+            return
+        host = candidates[0]
+        host.agent_id = agent_id
+        db.commit()
+        logger.info("agent %s auto-bound to host %s (%s/%s)", agent_id, host.id, host.hostname, host.ip)
     finally:
-        _agents.pop(agent_id, None)
-        _mark_offline(agent_id)
+        db.close()
 
 
 def _mark_online(agent_id: str, data: dict) -> None:

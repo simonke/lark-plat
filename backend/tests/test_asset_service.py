@@ -301,6 +301,55 @@ def test_import_reports_missing_required_fields(monkeypatch):
     assert result["failed"][0]["error"] == "ip and hostname required"
 
 
+# ---------------------------------------------------------------- sensitivity_level enum (W2 P2)
+
+
+def test_host_create_rejects_invalid_sensitivity_level():
+    from pydantic import ValidationError
+
+    from app.schemas.asset import HostCreate
+
+    with pytest.raises(ValidationError):
+        HostCreate(hostname="h", ip="10.0.0.9", sensitivity_level="invalid")
+    assert HostCreate(hostname="h", ip="10.0.0.9").sensitivity_level == "normal"
+    assert HostCreate(hostname="h", ip="10.0.0.9",
+                      sensitivity_level="sensitive").sensitivity_level == "sensitive"
+
+
+def test_host_update_rejects_invalid_sensitivity_level():
+    from pydantic import ValidationError
+
+    from app.schemas.asset import HostUpdate
+
+    with pytest.raises(ValidationError):
+        HostUpdate(sensitivity_level="y")
+    assert HostUpdate(sensitivity_level="normal").sensitivity_level == "normal"
+
+
+def test_import_rejects_invalid_sensitivity_level(monkeypatch):
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["hostname", "ip", "sensitivity_level"])
+    writer.writerow(["ok-01", "10.0.0.51", "sensitive"])
+    writer.writerow(["bad-01", "10.0.0.52", "y"])
+    writer.writerow(["blank-01", "10.0.0.53", ""])
+    added = []
+    repo = FakeHostRepo()
+    monkeypatch.setattr(asset_service, "HostRepository", lambda db: repo)
+    real_add = repo.add
+
+    def spy_add(obj):
+        added.append(obj)
+        return real_add(obj)
+
+    repo.add = spy_add
+    result = asset_service.import_hosts(FakeDb(), make_user(), buf.getvalue().encode("utf-8"))
+    assert result["success"] == 2
+    assert added[0].sensitivity_level == "sensitive"
+    assert added[1].sensitivity_level == "normal"
+    assert result["failed"] == [{"row": 3, "error": "invalid sensitivity_level, must be normal or sensitive"}]
+
+
 # ---------------------------------------------------------------- credentials
 
 

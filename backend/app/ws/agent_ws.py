@@ -9,6 +9,7 @@ host -> write back agent_id (contract §12 L229 payload carries hostname/ip).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -17,7 +18,13 @@ from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
 from app.core.config import settings
 from app.db.session import SessionLocal
-from app.repositories import ExecLogRepository, ExecTaskHostRepository, HostRepository
+from app.repositories import (
+    ExecLogRepository,
+    ExecTaskHostRepository,
+    ExecTaskRepository,
+    HostRepository,
+)
+from app.ws.exec_ws import broadcast
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -25,6 +32,7 @@ router = APIRouter()
 # agent_id -> websocket + last heartbeat ts
 _agents: dict[str, dict] = {}
 _HEARTBEAT_TIMEOUT = settings.agent_heartbeat_timeout_sec
+_APP_LOOP: asyncio.AbstractEventLoop | None = None
 
 
 async def dispatch_to_agent(agent_id: str, frame: dict) -> bool:
@@ -39,12 +47,43 @@ async def dispatch_to_agent(agent_id: str, frame: dict) -> bool:
         return False
 
 
+def dispatch_to_agent_sync(agent_id: str, frame: dict) -> bool:
+    """Thread-safe agent dispatch from sync contexts (worker threads / celery).
+
+    Real frame delivery requires the agent gateway loop in this process; when no
+    loop is alive we return False so callers fall back to the mock/degraded path.
+    """
+    conn = _agents.get(agent_id)
+    if conn is None:
+        return False
+    loop = conn.get("loop") or _APP_LOOP
+    if loop is None or loop.is_closed():
+        return False
+    try:
+        fut = asyncio.run_coroutine_threadsafe(dispatch_to_agent(agent_id, frame), loop)
+        fut.add_done_callback(lambda f: None)
+        return True
+    except Exception:
+        return False
+
+
 def agent_online(agent_id: str) -> bool:
     conn = _agents.get(agent_id)
     if conn is None:
         return False
     age = (datetime.now(timezone.utc) - conn["last_heartbeat"]).total_seconds()
     return age <= _HEARTBEAT_TIMEOUT
+
+
+def task_has_inprocess_agent(db, task_id: int) -> bool:
+    """True when any target host of the task is bound to a live agent in THIS
+    process. The exec frames must then be dispatched in-process so they reach the
+    connected agent gateway (celery runs in a separate process)."""
+    for th in ExecTaskHostRepository(db).by_task(task_id):
+        host = HostRepository(db).get(th.host_id) if th.host_id else None
+        if host and host.agent_id and agent_online(host.agent_id):
+            return True
+    return False
 
 
 def _agent_authenticated(agent_id: str, token: str) -> bool:
@@ -83,7 +122,9 @@ async def agent_ws(
         await websocket.close(code=4401)
         return
     await websocket.accept()
-    _agents[agent_id] = {"ws": websocket, "last_heartbeat": datetime.now(timezone.utc)}
+    global _APP_LOOP
+    _APP_LOOP = asyncio.get_running_loop()
+    _agents[agent_id] = {"ws": websocket, "last_heartbeat": datetime.now(timezone.utc), "loop": _APP_LOOP}
     # greeting hello_ack (frame 1 of 2): proves link+auth before client speaks;
     # a second hello_ack answers the client's hello frame below (see tools/README.md).
     await websocket.send_text(json.dumps({"type": "hello_ack", "data": {"server_time": datetime.now(timezone.utc).isoformat()}}))
@@ -114,9 +155,9 @@ async def _handle_frames(websocket, agent_id: str) -> None:
                 _mark_online(agent_id, data)
                 await websocket.send_text(json.dumps({"type": "heartbeat_ack", "data": {"now": datetime.now(timezone.utc).isoformat()}}))
             elif mtype == "exec_log":
-                _persist_logs(data)
+                await _persist_logs(data)
             elif mtype == "exec_result":
-                _persist_result(data)
+                await _persist_result(data)
             elif mtype == "pong":
                 pass
     except WebSocketDisconnect:
@@ -189,20 +230,28 @@ def _mark_offline(agent_id: str) -> None:
         db.close()
 
 
-def _persist_logs(data: dict) -> None:
+async def _persist_logs(data: dict) -> None:
     items = data.get("items") or [data]
     db = SessionLocal()
     try:
         repo = ExecLogRepository(db)
         for it in items:
-            repo.append(int(it["task_host_id"]), int(it.get("seq", 0)),
-                        it.get("level", "info"), str(it.get("content", "")))
+            task_host_id = int(it["task_host_id"])
+            seq = int(it.get("seq", 0))
+            level = it.get("level", "info")
+            content = str(it.get("content", ""))
+            repo.append(task_host_id, seq, level, content)
+            await broadcast(task_host_id, {
+                "type": "log",
+                "data": {"seq": seq, "level": level, "content": content,
+                         "created_at": datetime.now(timezone.utc).isoformat()},
+            })
         db.commit()
     finally:
         db.close()
 
 
-def _persist_result(data: dict) -> None:
+async def _persist_result(data: dict) -> None:
     db = SessionLocal()
     try:
         th_repo = ExecTaskHostRepository(db)
@@ -210,11 +259,53 @@ def _persist_result(data: dict) -> None:
         if th is None:
             return
         status = data.get("status", "success")
-        th_repo.update_status(
-            th.id, status,
-            exit_code=data.get("exit_code"),
-            finished_at=datetime.now(timezone.utc),
-        )
+        if status == "stopped":
+            status = "canceled"
+        if status not in ("success", "failed", "timed_out", "canceled"):
+            status = "failed"
+        exit_code = data.get("exit_code")
+        finished_at = datetime.now(timezone.utc)
+        th_repo.update_status(th.id, status, exit_code=exit_code, finished_at=finished_at)
         db.commit()
+        await broadcast(th.id, {"type": "status", "data": {"status": status, "exit_code": exit_code}})
+        await broadcast(th.id, {"type": "result", "data": {
+            "task_host_id": th.id, "host_id": th.host_id, "hostname": th.hostname,
+            "status": status, "exit_code": exit_code, "finished_at": finished_at.isoformat(),
+        }})
+        _maybe_finalize_task(db, th.exec_task_id)
     finally:
         db.close()
+
+
+def _maybe_finalize_task(db, exec_task_id: int) -> None:
+    """End-of-run aggregation: when every host reached a terminal state, flip the
+    task to the aggregate status (otherwise leave it running for the agent loop)."""
+    task = ExecTaskRepository(db).get(exec_task_id)
+    if task is None or task.status not in ("running", "pending"):
+        return
+    th_repo = ExecTaskHostRepository(db)
+    stats = th_repo.stats(exec_task_id)
+    if not stats:
+        return
+    active = stats.get("running", 0) + stats.get("pending", 0)
+    if active > 0:
+        return
+    success = stats.get("success", 0)
+    failed = stats.get("failed", 0)
+    timed = stats.get("timed_out", 0)
+    total = sum(stats.values())
+    if failed == 0 and timed == 0 and total > 0 and success == total:
+        new_status = "success"
+    elif failed == 0 and timed == 0 and success > 0:
+        new_status = "partial"
+    else:
+        new_status = "failed"
+    if task.status not in (new_status, "canceled", "timed_out"):
+        if not ExecTaskRepository(db).optimistic_update(
+            exec_task_id, task.status, new_status, task.version
+        ):
+            return
+        task.status = new_status
+        task.version += 1
+        task.finished_at = datetime.now(timezone.utc)
+        db.commit()

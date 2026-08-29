@@ -23,6 +23,7 @@ router = APIRouter()
 # task_host_id -> list of connected websockets
 _clients: dict[int, list[WebSocket]] = {}
 _lock = asyncio.Lock()
+_app_loop: asyncio.AbstractEventLoop | None = None
 
 
 def create_ws_token(task_host_id: int) -> str:
@@ -38,6 +39,19 @@ async def broadcast(task_host_id: int, message: dict) -> None:
             await ws.send_text(json.dumps(message))
         except Exception:
             pass
+
+
+def broadcast_sync(task_host_id: int, message: dict) -> None:
+    """Thread-safe broadcast from sync contexts (celery/worker threads). The frame
+    is scheduled onto the process event loop; without one this is a no-op."""
+    loop = _app_loop
+    if loop is None or loop.is_closed():
+        return
+    try:
+        fut = asyncio.run_coroutine_threadsafe(broadcast(task_host_id, message), loop)
+        fut.add_done_callback(lambda f: None)
+    except Exception:
+        pass
 
 
 def _verify_ws_token(token: str, task_host_id: int) -> bool:
@@ -69,6 +83,8 @@ async def ws_exec(websocket: WebSocket, task_host_id: int, token: str):
         db.close()
 
     await websocket.accept()
+    global _app_loop
+    _app_loop = asyncio.get_running_loop()
     async with _lock:
         _clients.setdefault(task_host_id, []).append(websocket)
     try:

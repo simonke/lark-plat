@@ -4,6 +4,7 @@ concurrency guard, WS log cursor, stop/retry. Celery dispatch in app/tasks."""
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -25,6 +26,9 @@ from app.repositories import (
 )
 from app import schemas
 from app.tasks.exec_tasks import exec_dispatch
+from app.ws.agent_ws import dispatch_to_agent_sync, task_has_inprocess_agent
+
+logger = logging.getLogger(__name__)
 
 
 def _task_no(db: Session) -> str:
@@ -164,12 +168,27 @@ def create_task(db: Session, user, data: schemas.ExecTaskCreate) -> dict:
     task.started_at = datetime.now(timezone.utc)
     db.commit()
 
-    try:
-        exec_dispatch.delay(task.id)
-    except Exception:
-        pass  # degraded: execution proceeds in-process fallback below
+    _kick_off_exec(db, task.id)
     return {"id": task.id, "task_no": task.task_no, "status": "running",
             "approve_required": False, "approval_id": None, "sensitive_flag": False}
+
+
+def _kick_off_exec(db: Session, task_id: int) -> None:
+    """Dispatch an exec task.
+
+    Targets with a live agent in THIS process require in-process dispatch so the
+    S->C exec frame reaches the connected agent gateway (celery worker is a
+    separate process with an empty agent registry). Otherwise fall back to the
+    celery worker (mock/degraded loop), and to an in-process run when the broker
+    is unavailable (existing degraded-mode intent).
+    """
+    if task_has_inprocess_agent(db, task_id):
+        exec_dispatch(task_id)
+        return
+    try:
+        exec_dispatch.delay(task_id)
+    except Exception:
+        exec_dispatch(task_id)
 
 
 def _approval_no(db: Session) -> str:
@@ -184,7 +203,9 @@ def list_tasks(db: Session, user, task_no: str | None, name: str | None, status:
                kind: str | None, start, end, page: int, size: int) -> dict:
     user.require_perm("exec:task:list")
     filters = {"task_no": task_no, "name": name, "status": status, "kind": kind,
-               "start": start, "end": end, "created_by": user.id if user.is_admin else user.id}
+               "start": start, "end": end}
+    if not user.is_admin:
+        filters["created_by"] = user.id
     rows, total = ExecTaskRepository(db).search(filters, page, size)
     return {"list": [_exec_task_out(t) for t in rows], "total": total, "page": page, "size": size}
 
@@ -292,9 +313,25 @@ def stop_task(db: Session, user, task_id: int) -> dict:
     th_repo = ExecTaskHostRepository(db)
     for th in th_repo.by_task(task_id):
         if th.status in ("pending", "running"):
+            was_running = th.status == "running"
             th_repo.update_status(th.id, "canceled", finished_at=datetime.now(timezone.utc))
+            if was_running:
+                _send_agent_stop(db, th, task.id)
     db.commit()
     return {"id": task.id, "status": "canceled"}
+
+
+def _send_agent_stop(db: Session, th: ExecTaskHost, task_id: int) -> None:
+    """G4: tell a running host's agent to interrupt the job. Offline/unbound
+    agents are best-effort only - failure must not affect the state machine."""
+    host = HostRepository(db).get(th.host_id) if th.host_id else None
+    if host is None or not host.agent_id:
+        return
+    try:
+        if not dispatch_to_agent_sync(host.agent_id, {"type": "stop", "data": {"task_host_id": th.id}}):
+            logger.warning("stop: agent %s offline/unreachable for task %s host %s", host.agent_id, task_id, th.id)
+    except Exception:  # noqa: BLE001 - best-effort interrupt
+        logger.warning("stop: dispatch failed for agent %s: %s", host.agent_id, th.host_id)
 
 
 def retry_task(db: Session, user, task_id: int) -> dict:
@@ -307,18 +344,60 @@ def retry_task(db: Session, user, task_id: int) -> dict:
         raise ForbiddenError("no permission to retry this task")
     if task.status not in ("failed", "timed_out", "canceled"):
         raise BadRequestError("task not retryable")
+
+    # G8: retry must re-validate sensitivity (config/rules may have changed) and
+    # close any orphaned approval instead of blindly re-dispatching.
+    content = task.command or ""
+    if task.kind == "script" and task.script_id:
+        script = ScriptRepository(db).get(task.script_id)
+        if script is not None:
+            version = task.script_version or script.current_version
+            sv = ScriptVersionRepository(db).by_script_version(script.id, version)
+            content = sv.content if sv else ""
+    host_count = len((task.target_host_ids or {}).get("ids", []))
+    sensitive, reason = detect_sensitive(db, task.command, content, host_count)
+    if sensitive:
+        if not repo.optimistic_update(task.id, task.status, "awaiting_approval", task.version):
+            raise ConflictError("task state changed concurrently")
+        task.version += 1
+        _close_orphan_approval(db, task)
+        approval = ApprovalRequest(
+            request_no=_approval_no(db),
+            biz_type="exec",
+            biz_id=task.id,
+            title=f"执行审批：{task.name}",
+            reason=f"重试触发敏感复检：{reason}",
+            requester_id=user.id,
+            sensitive_hit=reason,
+            status="pending",
+        )
+        ApprovalRepository(db).add(approval)
+        db.flush()
+        task.approval_id = approval.id
+        task.sensitive_flag = 1
+        db.commit()
+        return {"id": task.id, "status": "awaiting_approval", "approve_required": True,
+                "approval_id": approval.id, "sensitive_flag": True}
+
     if not repo.optimistic_update(task.id, task.status, "running", task.version):
         raise ConflictError("task state changed concurrently")
     task.version += 1
     task.started_at = datetime.now(timezone.utc)
     task.finished_at = None
+    _close_orphan_approval(db, task)
     th_repo = ExecTaskHostRepository(db)
     for th in th_repo.by_task(task_id):
         if th.status in ("failed", "timed_out", "canceled"):
             th_repo.update_status(th.id, "pending")
     db.commit()
-    try:
-        exec_dispatch.delay(task_id)
-    except Exception:
-        pass
+    _kick_off_exec(db, task_id)
     return {"id": task.id, "status": "running"}
+
+
+def _close_orphan_approval(db: Session, task: ExecTask) -> None:
+    """Cancel a still-pending approval so a retried task does not leave an orphan."""
+    if not task.approval_id:
+        return
+    approval = ApprovalRepository(db).get(task.approval_id)
+    if approval is not None and approval.status == "pending":
+        ApprovalRepository(db).optimistic_update(approval.id, "pending", "canceled", approval.version)

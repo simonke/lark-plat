@@ -548,6 +548,7 @@ def test_g10_list_tasks_scopes_non_admin_to_own(monkeypatch):
 
     class FakeTaskRepo:
         def search(self, filters, page, size):
+            seen.clear()
             seen.update(filters)
             return [], 0
 
@@ -559,6 +560,5 @@ def test_g10_list_tasks_scopes_non_admin_to_own(monkeypatch):
     assert seen["created_by"] == 7, "operator list must be scoped to own tasks (G10)"
 
     admin = SimpleNamespace(id=7, is_admin=True, require_perm=lambda p: None)
-    seen.clear()
     exec_service.list_tasks(None, admin, None, None, None, None, None, None, 1, 10)
     assert "created_by" not in seen, "admin is allowed to see all tasks"

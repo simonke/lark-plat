@@ -29,6 +29,8 @@ from app.db.models import (
     ScheduleTask,
     Script,
     ScriptVersion,
+    TerminalRecordingChunk,
+    TerminalSession,
     User,
     UserRole,
 )
@@ -467,3 +469,79 @@ class PermissionTreeRepository(BaseRepository[Permission]):
 
     def tree(self) -> list[Permission]:
         return list(self.session.scalars(select(Permission).order_by(Permission.sort, Permission.id)).all())
+
+
+class TerminalSessionRepository(BaseRepository[TerminalSession]):
+    model = TerminalSession
+
+    def by_session_no(self, session_no: str) -> TerminalSession | None:
+        return self.session.scalar(
+            select(TerminalSession).where(TerminalSession.session_no == session_no)
+        )
+
+    def count_open_by_user(self, user_id: int) -> int:
+        return self.count(TerminalSession.user_id == user_id,
+                          TerminalSession.status.in_(("open", "awaiting_approval")))
+
+    def count_open_global(self) -> int:
+        return self.count(TerminalSession.status.in_(("open", "awaiting_approval")))
+
+    def count_open_by_host(self, host_id: int) -> int:
+        return self.count(TerminalSession.host_id == host_id,
+                          TerminalSession.status.in_(("open", "awaiting_approval")))
+
+    def search(self, filters: dict[str, Any], page: int, size: int) -> tuple[list[TerminalSession], int]:
+        stmt = select(TerminalSession)
+        conds = []
+        if filters.get("status"):
+            conds.append(TerminalSession.status == filters["status"])
+        if filters.get("host_id"):
+            conds.append(TerminalSession.host_id == filters["host_id"])
+        if filters.get("user_id"):
+            conds.append(TerminalSession.user_id == filters["user_id"])
+        if conds:
+            stmt = stmt.where(*conds)
+        total = self.session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+        rows = self.session.scalars(
+            stmt.order_by(TerminalSession.id.desc()).offset((page - 1) * size).limit(size)
+        ).all()
+        return list(rows), int(total)
+
+    def optimistic_close(self, session_id: int, version: int) -> bool:
+        result = self.session.execute(
+            TerminalSession.__table__.update()
+            .where(TerminalSession.id == session_id, TerminalSession.status == "open",
+                   TerminalSession.version == version)
+            .values(status="closed", version=version + 1)
+        )
+        return result.rowcount == 1
+
+
+class TerminalRecordingRepository(BaseRepository[TerminalRecordingChunk]):
+    model = TerminalRecordingChunk
+
+    def append(self, session_id: int, offset: int, data_enc: str) -> None:
+        self.session.add(TerminalRecordingChunk(
+            session_id=session_id, offset=offset, data_enc=data_enc
+        ))
+
+    def after_offset(self, session_id: int, after_offset: int, size: int) -> list[TerminalRecordingChunk]:
+        return list(self.session.scalars(
+            select(TerminalRecordingChunk)
+            .where(TerminalRecordingChunk.session_id == session_id,
+                   TerminalRecordingChunk.offset > after_offset)
+            .order_by(TerminalRecordingChunk.offset.asc()).limit(size)
+        ).all())
+
+    def max_offset(self, session_id: int) -> int:
+        return int(self.session.scalar(
+            select(func.max(TerminalRecordingChunk.offset)).where(
+                TerminalRecordingChunk.session_id == session_id
+            ) or 0
+        ))
+
+    def purge_before(self, before) -> int:
+        result = self.session.execute(
+            delete(TerminalRecordingChunk).where(TerminalRecordingChunk.created_at < before)
+        )
+        return result.rowcount or 0

@@ -350,3 +350,62 @@ class RecentApproval(BaseModel):
     title: str
     status: str
     created_at: datetime
+
+
+# ---------------------------------------------------------------- terminal
+
+
+class TerminalCreate(BaseModel):
+    host_id: int = Field(ge=1)
+    cols: int = Field(default=120, ge=40, le=500)
+    rows: int = Field(default=30, ge=10, le=200)
+    reason: str = ""
+
+
+class TerminalOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    session_no: str
+    host_id: int
+    user_id: int
+    status: str
+    close_reason: str
+    sensitive: int
+    approval_id: int | None
+    version: int
+    started_at: datetime | None
+    finished_at: datetime | None
+    duration_sec: int
+    bytes_out: int
+    bytes_in: int
+
+
+class TerminalCreateOut(BaseModel):
+    id: int
+    session_no: str
+    host_id: int
+    status: str
+    sensitive: int
+    approval_id: int | None
+    ws_token: str | None = None
+
+
+class TerminalTokenOut(BaseModel):
+    session_id: int
+    session_no: str
+    ws_token: str
+    expires_in: int
+
+
+class TerminalRecordingChunkOut(BaseModel):
+    offset: int
+    data: str
+    created_at: datetime | None = None
+
+
+class TerminalRecordingOut(BaseModel):
+    session_id: int
+    after_offset: int
+    size: int
+    has_more: bool
+    chunks: list[TerminalRecordingChunkOut] = []

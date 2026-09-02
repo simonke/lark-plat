@@ -11,6 +11,7 @@ from app.db.models.script import Script, ScriptVersion
 from app.db.models.exec import ExecLog, ExecTask, ExecTaskHost
 from app.db.models.schedule import ApprovalRecord, ApprovalRequest, ApprovalRule, ScheduleRun, ScheduleTask
 from app.db.models.notify import AuditLog, ConfigRule, NotifyChannel, NotifyRecord
+from app.db.models.terminal import TerminalRecordingChunk, TerminalSession
 
 __all__ = [
     "User",
@@ -36,4 +37,6 @@ __all__ = [
     "NotifyRecord",
     "AuditLog",
     "ConfigRule",
+    "TerminalSession",
+    "TerminalRecordingChunk",
 ]

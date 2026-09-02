@@ -95,6 +95,16 @@ def _approve_exec(db: Session, a: ApprovalRequest) -> None:
         pass
 
 
+def _approve_linkages(db: Session, a: ApprovalRequest) -> None:
+    """Route approval side-effects by biz_type. Exec -> dispatch; terminal -> open."""
+    if a.biz_type == "terminal":
+        from app.services import terminal_service
+
+        terminal_service.activate_on_approval(db, a)
+        return
+    _approve_exec(db, a)
+
+
 def approve(db: Session, user, approval_id: int, comment: str) -> dict:
     user.require_perm("approval:approve")
     repo = ApprovalRepository(db)
@@ -107,7 +117,7 @@ def approve(db: Session, user, approval_id: int, comment: str) -> dict:
     db.add(ApprovalRecord(approval_id=a.id, action="approve", operator_id=user.id, comment=comment))
     db.flush()
     try:
-        _approve_exec(db, a)
+        _approve_linkages(db, a)
     except (NotFoundError, ConflictError):
         db.rollback()
         raise

@@ -212,3 +212,66 @@ def test_t8_ws_token_bound_to_session(monkeypatch):
     assert terminal_ws._verify_ws_token(tok, 42) is True
     assert terminal_ws._verify_ws_token(tok, 43) is False
     assert terminal_ws._verify_ws_token("garbage", 42) is False
+
+
+def test_t9_session_no_generation_is_race_free_unique():
+    """session_no must not rely on max(id)+1 (concurrent-creator collision). A
+    snowflake-style generator yields no duplicates across rapid calls."""
+    seen = {terminal_service._session_no(None) for _ in range(2000)}
+    assert len(seen) == 2000
+    approval_seen = {terminal_service._approval_no(None) for _ in range(2000)}
+    assert len(approval_seen) == 2000
+    assert seen.isdisjoint(approval_seen)
+
+
+def test_t10_recording_offset_serialized_under_concurrency(monkeypatch):
+    """Serial single-writer: concurrent record_output writers must never assign the
+    same refresh offset (UniqueConstraint(session_id, offset) backstop)."""
+    import threading
+
+    offsets: list[int] = []
+    offsets_guard = threading.Lock()
+
+    def fake_max_offset(self, sid):
+        with offsets_guard:
+            offsets.append(len(offsets))
+            return len(offsets) - 1
+
+    def fake_append(self, sid, offset, enc):
+        pass
+
+    monkeypatch.setattr(terminal_service.TerminalRecordingRepository, "max_offset", fake_max_offset)
+    monkeypatch.setattr(terminal_service.TerminalRecordingRepository, "append", fake_append)
+    monkeypatch.setattr(terminal_service, "encrypt_secret", lambda x: "enc")
+
+    session = SimpleNamespace(id=1, bytes_out=0)
+    db = object()
+    threads = [threading.Thread(target=terminal_service.record_output, args=(db, session, "line")) for _ in range(64)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert sorted(offsets) == list(range(len(offsets)))
+
+
+def test_t11_activation_resets_started_at(monkeypatch):
+    """Approval activation must reset started_at so duration/idle accounting starts
+    at actual operation time, not the pre-approval wait (architect §6.5 ruling)."""
+    old = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    session = SimpleNamespace(status="awaiting_approval", started_at=old)
+
+    class _Repo:
+        def __init__(self, db):
+            pass
+
+        def get(self, i):
+            return session
+
+    monkeypatch.setattr(terminal_service, "TerminalSessionRepository", _Repo)
+    db = SimpleNamespace(commit=lambda: None)
+    approval = SimpleNamespace(biz_type="terminal", biz_id=1)
+    terminal_service.activate_on_approval(db, approval)
+    assert session.status == "open"
+    assert session.started_at is not None
+    assert session.started_at > old
+    assert session.started_at.tzinfo is not None

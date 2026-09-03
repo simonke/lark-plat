@@ -10,6 +10,8 @@ Contract (api-design §6 terminals):
 
 from __future__ import annotations
 
+import os
+import threading
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
@@ -32,13 +34,26 @@ from app.repositories import (
 from app import schemas
 
 
+_NO_LOCK = threading.Lock()
+_NO_COUNTER = 0
+
+
+def _unique_no_component() -> str:
+    """Snowflake-ish race-free sequence: pid + process-monotonic counter. No
+    max(id)+1 DB read, so concurrent creators never collide on the number
+    (session_no unique constraint retained as a backstop)."""
+    global _NO_COUNTER
+    with _NO_LOCK:
+        _NO_COUNTER += 1
+        seq = _NO_COUNTER
+    return f"{os.getpid():x}-{seq:08x}"
+
+
 def _session_no(db: Session) -> str:
     from datetime import date
-    from sqlalchemy import select
 
     prefix = date.today().strftime("%Y%m%d")
-    count = db.scalar(select(TerminalSession.id).order_by(TerminalSession.id.desc()).limit(1))
-    return f"TS-{prefix}-{count + 1 if count else 1:04d}"
+    return f"TS-{prefix}-{_unique_no_component()}"
 
 
 def _rules(db: Session) -> dict:
@@ -128,11 +143,9 @@ def create_session(db: Session, user, data: schemas.TerminalCreate) -> dict:
 
 def _approval_no(db: Session) -> str:
     from datetime import date
-    from sqlalchemy import select
 
     prefix = date.today().strftime("%Y%m%d")
-    count = db.scalar(select(ApprovalRequest.id).order_by(ApprovalRequest.id.desc()).limit(1))
-    return f"AP-{prefix}-{count + 1 if count else 1:04d}"
+    return f"AP-{prefix}-{_unique_no_component()}"
 
 
 def _require_visible_session(db: Session, user, session_id: int) -> TerminalSession:
@@ -221,13 +234,18 @@ def close_session(db: Session, user, session_id: int) -> dict:
 
 
 def activate_on_approval(db: Session, approval: ApprovalRequest) -> None:
-    """Called when a terminal-type approval is approved: open the session."""
+    """Called when a terminal-type approval is approved: open the session.
+
+    started_at is reset at activation so duration/idle accounting starts from
+    actual operation time (not the pre-approval wait) per §6.5 semantics.
+    """
     if approval.biz_type != "terminal":
         return
     session = TerminalSessionRepository(db).get(approval.biz_id)
     if session is None or session.status != "awaiting_approval":
         return
     session.status = "open"
+    session.started_at = datetime.now(timezone.utc)
     db.commit()
 
 
@@ -269,14 +287,32 @@ def _decrypt_chunk(data_enc: str) -> str:
     return decrypt_secret(data_enc)
 
 
+_REC_LOCK_GUARD = threading.Lock()
+_REC_LOCKS: dict[int, threading.Lock] = {}
+
+
+def _rec_lock(session_id: int) -> threading.Lock:
+    with _REC_LOCK_GUARD:
+        lock = _REC_LOCKS.get(session_id)
+        if lock is None:
+            lock = threading.Lock()
+            _REC_LOCKS[session_id] = lock
+        return lock
+
+
 def record_output(db: Session, session: TerminalSession, output: str) -> None:
-    """Append terminal output to the encrypted recording and update byte counters."""
+    """Append terminal output to the encrypted recording and update byte counters.
+
+    Serial single-writer: offset assignment is serialized per-session so concurrent
+    writers never produce the same offset (UniqueConstraint(session_id, offset))."""
     if not output:
         return
-    repo = TerminalRecordingRepository(db)
-    offset = repo.max_offset(session.id) + 1
-    repo.append(session.id, offset, encrypt_secret(output))
-    session.bytes_out += len(output.encode("utf-8", "replace"))
+    lock = _rec_lock(session.id)
+    with lock:
+        repo = TerminalRecordingRepository(db)
+        offset = repo.max_offset(session.id) + 1
+        repo.append(session.id, offset, encrypt_secret(output))
+        session.bytes_out += len(output.encode("utf-8", "replace"))
 
 
 def mark_idle_timeout(db: Session, session: TerminalSession) -> None:

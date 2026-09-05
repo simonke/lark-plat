@@ -8,7 +8,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import BadRequestError, BusinessError, ConflictError, ForbiddenError, NotFoundError
@@ -35,8 +35,8 @@ def _task_no(db: Session) -> str:
     from datetime import date
 
     prefix = date.today().strftime("%Y%m%d")
-    count = db.scalar(select(ExecTask.id).order_by(ExecTask.id.desc()).limit(1))
-    return f"{prefix}-{count + 1 if count else 1:03d}"
+    n = db.execute(text("SELECT nextval('seq_exec_no')")).scalar()
+    return f"{prefix}-{int(n):03d}"
 
 
 def _sensitive_rules(db: Session) -> dict[str, list[Any]]:
@@ -195,8 +195,8 @@ def _approval_no(db: Session) -> str:
     from datetime import date
 
     prefix = date.today().strftime("%Y%m%d")
-    count = db.scalar(select(ApprovalRequest.id).order_by(ApprovalRequest.id.desc()).limit(1))
-    return f"AP-{prefix}-{count + 1 if count else 1:04d}"
+    n = db.execute(text("SELECT nextval('seq_approval_no')")).scalar()
+    return f"AP-{prefix}-{int(n):04d}"
 
 
 def list_tasks(db: Session, user, task_no: str | None, name: str | None, status: str | None,

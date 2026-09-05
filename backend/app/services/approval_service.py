@@ -19,13 +19,13 @@ from app import schemas
 
 
 def _approval_no(db: Session) -> str:
-    from sqlalchemy import select
+    from sqlalchemy import text
 
     from datetime import date
 
     prefix = date.today().strftime("%Y%m%d")
-    count = db.scalar(select(ApprovalRequest.id).order_by(ApprovalRequest.id.desc()).limit(1))
-    return f"AP-{prefix}-{count + 1 if count else 1:04d}"
+    n = db.execute(text("SELECT nextval('seq_approval_no')")).scalar()
+    return f"AP-{prefix}-{int(n):04d}"
 
 
 def list_approvals(db: Session, user, status: str | None, biz_type: str | None, mine: bool,

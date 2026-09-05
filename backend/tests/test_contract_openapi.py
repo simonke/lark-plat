@@ -2,13 +2,12 @@
 
 These tests run WITHOUT a backend: they assert the committed OpenAPI artifact
 (docs/openapi.json) matches the contract. They are the first line of contract
-guards agreed with reviewer/architect (66 operations, Result envelope,
-error-code table, snake_case, static-route-before-{id}, login/refresh public).
+guards agreed with reviewer/architect (71 operations, Result envelope,
+error-code table, snake_case, static-route-before-{id}, login/refresh public,
+stage-4 terminal scope: 66 + 5 terminal paths frozen 2026-09-05).
 """
 
 from __future__ import annotations
-
-import pytest
 
 # Contract error-code table (api-design v2.1 §1)
 EXPECTED_CODES = {0, 400, 401, 403, 404, 409, 422, 429, 500, 1001}
@@ -29,6 +28,15 @@ STAGE1_PATHS = {
 
 # Public operations exempt from bearer auth (api-design v2.1 §1)
 PUBLIC_OPS = {("/api/v1/auth/login", "post"), ("/api/v1/auth/refresh", "post")}
+
+# Stage-4 terminal scope (§6.5), frozen 2026-09-05
+STAGE4_TERMINAL_PATHS = {
+    "/api/v1/terminals",
+    "/api/v1/terminals/{session_id}",
+    "/api/v1/terminals/{session_id}/token",
+    "/api/v1/terminals/{session_id}/close",
+    "/api/v1/terminals/{session_id}/recording",
+}
 
 # Seed permission points vs module-design §12 (stage-1 subset)
 STAGE1_PERMISSIONS = {
@@ -79,7 +87,13 @@ def test_login_refresh_public_and_rest_guarded(openapi_spec):
 
 def test_path_count_stable(openapi_spec):
     paths = openapi_spec["paths"]
-    assert len(paths) == 66
+    assert len(paths) == 71
+
+
+def test_stage4_terminal_paths_present(openapi_spec):
+    paths = openapi_spec["paths"]
+    missing = STAGE4_TERMINAL_PATHS - set(paths)
+    assert not missing, f"stage-4 terminal paths missing: {sorted(missing)}"
 
 
 def test_stage1_scope_paths_present(openapi_spec):

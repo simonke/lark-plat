@@ -22,6 +22,10 @@ celery_app.conf.update(
     task_track_started=True,
     worker_max_tasks_per_child=200,
     worker_prefetch_multiplier=1,
+    # Ensure the worker registers exec tasks (exec_dispatch / scan_timeouts). The
+    # module is otherwise only imported lazily from services, which would leave the
+    # worker without the task registry entries beat schedules and brokers dispatch.
+    imports=("app.tasks.exec_tasks",),
 )
 
 celery_app.conf.beat_schedule = {

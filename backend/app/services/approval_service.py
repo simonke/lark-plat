@@ -145,6 +145,22 @@ def reject(db: Session, user, approval_id: int, comment: str) -> dict:
     return {"id": a.id, "status": "rejected"}
 
 
+def _cancel_linkages(db: Session, a: ApprovalRequest) -> None:
+    """Route cancel side-effects by biz_type. Terminal -> close awaiting
+    session; exec -> cancel the awaiting task."""
+    if a.biz_type == "terminal":
+        from app.services import terminal_service
+
+        terminal_service.close_on_cancel(db, a)
+        return
+    task_repo = ExecTaskRepository(db)
+    task = task_repo.get(a.biz_id)
+    if task and task.status == "awaiting_approval":
+        if task_repo.optimistic_update(task.id, "awaiting_approval", "canceled", task.version):
+            task.version += 1
+            task.finished_at = datetime.now(timezone.utc)
+
+
 def cancel(db: Session, user, approval_id: int) -> dict:
     repo = ApprovalRepository(db)
     a = _require_pending(db, approval_id, user)
@@ -155,12 +171,12 @@ def cancel(db: Session, user, approval_id: int) -> dict:
     a.version += 1
     a.decided_at = datetime.now(timezone.utc)
     db.add(ApprovalRecord(approval_id=a.id, action="cancel", operator_id=user.id, comment="requester cancel"))
-    task_repo = ExecTaskRepository(db)
-    task = task_repo.get(a.biz_id)
-    if task and task.status == "awaiting_approval":
-        if task_repo.optimistic_update(task.id, "awaiting_approval", "canceled", task.version):
-            task.version += 1
-            task.finished_at = datetime.now(timezone.utc)
+    db.flush()
+    try:
+        _cancel_linkages(db, a)
+    except (NotFoundError, ConflictError):
+        db.rollback()
+        raise
     db.commit()
     return {"id": a.id, "status": "canceled"}
 

@@ -534,11 +534,12 @@ class TerminalRecordingRepository(BaseRepository[TerminalRecordingChunk]):
         ).all())
 
     def max_offset(self, session_id: int) -> int:
-        return int(self.session.scalar(
+        val = self.session.scalar(
             select(func.max(TerminalRecordingChunk.offset)).where(
                 TerminalRecordingChunk.session_id == session_id
-            ) or 0
-        ))
+            )
+        )
+        return int(val or 0)
 
     def purge_before(self, before) -> int:
         result = self.session.execute(

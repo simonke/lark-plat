@@ -19,8 +19,8 @@ class TerminalSession(Base, TimestampMixin):
         BigInteger, ForeignKey("asset_host.id", ondelete="CASCADE"), nullable=False, index=True
     )
     user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
-    status: Mapped[str] = mapped_column(String(16), default="open", nullable=False, index=True)
-    # open/closed/idle_timeout/duration_limit
+    status: Mapped[str] = mapped_column(String(32), default="open", nullable=False, index=True)
+    # open/awaiting_approval/closed
     close_reason: Mapped[str] = mapped_column(String(32), default="")
     terminated_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     sensitive: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

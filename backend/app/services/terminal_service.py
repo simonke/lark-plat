@@ -249,6 +249,20 @@ def activate_on_approval(db: Session, approval: ApprovalRequest) -> None:
     db.commit()
 
 
+def close_on_cancel(db: Session, approval: ApprovalRequest) -> None:
+    """Called when a terminal-type approval is canceled: close the awaiting
+    session so it cannot later be activated and the concurrency slot frees."""
+    if approval.biz_type != "terminal":
+        return
+    session = TerminalSessionRepository(db).get(approval.biz_id)
+    if session is None or session.status != "awaiting_approval":
+        return
+    session.status = "closed"
+    session.close_reason = "canceled_before_approval"
+    session.finished_at = datetime.now(timezone.utc)
+    db.commit()
+
+
 def replay_recording(db: Session, user, session_id: int, after_offset: int, size: int) -> dict:
     """Replay recording with independent terminal:replay auth + audit. Expired/over
     retention sessions return 404 (data purged)."""

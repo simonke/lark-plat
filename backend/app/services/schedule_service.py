@@ -9,12 +9,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
-from app.db.models import ExecTask, ExecTaskHost, ScheduleRun, ScheduleTask
+from app.db.models import ApprovalRequest, ExecTask, ExecTaskHost, Host, ScheduleRun, ScheduleTask
 from app.repositories import (
+    ApprovalRepository,
     ExecTaskRepository,
     ExecTaskHostRepository,
+    HostRepository,
     ScheduleRunRepository,
     ScheduleTaskRepository,
+    ScriptRepository,
+    ScriptVersionRepository,
 )
 from app import schemas
 
@@ -62,42 +66,140 @@ def _due_tasks(db: Session) -> list[ScheduleTask]:
     return due
 
 
+def _run_no(schedule_id: int) -> str:
+    return f"R-{schedule_id}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+
+
+def _spawn_run(db: Session, sched: ScheduleTask, requester_id: int, name_prefix: str) -> dict:
+    """Create ScheduleRun + ExecTask + ExecTaskHost for a schedule invocation.
+
+    US-08 item 7 / §12.8: sensitivity is re-validated with the exec rules
+    (keywords, batch threshold, host set). Sensitive runs go through the
+    biz_type=exec approval chain - approval may never be bypassed for
+    scheduled ops (incl. run-now / retry). Non-sensitive runs dispatch
+    directly like exec create_task.
+    """
+    from app.services.exec_service import _kick_off_exec, detect_sensitive  # lazy: avoid task/service cycle
+
+    host_ids = list((sched.target_host_ids or {}).get("ids", []))
+    host_repo = HostRepository(db)
+    hosts: dict[int, Host] = {}
+    for hid in host_ids:
+        host = host_repo.get(hid)
+        if host is None:
+            raise NotFoundError(f"host {hid} not found")
+        hosts[hid] = host
+
+    script_content = None
+    script_version = None
+    if sched.kind == "script":
+        if not sched.script_id:
+            raise BadRequestError("script_id required for kind=script")
+        script = ScriptRepository(db).get(sched.script_id)
+        if script is None:
+            raise NotFoundError("script not found")
+        sv = ScriptVersionRepository(db).by_script_version(script.id, script.current_version)
+        if sv is None:
+            raise NotFoundError("script version not found")
+        script_content = sv.content
+        script_version = script.current_version
+    elif sched.kind == "command":
+        if not sched.command:
+            raise BadRequestError("command required for kind=command")
+    else:
+        raise BadRequestError("invalid kind")
+
+    sensitive, reason = detect_sensitive(db, sched.command, script_content, len(hosts))
+
+    run = ScheduleRun(schedule_task_id=sched.id, run_no=_run_no(sched.id), status="running")
+    db.add(run)
+    db.flush()
+
+    task = ExecTask(
+        task_no=f"SC-{run.id}",
+        name=f"{name_prefix} {sched.name}",
+        kind=sched.kind,
+        script_id=sched.script_id,
+        script_version=script_version,
+        command=sched.command,
+        params=sched.params,
+        target_host_ids={"ids": host_ids},
+        mode="batch",
+        timeout_sec=sched.timeout_sec,
+        retry=sched.retry,
+        sensitive_flag=1 if sensitive else 0,
+        approve_required=1 if sensitive else 0,
+        status="created",
+        created_by=requester_id,
+    )
+    task_repo = ExecTaskRepository(db)
+    task_repo.add(task)
+    db.flush()
+
+    th_repo = ExecTaskHostRepository(db)
+    for hid in host_ids:
+        h = hosts[hid]
+        th_repo.add(ExecTaskHost(
+            exec_task_id=task.id, host_id=h.id, hostname=h.hostname, ip=h.ip,
+            executor=h.connector, status="pending",
+        ))
+    db.flush()
+    run.task_id = task.id
+
+    if sensitive:
+        from app.services.exec_service import _approval_no
+
+        approval = ApprovalRequest(
+            request_no=_approval_no(db),
+            biz_type="exec",
+            biz_id=task.id,
+            title=f"执行审批：{task.name}",
+            reason=f"定时任务敏感操作需审批：{reason}",
+            requester_id=requester_id,
+            sensitive_hit=reason,
+            status="pending",
+        )
+        ApprovalRepository(db).add(approval)
+        db.flush()
+        task.approval_id = approval.id
+        if not task_repo.optimistic_update(task.id, "created", "awaiting_approval", task.version):
+            raise ConflictError("task state changed concurrently")
+        task.version += 1
+        db.commit()
+        return {"run_id": run.id, "task_id": task.id, "status": "awaiting_approval",
+                "approve_required": True, "approval_id": approval.id, "sensitive_flag": True}
+
+    if not task_repo.optimistic_update(task.id, "created", "running", task.version):
+        raise ConflictError("task state changed concurrently")
+    task.version += 1
+    task.started_at = datetime.now(timezone.utc)
+    db.commit()
+    _kick_off_exec(db, task.id)
+    return {"run_id": run.id, "task_id": task.id, "status": "running",
+            "approve_required": False, "approval_id": None, "sensitive_flag": False}
+
+
 def trigger_due(db: Session) -> int:
-    """Create exec tasks for due schedules. Returns number triggered."""
+    """Create exec tasks for due schedules. Returns number triggered.
+
+    A failing schedule is recorded on its ScheduleRun (error_msg) so one broken
+    schedule never aborts the whole beat sweep. Sensitive due runs wait for
+    approval instead of dispatching directly.
+    """
     count = 0
     for sched in _due_tasks(db):
-        run_no = f"R-{sched.id}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
-        run = ScheduleRun(schedule_task_id=sched.id, run_no=run_no, status="running")
-        db.add(run)
-        db.flush()
-        task = ExecTask(
-            task_no=f"SC-{run.id}",
-            name=f"[schedule] {sched.name}",
-            kind=sched.kind,
-            script_id=sched.script_id,
-            command=sched.command,
-            params=sched.params,
-            target_host_ids={"ids": sched.target_host_ids or {}},
-            mode="batch",
-            timeout_sec=sched.timeout_sec,
-            retry=sched.retry,
-            status="created",
-            created_by=sched.created_by,
-        )
-        db.add(task)
-        db.flush()
-        run.task_id = task.id
-        # direct dispatch for schedules (no approval in MVP for scheduled ops)
-        task.status = "running"
-        task.started_at = datetime.now(timezone.utc)
         try:
-            from app.tasks.exec_tasks import exec_dispatch
-
-            exec_dispatch.delay(task.id)
-        except Exception:
-            pass
-        db.commit()
-        count += 1
+            _spawn_run(db, sched, sched.created_by or 0, "[schedule]")
+            count += 1
+        except Exception as exc:  # noqa: BLE001 - sweep must continue
+            db.rollback()
+            run = ScheduleRun(schedule_task_id=sched.id, run_no=_run_no(sched.id),
+                              status="failed", error_msg=str(exc)[:500])
+            db.add(run)
+            try:
+                db.commit()
+            except Exception:  # noqa: BLE001
+                db.rollback()
     return count
 
 
@@ -166,34 +268,12 @@ def set_schedule_status(db: Session, schedule_id: int, enabled: int) -> None:
     db.commit()
 
 
-def run_now(db: Session, schedule_id: int) -> dict:
+def run_now(db: Session, user, schedule_id: int) -> dict:
     repo = ScheduleTaskRepository(db)
     sched = repo.get(schedule_id)
     if sched is None:
         raise NotFoundError("schedule not found")
-    run_no = f"R-{sched.id}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
-    run = ScheduleRun(schedule_task_id=sched.id, run_no=run_no, status="running")
-    db.add(run)
-    db.flush()
-    task = ExecTask(
-        task_no=f"SC-{run.id}",
-        name=f"[run-now] {sched.name}",
-        kind=sched.kind,
-        script_id=sched.script_id,
-        command=sched.command,
-        params=sched.params,
-        target_host_ids={"ids": sched.target_host_ids or {}},
-        mode="batch",
-        timeout_sec=sched.timeout_sec,
-        retry=sched.retry,
-        status="running",
-        created_by=sched.created_by,
-    )
-    db.add(task)
-    db.flush()
-    run.task_id = task.id
-    db.commit()
-    return {"run_id": run.id, "task_id": task.id, "status": "running"}
+    return _spawn_run(db, sched, user.id, "[run-now]")
 
 
 def list_runs(db: Session, schedule_id: int, page: int, size: int) -> dict:
@@ -204,7 +284,9 @@ def list_runs(db: Session, schedule_id: int, page: int, size: int) -> dict:
     }
 
 
-def retry_run(db: Session, schedule_id: int, run_id: int) -> dict:
+def retry_run(db: Session, user, schedule_id: int, run_id: int) -> dict:
+    from app.services.exec_service import _approval_no, _close_orphan_approval, _kick_off_exec, detect_sensitive
+
     repo = ScheduleRunRepository(db)
     run = repo.get(run_id)
     if run is None or run.schedule_task_id != schedule_id:
@@ -216,10 +298,55 @@ def retry_run(db: Session, schedule_id: int, run_id: int) -> dict:
         task_repo = ExecTaskRepository(db)
         task = task_repo.get(run.task_id)
         if task and task.status in ("failed", "timed_out", "canceled"):
-            if task_repo.optimistic_update(task.id, task.status, "running", task.version):
+            # US-08 item 7 / G8: retry re-validates sensitivity (config may have
+            # changed) and closes any orphaned approval before dispatch.
+            content = task.command or ""
+            if task.kind == "script" and task.script_id:
+                script = ScriptRepository(db).get(task.script_id)
+                if script is not None:
+                    version = task.script_version or script.current_version
+                    sv = ScriptVersionRepository(db).by_script_version(script.id, version)
+                    content = sv.content if sv else ""
+            host_count = len((task.target_host_ids or {}).get("ids", []))
+            sensitive, reason = detect_sensitive(db, task.command, content, host_count)
+            if sensitive:
+                if not task_repo.optimistic_update(task.id, task.status, "awaiting_approval", task.version):
+                    raise ConflictError("task state changed concurrently")
                 task.version += 1
-                task.started_at = datetime.now(timezone.utc)
+                _close_orphan_approval(db, task)
+                approval = ApprovalRequest(
+                    request_no=_approval_no(db),
+                    biz_type="exec",
+                    biz_id=task.id,
+                    title=f"执行审批：{task.name}",
+                    reason=f"重试触发敏感复检：{reason}",
+                    requester_id=user.id,
+                    sensitive_hit=reason,
+                    status="pending",
+                )
+                ApprovalRepository(db).add(approval)
+                db.flush()
+                task.approval_id = approval.id
+                task.sensitive_flag = 1
+                run.status = "running"
+                run.finished_at = None
                 db.commit()
-                return {"task_id": task.id, "status": "running"}
+                return {"run_id": run.id, "task_id": task.id, "status": "awaiting_approval",
+                        "approve_required": True, "approval_id": approval.id, "sensitive_flag": True}
+            if not task_repo.optimistic_update(task.id, task.status, "running", task.version):
+                raise ConflictError("task state changed concurrently")
+            task.version += 1
+            task.started_at = datetime.now(timezone.utc)
+            task.finished_at = None
+            _close_orphan_approval(db, task)
+            th_repo = ExecTaskHostRepository(db)
+            for th in th_repo.by_task(task.id):
+                if th.status in ("failed", "timed_out", "canceled"):
+                    th_repo.update_status(th.id, "pending")
+            run.status = "running"
+            run.finished_at = None
+            db.commit()
+            _kick_off_exec(db, task.id)
+            return {"run_id": run.id, "task_id": task.id, "status": "running"}
     # no prior task -> rerun now
-    return run_now(db, schedule_id)
+    return _spawn_run(db, sched, user.id, "[retry]")

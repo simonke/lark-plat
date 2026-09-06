@@ -51,7 +51,7 @@ def set_status(db: DbDep, user: UserDep, schedule_id: int, data: schemas.Schedul
 @router.post("/{schedule_id}/run-now", response_model=Result)
 def run_now(db: DbDep, user: UserDep, schedule_id: int):
     user.require_perm("schedule:run")
-    return Result.ok(schedule_service.run_now(db, schedule_id))
+    return Result.ok(schedule_service.run_now(db, user, schedule_id))
 
 
 @router.get("/{schedule_id}/runs", response_model=Result)
@@ -64,4 +64,4 @@ def list_runs(db: DbDep, user: UserDep, schedule_id: int,
 @router.post("/{schedule_id}/runs/{run_id}/retry", response_model=Result)
 def retry_run(db: DbDep, user: UserDep, schedule_id: int, run_id: int):
     user.require_perm("schedule:retry")
-    return Result.ok(schedule_service.retry_run(db, schedule_id, run_id))
+    return Result.ok(schedule_service.retry_run(db, user, schedule_id, run_id))

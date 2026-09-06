@@ -50,6 +50,31 @@ const routes: RouteRecordRaw[] = [
         name: 'assets-credentials',
         component: () => import('../views/assets/CredentialsView.vue'),
       },
+      {
+        path: 'scripts',
+        name: 'scripts',
+        component: () => import('../views/scripts/ScriptsView.vue'),
+      },
+      {
+        path: 'exec/tasks',
+        name: 'exec-tasks',
+        component: () => import('../views/exec/ExecTasksView.vue'),
+      },
+      {
+        path: 'operations/approvals',
+        name: 'operations-approvals',
+        component: () => import('../views/approval/ApprovalView.vue'),
+      },
+      {
+        path: 'operations/terminals',
+        name: 'operations-terminals',
+        component: () => import('../views/terminal/TerminalView.vue'),
+      },
+      {
+        path: 'operations/notifications',
+        name: 'operations-notifications',
+        component: () => import('../views/notify/NotifyView.vue'),
+      },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/' },

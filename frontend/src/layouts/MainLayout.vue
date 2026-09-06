@@ -25,6 +25,23 @@
           <el-menu-item index="/assets/groups" v-if="auth.hasPerm('asset:group:list')">分组管理</el-menu-item>
           <el-menu-item index="/assets/credentials" v-if="auth.hasPerm('asset:cred:list')">凭据管理</el-menu-item>
         </el-sub-menu>
+        <el-sub-menu index="exec-center">
+          <template #title>
+            <el-icon><Promotion /></el-icon>
+            <span>执行中心</span>
+          </template>
+          <el-menu-item index="/scripts" v-if="auth.hasPerm('script:list')">脚本管理</el-menu-item>
+          <el-menu-item index="/exec/tasks" v-if="auth.hasPerm('exec:task:list')">任务中心</el-menu-item>
+        </el-sub-menu>
+        <el-sub-menu index="operations">
+          <template #title>
+            <el-icon><Finished /></el-icon>
+            <span>运维中心</span>
+          </template>
+          <el-menu-item index="/operations/approvals" v-if="auth.hasPerm('approval:view')">审批中心</el-menu-item>
+          <el-menu-item index="/operations/terminals" v-if="auth.hasPerm('terminal:list')">Web 终端</el-menu-item>
+          <el-menu-item index="/operations/notifications" v-if="auth.hasPerm('notify:channel:list')">通知中心</el-menu-item>
+        </el-sub-menu>
       </el-menu>
     </el-aside>
     <el-container>
@@ -72,7 +89,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { DataBoard, Setting, ArrowDown, Monitor } from '@element-plus/icons-vue'
+import { DataBoard, Setting, ArrowDown, Monitor, Promotion, Finished } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 import { changePassword } from '../api/auth'
 import { extractError } from '../api/http'

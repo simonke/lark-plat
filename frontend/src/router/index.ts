@@ -61,6 +61,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/exec/ExecTasksView.vue'),
       },
       {
+        path: 'schedules',
+        name: 'schedules',
+        component: () => import('../views/schedules/SchedulesView.vue'),
+      },
+      {
         path: 'operations/approvals',
         name: 'operations-approvals',
         component: () => import('../views/approval/ApprovalView.vue'),

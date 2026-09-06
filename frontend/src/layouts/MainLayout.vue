@@ -32,6 +32,7 @@
           </template>
           <el-menu-item index="/scripts" v-if="auth.hasPerm('script:list')">脚本管理</el-menu-item>
           <el-menu-item index="/exec/tasks" v-if="auth.hasPerm('exec:task:list')">任务中心</el-menu-item>
+          <el-menu-item index="/schedules" v-if="auth.hasPerm('schedule:list')">定时任务</el-menu-item>
         </el-sub-menu>
         <el-sub-menu index="operations">
           <template #title>

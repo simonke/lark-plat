@@ -614,4 +614,118 @@ export interface TerminalQuery {
   size?: number
 }
 
+// ---------------------------------------------------------------- schedule (stage 7)
+
+export interface ScheduleCreate {
+  name: string
+  kind: 'command' | 'script'
+  script_id?: number | null
+  command?: string | null
+  params?: Record<string, unknown> | null
+  trigger_type: 'cron' | 'interval'
+  cron_expr?: string | null
+  timezone?: string
+  interval_sec?: number | null
+  target_host_ids: number[]
+  timeout_sec?: number
+  retry?: number
+  concurrency_limit?: number
+  enabled?: number
+}
+
+export interface ScheduleUpdate {
+  name?: string | null
+  kind?: string | null
+  script_id?: number | null
+  command?: string | null
+  params?: Record<string, unknown> | null
+  trigger_type?: string | null
+  cron_expr?: string | null
+  timezone?: string | null
+  interval_sec?: number | null
+  target_host_ids?: number[] | null
+  timeout_sec?: number | null
+  retry?: number | null
+  concurrency_limit?: number | null
+}
+
+export interface ScheduleOut {
+  id: number
+  name: string
+  kind: string
+  script_id: number | null
+  command: string | null
+  params: Record<string, unknown> | null
+  trigger_type: string
+  cron_expr: string | null
+  timezone: string
+  interval_sec: number | null
+  target_host_ids: Record<string, unknown> | null
+  timeout_sec: number
+  retry: number
+  concurrency_limit: number
+  enabled: number
+  created_by: number | null
+  created_at: string
+}
+
+export interface ScheduleQuery {
+  name?: string
+  enabled?: number
+  page?: number
+  size?: number
+}
+
+export interface ScheduleRunOut {
+  id: number
+  schedule_task_id: number
+  run_no: string
+  status: string
+  task_id: number | null
+  started_at: string
+  finished_at: string | null
+  error_msg: string | null
+}
+
+export interface ScheduleRunNowResult {
+  run_id: number
+  task_id: number
+  status: string
+}
+
+// ---------------------------------------------------------------- dashboard (stage 7)
+
+export interface DashboardStats {
+  host_total: number
+  host_online: number
+  tasks_running: number
+  today_tasks: number
+  today_success: number
+  pending_approvals: number
+}
+
+export interface TrendPoint {
+  date: string
+  total: number
+  success: number
+  failed: number
+}
+
+export interface RecentTask {
+  id: number
+  task_no: string
+  name: string
+  status: string
+  kind: string
+  created_at: string
+}
+
+export interface RecentApproval {
+  id: number
+  request_no: string
+  title: string
+  status: string
+  created_at: string
+}
+
 

@@ -260,8 +260,12 @@ onMounted(() => {
 
 async function handleRunNow(row: ScheduleOut) {
   try {
-    await runNow(row.id)
-    ElMessage.success('已触发立即执行')
+    const res = await runNow(row.id)
+    if (res.approve_required) {
+      ElMessage.success('已提交审批，审批通过后执行')
+    } else {
+      ElMessage.success('已触发立即执行')
+    }
   } catch (e) {
     ElMessage.error(extractError(e))
   }
@@ -509,8 +513,12 @@ function onRunsPageChange(page: number) {
 async function handleRetryRun(row: ScheduleRunOut) {
   if (!currentSchedule.value) return
   try {
-    await retryScheduleRun(currentSchedule.value.id, row.id)
-    ElMessage.success('重试已触发')
+    const res = await retryScheduleRun(currentSchedule.value.id, row.id)
+    if (res.approve_required) {
+      ElMessage.success('重试已提交审批，审批通过后执行')
+    } else {
+      ElMessage.success('重试已触发')
+    }
     loadRuns()
   } catch (e) {
     ElMessage.error(extractError(e))

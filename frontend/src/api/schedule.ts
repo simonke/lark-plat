@@ -8,6 +8,7 @@ import type {
   ScheduleQuery,
   ScheduleRunOut,
   ScheduleRunNowResult,
+  ScheduleRetryResult,
 } from './types'
 
 export async function listSchedules(params?: ScheduleQuery): Promise<Page<ScheduleOut>> {
@@ -45,7 +46,7 @@ export async function listScheduleRuns(
   return data.data
 }
 
-export async function retryScheduleRun(id: number, runId: number): Promise<{ task_id: number; status: string }> {
-  const { data } = await http.post<Result<{ task_id: number; status: string }>>(`/schedules/${id}/runs/${runId}/retry`)
+export async function retryScheduleRun(id: number, runId: number): Promise<ScheduleRetryResult> {
+  const { data } = await http.post<Result<ScheduleRetryResult>>(`/schedules/${id}/runs/${runId}/retry`)
   return data.data
 }

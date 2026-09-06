@@ -109,11 +109,25 @@ describe('Schedule API', () => {
     expect(http.put).toHaveBeenCalledWith('/schedules/7/status', { enabled: 0 })
   })
 
-  it('triggers run-now', async () => {
-    vi.mocked(http.post).mockResolvedValue(ok({ run_id: 11, task_id: 22, status: 'running' }))
+  it('triggers run-now (direct dispatch)', async () => {
+    vi.mocked(http.post).mockResolvedValue(
+      ok({ run_id: 11, task_id: 22, status: 'running', approve_required: false, approval_id: null, sensitive_flag: false }),
+    )
     const result = await runNow(7)
     expect(http.post).toHaveBeenCalledWith('/schedules/7/run-now')
     expect(result.status).toBe('running')
+    expect(result.approve_required).toBe(false)
+  })
+
+  it('triggers run-now (sensitive => awaiting approval)', async () => {
+    vi.mocked(http.post).mockResolvedValue(
+      ok({ run_id: 11, task_id: 22, status: 'awaiting_approval', approve_required: true, approval_id: 99, sensitive_flag: true }),
+    )
+    const result = await runNow(7)
+    expect(result.status).toBe('awaiting_approval')
+    expect(result.approve_required).toBe(true)
+    expect(result.approval_id).toBe(99)
+    expect(result.sensitive_flag).toBe(true)
   })
 
   it('lists schedule runs with pagination', async () => {
@@ -124,11 +138,21 @@ describe('Schedule API', () => {
     expect(result).toEqual(page)
   })
 
-  it('retries a failed run', async () => {
-    vi.mocked(http.post).mockResolvedValue(ok({ task_id: 22, status: 'running' }))
+  it('retries a failed run (direct dispatch, no approval fields)', async () => {
+    vi.mocked(http.post).mockResolvedValue(ok({ run_id: 11, task_id: 22, status: 'running' }))
     const result = await retryScheduleRun(7, 1)
     expect(http.post).toHaveBeenCalledWith('/schedules/7/runs/1/retry')
     expect(result.task_id).toBe(22)
+    expect(result.approve_required).toBeUndefined()
+  })
+
+  it('retries a failed run (sensitive => awaiting approval)', async () => {
+    vi.mocked(http.post).mockResolvedValue(
+      ok({ run_id: 11, task_id: 22, status: 'awaiting_approval', approve_required: true, approval_id: 99, sensitive_flag: true }),
+    )
+    const result = await retryScheduleRun(7, 1)
+    expect(result.approve_required).toBe(true)
+    expect(result.approval_id).toBe(99)
   })
 })
 

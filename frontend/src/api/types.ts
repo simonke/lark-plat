@@ -691,6 +691,18 @@ export interface ScheduleRunNowResult {
   run_id: number
   task_id: number
   status: string
+  approve_required: boolean
+  approval_id: number | null
+  sensitive_flag: boolean
+}
+
+export interface ScheduleRetryResult {
+  run_id: number
+  task_id: number
+  status: string
+  approve_required?: boolean
+  approval_id?: number | null
+  sensitive_flag?: boolean
 }
 
 // ---------------------------------------------------------------- dashboard (stage 7)

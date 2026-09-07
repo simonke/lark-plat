@@ -20,16 +20,16 @@ Approach (validated against local PG16.6 scratch DB, this session):
   1. rename exec_log -> exec_log_legacy, drop its PK/unique/indexes so the
      rebuilt constraint names do not collide
   2. create partitioned parent (composite PK + composite unique + FK)
-  3. pre-create month partitions for existing data months + an 12-month
-     forward window (current .. current+11), so the app's now()-backed
-     writes always land on a real month partition without runtime DDL
+3. pre-create month partitions for existing data months + a 13-month
+      forward window (current .. current+12), so the app's now()-backed
+      writes always land on a real month partition without runtime DDL
   4. copy legacy rows (explicit created_at, so month routing is deterministic)
   5. drop legacy table + its owned BIGSERIAL sequence; recreate seq owned by
      the new parent's id and seed from max(id) + 1
   6. recreate task_host_id / created_at indexes on the parent (PG 11+ auto
      inherits them to present and future partitions)
   7. DEFAULT partition absorbs any out-of-window month (backfills etc.); the
-     12-month window is refreshed by running the alembic chain again
+     13-month window is refreshed by running the alembic chain again
 
 Runtime auto-creation of missing partitions is intentionally NOT used: PG16
 rejects CREATE TABLE .. PARTITION OF on the very table an INSERT is targeting

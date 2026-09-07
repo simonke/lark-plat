@@ -71,7 +71,7 @@ class ExecTaskHost(Base, TimestampMixin):
 
 class ExecLog(Base):
     __tablename__ = "exec_log"
-    __table_args__ = (UniqueConstraint("task_host_id", "seq"),)
+    __table_args__ = (UniqueConstraint("created_at", "task_host_id", "seq"),)
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     task_host_id: Mapped[int] = mapped_column(
@@ -81,5 +81,5 @@ class ExecLog(Base):
     level: Mapped[str] = mapped_column(String(16), default="info")  # info/error
     content: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+        DateTime(timezone=True), primary_key=True, server_default=func.now(), nullable=False
     )

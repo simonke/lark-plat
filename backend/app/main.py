@@ -144,13 +144,14 @@ from app.api.v1.endpoints import (  # noqa: E402
     auth,
     dashboard,
     exec,
+    monitor,
     notify,
     schedule,
     script,
     system,
     terminal,
 )
-from app.ws import agent_ws, exec_ws, terminal_ws  # noqa: E402
+from app.ws import agent_ws, exec_ws, monitor_ws, terminal_ws  # noqa: E402
 
 for router in (
     auth.router,
@@ -163,9 +164,11 @@ for router in (
     notify.router,
     dashboard.router,
     terminal.router,
+    monitor.router,
 ):
     app.include_router(router, prefix=settings.api_prefix)
 
 app.include_router(exec_ws.router, prefix=settings.api_prefix)
 app.include_router(agent_ws.router, prefix=settings.api_prefix)
 app.include_router(terminal_ws.router, prefix=settings.api_prefix)
+app.include_router(monitor_ws.router, prefix=settings.api_prefix)

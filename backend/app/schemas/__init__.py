@@ -352,6 +352,102 @@ class RecentApproval(BaseModel):
     created_at: datetime
 
 
+# ---------------------------------------------------------------- monitor
+
+
+class MonEventIn(BaseModel):
+    """Normalized MonEvent ingress (api-design-v3 §2, MonEvent JSON Schema)."""
+
+    source: str = Field(min_length=1, max_length=16)  # agent/prometheus/elk/skywalking
+    kind: str = Field(min_length=1, max_length=16)  # metric/alert/log/apm
+    entity: dict = Field(default_factory=lambda: {"entity_type": "host", "entity_id": "unknown", "entity_name": "unknown"})
+    ts: datetime = Field(default_factory=datetime.utcnow)
+    value: float | None = None
+    severity: str | None = None
+    labels: dict | None = None
+    raw: dict | None = None
+    fingerprint: str | None = None
+    event_id: str | None = None  # idempotency key (source+event_id dedup)
+
+
+class MonRuleCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    description: str | None = None
+    enabled: int = 1
+    event_source: str | None = None  # null = all sources
+    event_kind: str = "metric"  # metric|alert|log|apm
+    metric_name: str | None = None  # required when kind=metric
+    condition_operator: str = ">"  # >,<,>=,<=,==,!=
+    condition_threshold: float = 0
+    condition_duration_seconds: int = Field(default=0, ge=0)
+    scope_type: str | None = None  # host|app|service|null=all
+    scope_ids: list[str] | None = None  # entity IDs for scope filtering
+    level: str = "warning"  # severity level for alerts
+    cooldown_seconds: int = Field(default=300, ge=0)
+    converge_sec: int = Field(default=0, ge=0)  # convergence dedup window
+    escalation_enabled: int = 0
+    escalation_after_seconds: int | None = Field(default=None, ge=0)
+    escalation_severity: str | None = None
+    escalate_levels: list[str] | None = None  # escalation severity path
+    notify_scene: str = "alert"
+    notify_channel_ids: list[int] = []
+
+
+class MonRuleUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    enabled: int | None = None
+    event_source: str | None = None
+    event_kind: str | None = None
+    metric_name: str | None = None
+    condition_operator: str | None = None
+    condition_threshold: float | None = None
+    condition_duration_seconds: int | None = Field(default=None, ge=0)
+    scope_type: str | None = None
+    scope_ids: list[str] | None = None
+    level: str | None = None
+    cooldown_seconds: int | None = Field(default=None, ge=0)
+    converge_sec: int | None = Field(default=None, ge=0)
+    escalation_enabled: int | None = None
+    escalation_after_seconds: int | None = Field(default=None, ge=0)
+    escalation_severity: str | None = None
+    escalate_levels: list[str] | None = None
+    notify_scene: str | None = None
+    notify_channel_ids: list[int] | None = None
+
+
+class MonRuleStatusIn(BaseModel):
+    enabled: int = Field(ge=0, le=1)
+
+
+class AlertAckIn(BaseModel):
+    remark: str = ""
+
+
+class AlertResolveIn(BaseModel):
+    remark: str = ""
+
+
+class MonAdapterCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    type: str = Field(min_length=1, max_length=16)  # prometheus|elk|skywalking
+    endpoint: str = ""
+    config: dict = Field(default_factory=dict)
+    enabled: int = 1
+
+
+class MonAdapterUpdate(BaseModel):
+    name: str | None = None
+    type: str | None = None
+    endpoint: str | None = None
+    config: dict | None = None
+    enabled: int | None = None
+
+
+class MonAdapterStatusIn(BaseModel):
+    enabled: int = Field(ge=0, le=1)
+
+
 # ---------------------------------------------------------------- terminal
 
 

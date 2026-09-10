@@ -1,8 +1,8 @@
 """Seed-data existence contract (module-design §12).
 
 Static assertion against app/db/seed.py (DB-free): the RBAC baseline must
-declare the full 60-permission-point tree (15 menus + 45 buttons) and the 3
-builtin roles. Runtime presence is verified by integration against
+declare the full permission-point tree (18 menus + 53 buttons post P2-MA) and
+the 3 builtin roles. Runtime presence is verified by integration against
 /system/permissions; this guards the declared contract itself.
 """
 
@@ -11,11 +11,19 @@ from __future__ import annotations
 from app.db.seed import DEFAULT_ROLES, PERMISSION_TREE
 
 
-def test_seed_tree_has_60_permission_points():
+MONITOR_CODES = {
+    "monitor:metric:view",
+    "monitor:alert:list", "monitor:alert:view", "monitor:alert:ack", "monitor:alert:resolve",
+    "monitor:rule:list", "monitor:rule:add", "monitor:rule:edit", "monitor:rule:del",
+    "monitor:rule:status", "monitor:rule:test",
+}
+
+
+def test_seed_tree_permission_points():
     menus = [node[0] for node in PERMISSION_TREE]
     buttons = [child[0] for node in PERMISSION_TREE for child in node[5]]
-    assert len(menus) == 15
-    assert len(buttons) == 45
+    assert len(menus) == 18
+    assert len(buttons) == 53
     assert len(set(menus)) == len(menus)
     assert len(set(buttons)) == len(buttons)
 
@@ -46,6 +54,39 @@ def test_stage1_permission_codes_covered_by_seed():
     assert stage1 <= seeded
 
 
+def test_p2ma_monitor_permission_codes_covered_by_seed():
+    """P2-MA monitor permission points must be seeded (add-only over baseline)."""
+    seeded = {node[0] for node in PERMISSION_TREE} | {
+        child[0] for node in PERMISSION_TREE for child in node[5]
+    }
+    missing = MONITOR_CODES - seeded
+    assert not missing, f"P2-MA monitor permission points missing from seed: {sorted(missing)}"
+
+
+def test_p2ma_monitor_menu_route_paths_frozen():
+    """Route paths in the permission tree are the authority for frontend routing."""
+    path_by_code = {node[0]: node[3] for node in PERMISSION_TREE}
+    assert path_by_code["monitor:metric:view"] == "/monitor/dashboard"
+    assert path_by_code["monitor:alert:list"] == "/monitor/alerts"
+    assert path_by_code["monitor:rule:list"] == "/monitor/rules"
+
+
+def test_p2ma_operator_role_bindings():
+    """Frozen operator binding: full alert handling + rule ops except delete."""
+    op = set(DEFAULT_ROLES["operator"]["permissions"])
+    assert MONITOR_CODES - {"monitor:rule:del"} <= op
+    assert "monitor:rule:del" not in op
+
+
+def test_p2ma_viewer_role_bindings():
+    """Frozen viewer binding: monitor read-only group (no buttons)."""
+    view = set(DEFAULT_ROLES["viewer"]["permissions"])
+    assert {"monitor:metric:view", "monitor:alert:list", "monitor:alert:view", "monitor:rule:list"} <= view
+    assert not (view & {"monitor:alert:ack", "monitor:alert:resolve",
+                        "monitor:rule:add", "monitor:rule:edit", "monitor:rule:del",
+                        "monitor:rule:status", "monitor:rule:test"})
+
+
 def test_admin_role_binds_all_permissions():
     all_codes = {node[0] for node in PERMISSION_TREE} | {
         child[0] for node in PERMISSION_TREE for child in node[5]
@@ -62,7 +103,14 @@ def test_operator_role_is_operational_only():
 
 def test_viewer_role_is_read_only():
     view = set(DEFAULT_ROLES["viewer"]["permissions"])
-    assert all(p.endswith(":list") or p in {"dashboard:view", "exec:task:log", "terminal:view"} for p in view)
+    assert all(
+        p.endswith(":list")
+        or p in {
+            "dashboard:view", "exec:task:log", "terminal:view",
+            "monitor:metric:view", "monitor:alert:view",
+        }
+        for p in view
+    )
 
 
 def test_admin_user_bound_to_admin_role_in_seed_source():

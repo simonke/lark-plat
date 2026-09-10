@@ -182,6 +182,40 @@ PERMISSION_TREE: list[tuple[str, str, str, str, str, list[tuple[str, str, str, s
         "Notebook",
         [("system:audit:export", "导出", "button", "", "Download")],
     ),
+    (
+        "monitor:metric:view",
+        "监控面板",
+        "menu",
+        "/monitor/dashboard",
+        "Odometer",
+        [],
+    ),
+    (
+        "monitor:alert:list",
+        "告警事件",
+        "menu",
+        "/monitor/alerts",
+        "Bell",
+        [
+            ("monitor:alert:view", "查看详情", "button", "", "View"),
+            ("monitor:alert:ack", "确认告警", "button", "", "Check"),
+            ("monitor:alert:resolve", "解决告警", "button", "", "Finished"),
+        ],
+    ),
+    (
+        "monitor:rule:list",
+        "告警规则",
+        "menu",
+        "/monitor/rules",
+        "Setting",
+        [
+            ("monitor:rule:add", "新增规则", "button", "", "Plus"),
+            ("monitor:rule:edit", "编辑规则", "button", "", "Edit"),
+            ("monitor:rule:del", "删除规则", "button", "", "Delete"),
+            ("monitor:rule:status", "启停规则", "button", "", "Switch"),
+            ("monitor:rule:test", "测试连通", "button", "", "Connection"),
+        ],
+    ),
 ]
 
 # role code -> permission codes
@@ -208,6 +242,10 @@ DEFAULT_ROLES: dict[str, dict[str, list[str]]] = {
             "terminal:list", "terminal:create", "terminal:close", "terminal:view",
             "notify:record:list",
             "system:audit:list",
+            "monitor:metric:view",
+            "monitor:alert:list", "monitor:alert:view", "monitor:alert:ack", "monitor:alert:resolve",
+            "monitor:rule:list", "monitor:rule:add", "monitor:rule:edit",
+            "monitor:rule:status", "monitor:rule:test",
         ],
     },
     "viewer": {
@@ -225,6 +263,9 @@ DEFAULT_ROLES: dict[str, dict[str, list[str]]] = {
             "terminal:list", "terminal:view",
             "notify:record:list",
             "system:audit:list",
+            "monitor:metric:view",
+            "monitor:alert:list", "monitor:alert:view",
+            "monitor:rule:list",
         ],
     },
 }

@@ -19,6 +19,13 @@ from app.db.models import (
     ExecTaskHost,
     Host,
     HostCredential,
+    MonAdapter,
+    MonAlert,
+    MonAlertEventLog,
+    MonEventInbox,
+    MonMetricDaily,
+    MonMetricSample,
+    MonRule,
     NotifyChannel,
     NotifyRecord,
     Permission,
@@ -179,6 +186,13 @@ class HostRepository(BaseRepository[Host]):
             if h.status == "online":
                 online += 1
         return {"total": len(rows), "online": online, "offline": len(rows) - online, "by_env": by_env}
+
+    def entity_ids_in_groups(self, group_ids: list[int] | None) -> list[str]:
+        """Return IP strings for hosts in the given group IDs (used for metric entity_id filtering)."""
+        if not group_ids:
+            return []
+        stmt = select(Host.ip).where(Host.group_id.in_(group_ids))
+        return list(self.session.scalars(stmt).all())
 
 
 class CredentialRepository(BaseRepository[HostCredential]):
@@ -546,3 +560,257 @@ class TerminalRecordingRepository(BaseRepository[TerminalRecordingChunk]):
             delete(TerminalRecordingChunk).where(TerminalRecordingChunk.created_at < before)
         )
         return result.rowcount or 0
+
+
+class MonMetricSampleRepository(BaseRepository[MonMetricSample]):
+    model = MonMetricSample
+
+    def add_sample(self, entity_type: str, entity_id: str, entity_name: str,
+                   metric_name: str, value: float, source: str, ts, labels: dict | None = None,
+                   fingerprint: str = "") -> None:
+        self.session.add(MonMetricSample(
+            entity_type=entity_type, entity_id=entity_id, entity_name=entity_name,
+            metric_name=metric_name, value=value, source=source, ts=ts,
+            labels=labels, fingerprint=fingerprint or "auto",
+        ))
+
+    def query(self, entity_ids: list[str] | None, metric_name: str, start, end,
+              page: int, size: int) -> tuple[list[MonMetricSample], int]:
+        stmt = select(MonMetricSample).where(MonMetricSample.metric_name == metric_name)
+        if entity_ids:
+            stmt = stmt.where(MonMetricSample.entity_id.in_(entity_ids))
+        if start:
+            stmt = stmt.where(MonMetricSample.ts >= start)
+        if end:
+            stmt = stmt.where(MonMetricSample.ts <= end)
+        total = self.session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+        rows = self.session.scalars(
+            stmt.order_by(MonMetricSample.ts.desc()).offset((page - 1) * size).limit(size)
+        ).all()
+        return list(rows), int(total)
+
+    def query_bucketed(self, entity_ids: list[str] | None, metric_name: str, start, end,
+                       agg: str) -> list[dict]:
+        """Time-bucketed aggregation (5m|1h|1d) returning [{bucket, avg, max, min, count}]."""
+        trunc_map = {"5m": "minute", "1h": "hour", "1d": "day"}
+        trunc_unit = trunc_map.get(agg, "hour")
+        if trunc_unit == "minute":
+            bucket_expr = func.date_trunc("minute", MonMetricSample.ts)
+        elif trunc_unit == "day":
+            bucket_expr = func.date_trunc("day", MonMetricSample.ts)
+        else:
+            bucket_expr = func.date_trunc("hour", MonMetricSample.ts)
+        stmt = (
+            select(
+                bucket_expr.label("bucket"),
+                func.avg(MonMetricSample.value).label("avg"),
+                func.max(MonMetricSample.value).label("max"),
+                func.min(MonMetricSample.value).label("min"),
+                func.count().label("count"),
+            )
+            .where(MonMetricSample.metric_name == metric_name)
+        )
+        if entity_ids:
+            stmt = stmt.where(MonMetricSample.entity_id.in_(entity_ids))
+        if start:
+            stmt = stmt.where(MonMetricSample.ts >= start)
+        if end:
+            stmt = stmt.where(MonMetricSample.ts <= end)
+        stmt = stmt.group_by("bucket").order_by("bucket")
+        rows = self.session.execute(stmt).all()
+        return [
+            {"bucket": str(r.bucket), "avg": float(r.avg or 0), "max": float(r.max or 0),
+             "min": float(r.min or 0), "count": int(r.count or 0)}
+            for r in rows
+        ]
+
+    def latest_by_entity(self, entity_ids: list[str] | None, metric_name: str | None) -> list[MonMetricSample]:
+        """Latest sample row per (entity_id, metric_name) in the window."""
+        window = select(MonMetricSample).order_by(MonMetricSample.ts.desc()).limit(500)
+        rows = self.session.scalars(window).all()
+        seen: dict[tuple[str, str], MonMetricSample] = {}
+        for r in rows:
+            if metric_name and r.metric_name != metric_name:
+                continue
+            if entity_ids and r.entity_id not in entity_ids:
+                continue
+            key = (r.entity_id, r.metric_name)
+            if key not in seen:
+                seen[key] = r
+        return list(seen.values())
+
+    def upsert_daily(self, entity_type: str, entity_id: str, metric_name: str, day, value: float) -> None:
+        row = self.session.scalar(
+            select(MonMetricDaily).where(
+                MonMetricDaily.entity_id == entity_id, MonMetricDaily.entity_type == entity_type,
+                MonMetricDaily.metric_name == metric_name, MonMetricDaily.day == day,
+            )
+        )
+        if row is None:
+            self.session.add(MonMetricDaily(
+                entity_type=entity_type, entity_id=entity_id, metric_name=metric_name, day=day,
+                avg_value=value, max_value=value, min_value=value, sample_count=1
+            ))
+            return
+        row.sample_count += 1
+        n = row.sample_count
+        row.avg_value = (row.avg_value * (n - 1) + value) / n
+        row.max_value = max(row.max_value, value)
+        row.min_value = min(row.min_value, value)
+
+
+class MonAdapterRepository(BaseRepository[MonAdapter]):
+    model = MonAdapter
+
+    def by_name(self, name: str) -> MonAdapter | None:
+        return self.session.scalar(select(MonAdapter).where(MonAdapter.name == name))
+
+    def enabled_adapters(self) -> list[MonAdapter]:
+        return list(self.session.scalars(
+            select(MonAdapter).where(MonAdapter.enabled == 1)
+        ).all())
+
+    def search(self, enabled: int | None, type_: str | None, page: int, size: int) -> tuple[list[MonAdapter], int]:
+        stmt = select(MonAdapter)
+        conds = []
+        if enabled is not None:
+            conds.append(MonAdapter.enabled == enabled)
+        if type_:
+            conds.append(MonAdapter.type == type_)
+        if conds:
+            stmt = stmt.where(*conds)
+        total = self.session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+        rows = self.session.scalars(
+            stmt.order_by(MonAdapter.id.desc()).offset((page - 1) * size).limit(size)
+        ).all()
+        return list(rows), int(total)
+
+
+class MonEventInboxRepository(BaseRepository[MonEventInbox]):
+    model = MonEventInbox
+
+    def by_fingerprint(self, fingerprint: str, since) -> MonEventInbox | None:
+        return self.session.scalar(
+            select(MonEventInbox).where(MonEventInbox.fingerprint == fingerprint,
+                                        MonEventInbox.ts >= since)
+        )
+
+    def by_event_key(self, event_key: str) -> MonEventInbox | None:
+        return self.session.scalar(
+            select(MonEventInbox).where(MonEventInbox.event_key == event_key)
+        )
+
+    def add_event(self, **fields) -> MonEventInbox:
+        row = MonEventInbox(**fields)
+        self.session.add(row)
+        return row
+
+    def search(self, filters: dict, page: int, size: int) -> tuple[list[MonEventInbox], int]:
+        stmt = select(MonEventInbox)
+        conds = []
+        for key in ("source", "kind", "severity", "status"):
+            if filters.get(key):
+                conds.append(getattr(MonEventInbox, key) == filters[key])
+        if filters.get("start"):
+            conds.append(MonEventInbox.ts >= filters["start"])
+        if filters.get("end"):
+            conds.append(MonEventInbox.ts <= filters["end"])
+        if conds:
+            stmt = stmt.where(*conds)
+        total = self.session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+        rows = self.session.scalars(
+            stmt.order_by(MonEventInbox.received_at.desc()).offset((page - 1) * size).limit(size)
+        ).all()
+        return list(rows), int(total)
+
+
+class MonRuleRepository(BaseRepository[MonRule]):
+    model = MonRule
+
+    def enabled_rules(self) -> list[MonRule]:
+        return list(self.session.scalars(
+            select(MonRule).where(MonRule.deleted == 0, MonRule.enabled == 1)
+        ).all())
+
+    def search(self, filters: dict, page: int, size: int) -> tuple[list[MonRule], int]:
+        stmt = select(MonRule).where(MonRule.deleted == 0)
+        conds = []
+        if filters.get("name"):
+            conds.append(MonRule.name.ilike(f"%{filters['name']}%"))
+        if filters.get("event_kind"):
+            conds.append(MonRule.event_kind == filters["event_kind"])
+        if filters.get("event_source"):
+            conds.append(MonRule.event_source == filters["event_source"])
+        if filters.get("enabled") is not None:
+            conds.append(MonRule.enabled == filters["enabled"])
+        if conds:
+            stmt = stmt.where(*conds)
+        total = self.session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+        rows = self.session.scalars(
+            stmt.order_by(MonRule.id.desc()).offset((page - 1) * size).limit(size)
+        ).all()
+        return list(rows), int(total)
+
+
+class MonAlertRepository(BaseRepository[MonAlert]):
+    model = MonAlert
+
+    def active_by_rule_entity(self, rule_id: int, entity_id: str) -> MonAlert | None:
+        return self.session.scalar(
+            select(MonAlert).where(
+                MonAlert.rule_id == rule_id,
+                MonAlert.entity["entity_id"].as_string() == entity_id,
+                MonAlert.status.in_(("pending", "firing", "acknowledged")),
+            ).order_by(MonAlert.id.desc())
+        )
+
+    def search(self, filters: dict, page: int, size: int) -> tuple[list[MonAlert], int]:
+        stmt = select(MonAlert)
+        conds = []
+        if filters.get("rule_id"):
+            conds.append(MonAlert.rule_id == filters["rule_id"])
+        if filters.get("status"):
+            conds.append(MonAlert.status == filters["status"])
+        if filters.get("source"):
+            conds.append(MonAlert.source == filters["source"])
+        if filters.get("entity_id"):
+            conds.append(MonAlert.entity["entity_id"].as_string() == filters["entity_id"])
+        if filters.get("start"):
+            conds.append(MonAlert.fired_at >= filters["start"])
+        if filters.get("end"):
+            conds.append(MonAlert.fired_at <= filters["end"])
+        if conds:
+            stmt = stmt.where(*conds)
+        total = self.session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+        rows = self.session.scalars(
+            stmt.order_by(MonAlert.id.desc()).offset((page - 1) * size).limit(size)
+        ).all()
+        return list(rows), int(total)
+
+    def optimistic_update(self, alert_id: int, from_status: str, to_status: str, version: int,
+                          **fields) -> bool:
+        """CAS update: status version++ only when current status+version match."""
+        result = self.session.execute(
+            MonAlert.__table__.update()
+            .where(MonAlert.id == alert_id, MonAlert.status == from_status,
+                   MonAlert.version == version)
+            .values(status=to_status, version=version + 1, **fields)
+        )
+        return result.rowcount == 1
+
+
+class MonAlertEventLogRepository(BaseRepository[MonAlertEventLog]):
+    model = MonAlertEventLog
+
+    def append(self, alert_id: int, action: str, from_status: str | None, to_status: str | None,
+               severity: str | None, detail: dict | None, operator_id: int | None) -> None:
+        self.session.add(MonAlertEventLog(
+            alert_id=alert_id, action=action, from_status=from_status, to_status=to_status,
+            severity=severity, detail=detail, operator_id=operator_id
+        ))
+
+    def timeline(self, alert_id: int) -> list[MonAlertEventLog]:
+        return list(self.session.scalars(
+            select(MonAlertEventLog).where(MonAlertEventLog.alert_id == alert_id)
+            .order_by(MonAlertEventLog.id.asc())
+        ).all())

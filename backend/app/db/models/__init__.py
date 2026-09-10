@@ -12,6 +12,25 @@ from app.db.models.exec import ExecLog, ExecTask, ExecTaskHost
 from app.db.models.schedule import ApprovalRecord, ApprovalRequest, ApprovalRule, ScheduleRun, ScheduleTask
 from app.db.models.notify import AuditLog, ConfigRule, NotifyChannel, NotifyRecord
 from app.db.models.terminal import TerminalRecordingChunk, TerminalSession
+from app.db.models.monitor import (
+    MON_ADAPTER_STATUSES,
+    MON_ADAPTER_TYPES,
+    MON_ALERT_ACTIONS,
+    MON_ALERT_STATUSES,
+    MON_EVENT_STATUSES,
+    MON_KINDS,
+    MON_LEVELS,
+    MON_NOTIFY_SCENES,
+    MON_RULE_OPS,
+    MON_SOURCES,
+    MonAdapter,
+    MonAlert,
+    MonAlertEventLog,
+    MonEventInbox,
+    MonMetricDaily,
+    MonMetricSample,
+    MonRule,
+)
 
 __all__ = [
     "User",
@@ -39,4 +58,21 @@ __all__ = [
     "ConfigRule",
     "TerminalSession",
     "TerminalRecordingChunk",
+    "MonMetricSample",
+    "MonMetricDaily",
+    "MonAdapter",
+    "MonEventInbox",
+    "MonRule",
+    "MonAlert",
+    "MonAlertEventLog",
+    "MON_SOURCES",
+    "MON_KINDS",
+    "MON_ADAPTER_TYPES",
+    "MON_LEVELS",
+    "MON_RULE_OPS",
+    "MON_ALERT_STATUSES",
+    "MON_ALERT_ACTIONS",
+    "MON_EVENT_STATUSES",
+    "MON_ADAPTER_STATUSES",
+    "MON_NOTIFY_SCENES",
 ]

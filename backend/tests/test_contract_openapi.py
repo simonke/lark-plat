@@ -38,6 +38,29 @@ STAGE4_TERMINAL_PATHS = {
     "/api/v1/terminals/{session_id}/recording",
 }
 
+# P2-MA monitor scope (/monitor/*), frozen 2026-09-09
+STAGE_MONITOR_PATHS = {
+    "/api/v1/monitor/metrics",
+    "/api/v1/monitor/metrics/current",
+    "/api/v1/monitor/alerts",
+    "/api/v1/monitor/alerts/{alert_id}",
+    "/api/v1/monitor/alerts/{alert_id}/events",
+    "/api/v1/monitor/alerts/{alert_id}/acknowledge",
+    "/api/v1/monitor/alerts/{alert_id}/resolve",
+    "/api/v1/monitor/rules",
+    "/api/v1/monitor/rules/{rule_id}",
+    "/api/v1/monitor/rules/{rule_id}/status",
+    "/api/v1/monitor/rules/{rule_id}/test",
+    "/api/v1/monitor/adapters",
+    "/api/v1/monitor/adapters/{adapter_id}",
+    "/api/v1/monitor/adapters/{adapter_id}/status",
+    "/api/v1/monitor/adapters/{adapter_id}/test",
+    "/api/v1/monitor/events",
+    "/api/v1/monitor/events/{event_id}",
+    "/api/v1/monitor/ingest/{adapter_id}",
+    "/api/v1/monitor/ws-token",
+}
+
 # Seed permission points vs module-design §12 (stage-1 subset)
 STAGE1_PERMISSIONS = {
     "system:user:list",
@@ -87,13 +110,20 @@ def test_login_refresh_public_and_rest_guarded(openapi_spec):
 
 def test_path_count_stable(openapi_spec):
     paths = openapi_spec["paths"]
-    assert len(paths) == 71
+    assert len(paths) == 90
 
 
 def test_stage4_terminal_paths_present(openapi_spec):
     paths = openapi_spec["paths"]
     missing = STAGE4_TERMINAL_PATHS - set(paths)
     assert not missing, f"stage-4 terminal paths missing: {sorted(missing)}"
+
+
+def test_stage_monitor_paths_present(openapi_spec):
+    """P2-MA monitor scope must be present (add-only over the 71-path baseline)."""
+    paths = openapi_spec["paths"]
+    missing = STAGE_MONITOR_PATHS - set(paths)
+    assert not missing, f"P2-MA monitor paths missing: {sorted(missing)}"
 
 
 def test_stage1_scope_paths_present(openapi_spec):

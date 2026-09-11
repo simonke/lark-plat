@@ -44,7 +44,7 @@ C→S: {"type":"stop"} | {"type":"ping"}
 |------|------|------|
 | GET | /monitor/metrics | 时序查询：host_ids/group_id/metric_name/start/end/agg(5m/1h/1d) → {points:[{ts,value}]} |
 | GET | /monitor/metrics/current | 最新心跳值（主机详情页展示） |
-| POST | /monitor/rules | {kind, name, metric_name, op, value, duration_sec, scope_type, scope_ids, level, silence_sec, converge_sec, escalate_levels, notify_channel_ids} |
+| POST | /monitor/rules | {name, event_kind, metric_name, condition_operator, condition_threshold, condition_duration_seconds, scope_type, scope_ids:list[str], level, cooldown_seconds, converge_sec, escalate_levels, notify_channel_ids} |
 | GET | /monitor/rules | 分页 |
 | PUT | /monitor/rules/{id} | 编辑 |
 | DELETE | /monitor/rules/{id} | 删除 |
@@ -55,7 +55,7 @@ C→S: {"type":"stop"} | {"type":"ping"}
 | POST | /monitor/alerts/{id}/acknowledge | {remark} 确认（可多次，append-only） |
 | POST | /monitor/alerts/{id}/resolve | {remark} 手动恢复 |
 | GET | /monitor/alerts/{id}/events | 事件时间线 |
-| POST | /monitor/adapters | {name,direction,kind,type[prometheus/alertmanager/elk/skywalking/webhook],config{...},enabled}（密钥字段密文） |
+| POST | /monitor/adapters | {name, type[prometheus/alertmanager/elk/skywalking], endpoint, config{...}, enabled}（密钥字段密文） |
 | GET | /monitor/adapters | 列表 |
 | PUT | /monitor/adapters/{id} | 编辑（不传则保留原密文） |
 | DELETE | /monitor/adapters/{id} | 删除 |
@@ -66,13 +66,41 @@ C→S: {"type":"stop"} | {"type":"ping"}
 | GET | /monitor/events/{id} | 事件详情（含 raw 原始报文） |
 | GET | /monitor/ws-token | WS 握手 token（绑定用户在可见主机范围内的订阅 JWT，5min，同 exec 语义） |
 
-请求示例（规则）：
+请求示例（规则，按 MonRuleCreate 对齐）：
 ```json
-{ "kind": "metric", "name": "CPU 高负载", "metric_name": "cpu", "op": ">", "value": 90, "duration_sec": 300,
-  "scope_type": "group", "scope_ids": [3], "level": "warning", "silence_sec": 3600,
+{ "name": "CPU 高负载", "event_kind": "metric", "metric_name": "cpu",
+  "condition_operator": ">", "condition_threshold": 90, "condition_duration_seconds": 300,
+  "scope_type": "group", "scope_ids": ["g3"], "level": "warning", "cooldown_seconds": 3600,
   "converge_sec": 600, "escalate_levels": ["warning","critical"],
   "notify_channel_ids": [1,2] }
 ```
+
+请求示例（adapter，按 MonAdapterCreate 对齐，prometheus remote_write）：
+```json
+{ "name": "it-prometheus", "type": "prometheus", "endpoint": "http://prometheus:9090/api/v1/write",
+  "config": {"remote_write": true}, "enabled": 1 }
+```
+
+请求示例（ingest，归一化 MonEvent 推送）：
+```json
+POST /monitor/ingest/{adapter_id}
+{ "source": "prometheus", "kind": "metric", "metric_name": "cpu",
+  "entity": {"entity_type": "host", "entity_id": "web-01", "entity_name": "web-01"},
+  "value": 95.2, "severity": "warning",
+  "ts": "2026-09-11T12:00:00Z", "event_id": "prom-web01-1726056000" }
+```
+
+响应 data（成功，Result 裹层）：
+```json
+{ "accepted": 1, "rejected": 0, "adapter_id": 7 }
+```
+
+响应 data（不支持的 payload 形状 → dead-letter）：
+```json
+{ "accepted": 0, "rejected": 1, "adapter_id": 7 }
+```
+
+> 幂等语义：按 `source + event_id` 去重（`event_key = source:event_id`），同一 event_id 再次入站 accepted=1、dedup=True，不重复落库。入站格式：规范 MonEvent（必含 source/kind/entity/ts）；外部格式（alertmanager `{status,alerts[]}`、prometheus remote_write、elk、skywalking）由 adapter 归一化处理。
 
 ### WS `/ws/monitor` 实时推送帧协议（权威）
 握手：`GET /monitor/ws-token` → 绑定 JWT（5min），`WSS /api/v1/ws/monitor?token=<jwt>`。订阅范围服务端按 US-03 强制过滤（不可越权订阅）。

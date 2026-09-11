@@ -90,16 +90,16 @@ Agent 收到 → 落盘 temp + 累进写 offset 回传 → 完成 → file_verif
     - **SkyWalking**：APM 指标/链路告警归一化进入评估 → `kind=apm`；
     - **webhook 通用型**：任意第三方 JSON → 平台标准告警事件（字段映射可配）。
 - 指标采集：Agent 心跳 metrics 落库 + 指标帧批量补推；保留策略 raw 7 天 + 日聚合（`mon_metric_daily`）。
-- 告警规则：metric + op(=/</>/<=/>=) + value + duration(持续时长) + 生效范围(主机/分组) + 静默窗口 + 级别——规则作用于归一化事件，不区分自采/外部来源。
+- 告警规则：metric_name + condition_operator + condition_threshold + condition_duration_seconds(持续时长) + 生效范围(scope_type/scope_ids) + cooldown_seconds(静默窗口) + level——字段命名以 api-design-v3.md §2 / `MonRuleCreate` 为准；规则作用于归一化事件，不区分自采/外部来源。
 - 告警引擎（Celery beat）：周期扫描最近窗口指标/事件 → 评估触发 → **alert 生命周期 pending→firing→resolved** + **收敛（dedup/聚合同源重复）+ 升级（escalation 逐级提级）** → 复用 notify（场景 scene=alert_fire/alert_resolve）。
 - 告警处置：列表/详情/确认(acknowledge)/恢复(resolve)/手动触发规则测试；告警历史可查。
 - 实时推送：WS `/ws/monitor` 订阅指标/告警（帧协议权威见 api-design-v3.md §2；subscribe 范围服务端按 US-03 强制过滤）。
 
 ### 4.2 数据模型（表名遵循一期前缀惯例：`mon_*`；API 路由仍为 `/monitor/*`）
 - `mon_metric_sample`：host_id, metric_name, value, ts（按日分区 + (host_id, metric_name, ts) 索引；raw 7d 后清理，聚合入 `mon_metric_daily`）。
-- `mon_adapter`：name, direction(agent|inbound|outbound), kind(map: metric|alert|log|apm), type(prometheus|alertmanager|elk|skywalking|webhook), config(JSONB，endpoint/token/字段映射等，密钥类密文), enabled, created_by, updated_at。
+- `mon_adapter`：name(unique), type(prometheus|alertmanager|elk|skywalking), endpoint, config(JSONB，密钥类密文), enabled, status(healthy 等), error_message, last_heartbeat, metrics_received_count, created_by。（对齐落地 schema `{name,type,endpoint,config,enabled}`，旧 `direction`/`kind` 字段已弃用）
 - `mon_event_inbox`：归一化 MonEvent 入站（source, kind, entity, ts, value, severity, labels(JSONB), raw(JSONB), received_at）——规则评估前暂存/去重（按 source+event_id 幂等——外部 webhook/remote_write 可携带 event_id）。
-- `mon_rule`：name, kind, metric_name, op, value, duration_sec, scope_type(host|group), scope_ids(JSONB), level(info|warning|critical), silence_sec, converge_sec(收敛窗口), escalate_levels(JSONB，逐级升级), enabled, notify_channel_ids(JSONB, 复用 notify), created_by。
+- `mon_rule`：name, description, enabled, event_source(null=all), event_kind(metric|alert|log|apm), metric_name(event_kind=metric 时必填), condition_operator(>,<,>=,<=,==,!=), condition_threshold, condition_duration_seconds(持续达阈值秒数), scope_type(host|app|service|null=all), scope_ids(JSONB {ids:[entity_id]}, 生效范围), level, cooldown_seconds(静默窗口), converge_sec(收敛窗口), escalation_enabled, escalation_after_seconds, escalation_severity, escalate_levels(JSONB，逐级升级), notify_scene, notify_channel_ids(JSONB, 复用 notify), created_by。（对齐落地 schema，旧 `kind/op/value/duration_sec/silence_sec` 字段已弃用）
 - `mon_alert`：rule_id, entity(source: kind, host/app), source(agent|prometheus|alertmanager|elk|skywalking|webhook), **status(pending|firing|acknowledged|resolved)**（suppressed 为收敛窗口内 transient 标记，不持久化独立态）, fired_at, resolved_at, last_value, extra(JSONB)。
 - `mon_alert_event_log`：alert_id, action(fire|acknowledge|escalate|resolve|suppress), from_status, to_status, severity, detail(JSONB), operator_id(→sys_user), at, remark——append-only 留痕。
 

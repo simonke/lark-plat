@@ -8,9 +8,10 @@
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | /transfer/packages | multipart 上传（files[]）→ {package_id, items:[{path,size,sha256}]} |
-| DELETE | /transfer/packages/{id} | 删除上传包（被任务引用 409） |
+| POST | /transfer/packages | multipart 上传（files[]）→ {package_id, name?, items:[{path,size,sha256}]} |
+| GET | /transfer/packages | 分页列表：name/时间范围 → PageVO{list,total,page,size} |
 | GET | /transfer/packages/{id} | 包详情（files 校验和清单） |
+| DELETE | /transfer/packages/{id} | 删除上传包（被任务引用 409） |
 | POST | /transfer/tasks | {mode:push/pull, package_id?, source_host_path?, target_path, host_ids, overwrite, verify, limit_mbps?} → {id, task_no} |
 | GET | /transfer/tasks | 分页：mode/status/时间范围 |
 | GET | /transfer/tasks/{id} | 详情（hosts 汇总 + 校验状态） |
@@ -18,7 +19,7 @@
 | GET | /transfer/tasks/{id}/hosts/{transfer_host_id}/ws-token | WS 握手 token（绑定 transfer_host_id, 5min） |
 | POST | /transfer/tasks/{id}/stop | 终止 |
 | POST | /transfer/tasks/{id}/hosts/{transfer_host_id}/retry | 单主机重试（failed/verify_failed） |
-| GET | /transfer/tasks/{id}/stats | {total,pending,transferring,verifying,success,failed} |
+| GET | /transfer/tasks/{id}/stats | {total,pending,transferring,verifying,verify_failed,success,failed} |
 
 ### WS 实时进度（复刻 exec 模式）
 ```

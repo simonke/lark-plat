@@ -70,7 +70,7 @@ C→S: {"type":"stop"} | {"type":"ping"}
 ```json
 { "name": "CPU 高负载", "event_kind": "metric", "metric_name": "cpu",
   "condition_operator": ">", "condition_threshold": 90, "condition_duration_seconds": 300,
-  "scope_type": "group", "scope_ids": ["g3"], "level": "warning", "cooldown_seconds": 3600,
+  "scope_type": "host", "scope_ids": ["h1"], "level": "warning", "cooldown_seconds": 3600,
   "converge_sec": 600, "escalate_levels": ["warning","critical"],
   "notify_channel_ids": [1,2] }
 ```

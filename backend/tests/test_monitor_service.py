@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.core.exceptions import BadRequestError, NotFoundError
+from app import schemas
 from app.services import monitor_service
 
 NOW = datetime.now(timezone.utc)
@@ -138,6 +139,99 @@ def test_fingerprint_stable_sha256():
 def test_severity_fallback_unknown_to_warning():
     assert monitor_service._severity_from_status("critical") == "critical"
     assert monitor_service._severity_from_status("UNKNOWN") == "warning"
+
+
+# ── rules CRUD field persistence (regression lock, ruling 2026-09-11) ────────
+
+
+def test_persist_metric_sample_passes_source_to_upsert_daily(monkeypatch):
+    db = _Db()
+    adapter = SimpleNamespace(id=1, type="prometheus", enabled=1, name="p")
+    event = _metric_event()
+    captured = {}
+
+    def _add_sample(*args, **kwargs):
+        # class-attr mock receives self (repo instance) as args[0]
+        captured["add_source"] = args[6] if len(args) > 6 else kwargs.get("source")
+
+    def _upsert_daily(*args, **kwargs):
+        captured["daily_source"] = args[1] if len(args) > 1 else kwargs.get("source")
+
+    monkeypatch.setattr(monitor_service.MonMetricSampleRepository, "add_sample", _add_sample)
+    monkeypatch.setattr(monitor_service.MonMetricSampleRepository, "upsert_daily", _upsert_daily)
+
+    entity = event["entity"]
+    monitor_service._persist_metric_sample(db, adapter, event, entity, NOW)
+    assert captured == {"add_source": "prometheus", "daily_source": "prometheus"}
+
+
+def test_upsert_daily_insert_requires_source(monkeypatch):
+    db = _Db()
+    from datetime import date
+
+    repo = monitor_service.MonMetricSampleRepository(db)
+    monkeypatch.setattr(monitor_service.MonMetricSampleRepository, "add_sample",
+                        lambda *a, **kw: None)
+    repo.upsert_daily("prometheus", "host", "10.0.0.1", "cpu_usage", date(2026, 9, 11), 95.0)
+    assert db.added and len(db.added) == 1
+    row = db.added[0]
+    assert row.source == "prometheus"
+    assert row.entity_type == "host"
+    assert row.entity_id == "10.0.0.1"
+    assert row.metric_name == "cpu_usage"
+    assert row.sample_count == 1
+
+
+def test_create_rule_passes_all_fields(monkeypatch):
+    db = _Db()
+    data = schemas.MonRuleCreate(
+        name="CPU 高负载", event_kind="metric", metric_name="cpu_usage",
+        condition_operator=">", condition_threshold=90, condition_duration_seconds=300,
+        scope_type="host", scope_ids=["h1", "h2"], level="critical",
+        cooldown_seconds=3600, converge_sec=120,
+        escalation_enabled=1, escalate_levels=["warning", "critical"],
+        notify_channel_ids=[1, 2],
+    )
+    monkeypatch.setattr(monitor_service, "_feature_enabled", lambda db: True)
+    out = monitor_service.create_rule(db, _user(), data)
+    rule = db.added[0]
+    assert rule.scope_type == "host"
+    assert rule.scope_ids == {"ids": ["h1", "h2"]}
+    assert rule.level == "critical"
+    assert rule.converge_sec == 120
+    assert rule.escalate_levels == {"ids": ["warning", "critical"]}
+    assert out["scope_type"] == "host"
+    assert out["scope_ids"] == ["h1", "h2"]
+    assert out["level"] == "critical"
+    assert out["converge_sec"] == 120
+    assert out["escalate_levels"] == ["warning", "critical"]
+
+
+def test_update_rule_sets_scope_and_escalation(monkeypatch):
+    db = _Db()
+    rule = _rule(name="r")
+    data = schemas.MonRuleUpdate(
+        scope_type="app", scope_ids=["app-1"], level="info",
+        converge_sec=60, escalate_levels=["warning"],
+    )
+    monkeypatch.setattr(monitor_service.MonRuleRepository, "get", lambda self, i: rule)
+    out = monitor_service.update_rule(db, _user(), 1, data)
+    assert rule.scope_type == "app"
+    assert rule.scope_ids == {"ids": ["app-1"]}
+    assert rule.level == "info"
+    assert rule.converge_sec == 60
+    assert rule.escalate_levels == {"ids": ["warning"]}
+    assert out["scope_type"] == "app"
+    assert out["scope_ids"] == ["app-1"]
+    assert out["escalate_levels"] == ["warning"]
+
+
+def test_rule_out_scope_enums_reject_group():
+    rule = _rule(scope_type="host", scope_ids={"ids": ["h1"]}, escalate_levels={"ids": ["warning"]})
+    out = monitor_service._rule_out(rule)
+    assert out["scope_type"] in ("host", "app", "service", None)
+    assert out["scope_ids"] == ["h1"]
+    assert out["escalate_levels"] == ["warning"]
 
 
 # ── rule engine transitions ──────────────────────────────────────────────────
@@ -281,6 +375,93 @@ def test_ingest_disabled_adapter_rejected(monkeypatch):
     monkeypatch.setattr(monitor_service.MonAdapterRepository, "get", lambda self, i: adapter)
     with pytest.raises(BadRequestError):
         monitor_service.ingest(db, 1, {"source": "prometheus", "kind": "metric"})
+
+
+def test_build_event_key_source_event_id():
+    assert monitor_service.build_event_key("prometheus", "evt-1") == "prometheus:evt-1"
+    assert monitor_service.build_event_key("prometheus", None) is None
+    assert monitor_service.build_event_key("prometheus", "") is None
+
+
+def test_ingest_returns_summary_body(monkeypatch):
+    db = _Db()
+    adapter = SimpleNamespace(id=7, type="prometheus", enabled=1, name="p")
+    monkeypatch.setattr(monitor_service, "_feature_enabled", lambda db: True)
+    monkeypatch.setattr(monitor_service.MonAdapterRepository, "get", lambda self, i: adapter)
+    monkeypatch.setattr(monitor_service, "_process_event",
+                        lambda db, ad, raw: {"accepted": True, "dedup": False})
+    result = monitor_service.ingest(db, 7, {"source": "prometheus", "kind": "metric",
+                                            "entity": {"entity_id": "10.0.0.1"}})
+    assert result == {"accepted": 1, "rejected": 0, "adapter_id": 7}
+
+
+def test_process_event_dedups_same_event_key(monkeypatch):
+    db = _Db()
+    adapter = SimpleNamespace(id=1, type="prometheus", enabled=1, name="p")
+    event = {
+        "source": "prometheus", "kind": "metric",
+        "entity": {"entity_type": "host", "entity_id": "10.0.0.1", "entity_name": "h1"},
+        "ts": NOW.isoformat(), "value": 90.0, "event_id": "evt-1",
+    }
+    monkeypatch.setattr(monitor_service.MonEventInboxRepository, "by_event_key",
+                        lambda self, k: None)
+    monkeypatch.setattr(monitor_service.MonEventInboxRepository, "add_event",
+                        lambda self, **kw: SimpleNamespace(kind="metric"))
+    monkeypatch.setattr(monitor_service.MonMetricSampleRepository, "add_sample",
+                        lambda *a, **kw: None)
+    monkeypatch.setattr(monitor_service.MonMetricSampleRepository, "upsert_daily",
+                        lambda *a, **kw: None)
+    monkeypatch.setattr(monitor_service, "evaluate_event", lambda db, event: [])
+
+    first = monitor_service._process_event(db, adapter, event)
+    assert first["accepted"] is True
+    assert first["dedup"] is False
+
+    monkeypatch.setattr(monitor_service.MonEventInboxRepository, "by_event_key",
+                        lambda self, k: SimpleNamespace(id=99))
+    second = monitor_service._process_event(db, adapter, event)
+    assert second["accepted"] is True
+    assert second["dedup"] is True
+
+
+def test_process_event_second_send_does_not_persist_duplicate(monkeypatch):
+    db = _Db()
+    adapter = SimpleNamespace(id=1, type="prometheus", enabled=1, name="p")
+    event = {
+        "source": "prometheus", "kind": "metric",
+        "entity": {"entity_type": "host", "entity_id": "10.0.0.1", "entity_name": "h1"},
+        "ts": NOW.isoformat(), "value": 90.0, "event_id": "evt-1",
+    }
+    added = []
+
+    class _Probe:
+        def __init__(self):
+            self.__class__.calls = []
+
+        def __call__(self, *a, **kw):
+            self.__class__.calls.append(kw)
+            return SimpleNamespace(kind="metric")
+
+    monkeypatch.setattr(monitor_service.MonEventInboxRepository, "by_event_key",
+                        lambda self, k: None)
+    monkeypatch.setattr(monitor_service.MonEventInboxRepository, "add_event", _Probe())
+    monkeypatch.setattr(monitor_service.MonMetricSampleRepository, "add_sample",
+                        lambda *a, **kw: None)
+    monkeypatch.setattr(monitor_service.MonMetricSampleRepository, "upsert_daily",
+                        lambda *a, **kw: None)
+    monkeypatch.setattr(monitor_service, "evaluate_event", lambda db, event: [])
+
+    first = monitor_service._process_event(db, adapter, event)
+    assert first == {"accepted": True, "dedup": False,
+                     "fingerprint": monitor_service.build_fingerprint(event)}
+    assert len(_Probe.calls) == 1
+
+    monkeypatch.setattr(monitor_service.MonEventInboxRepository, "by_event_key",
+                        lambda self, k: SimpleNamespace(id=99))
+    second = monitor_service._process_event(db, adapter, event)
+    assert second == {"accepted": True, "dedup": True,
+                      "fingerprint": monitor_service.build_fingerprint(event)}
+    assert len(_Probe.calls) == 1  # dedup: no duplicate inbox row persisted
 
 
 def test_encrypt_config_secrets_wraps_secret_keys():

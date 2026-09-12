@@ -639,16 +639,18 @@ class MonMetricSampleRepository(BaseRepository[MonMetricSample]):
                 seen[key] = r
         return list(seen.values())
 
-    def upsert_daily(self, entity_type: str, entity_id: str, metric_name: str, day, value: float) -> None:
+    def upsert_daily(self, source: str, entity_type: str, entity_id: str, metric_name: str, day, value: float) -> None:
         row = self.session.scalar(
             select(MonMetricDaily).where(
-                MonMetricDaily.entity_id == entity_id, MonMetricDaily.entity_type == entity_type,
+                MonMetricDaily.source == source, MonMetricDaily.entity_id == entity_id,
+                MonMetricDaily.entity_type == entity_type,
                 MonMetricDaily.metric_name == metric_name, MonMetricDaily.day == day,
             )
         )
         if row is None:
             self.session.add(MonMetricDaily(
-                entity_type=entity_type, entity_id=entity_id, metric_name=metric_name, day=day,
+                source=source, entity_type=entity_type, entity_id=entity_id,
+                metric_name=metric_name, day=day,
                 avg_value=value, max_value=value, min_value=value, sample_count=1
             ))
             return

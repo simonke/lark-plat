@@ -740,4 +740,214 @@ export interface RecentApproval {
   created_at: string
 }
 
+// ---------------------------------------------------------------- monitoring (P2-MA v3.0)
+// 归一化事件模型 MonEvent 契约 (api-design v3.0 §P2-MA)
+export type MonEventKind = 'metric' | 'alert' | 'log' | 'apm'
+export type MonSource = 'agent' | 'prometheus' | 'elk' | 'skywalking'
+export type MonSeverity = 'critical' | 'warning' | 'info'
+
+export interface MonEntity {
+  entity_type: 'host' | 'app' | 'service'
+  entity_id: string
+  entity_name: string
+}
+
+export interface MonEvent {
+  source: MonSource
+  kind: MonEventKind
+  entity: MonEntity
+  ts: string
+  value: number | null
+  severity: MonSeverity | null
+  labels: Record<string, unknown>
+  raw: Record<string, unknown>
+  fingerprint: string
+}
+
+export interface MonMetricQuery {
+  source?: MonSource
+  metric_name?: string
+  entity_type?: 'host' | 'app' | 'service'
+  entity_id?: string
+  start?: string
+  end?: string
+  agg?: '5m' | '1h' | '1d'
+}
+
+export interface MonMetricPoint {
+  ts: string
+  value: number
+}
+
+export interface MonMetricSeries {
+  metric_name: string
+  entity_id: string
+  entity_name: string
+  source: MonSource
+  points: MonMetricPoint[]
+}
+
+export interface MonAlertEventOut {
+  id: string
+  rule_id: string | null
+  rule_name: string | null
+  source: MonSource
+  kind: MonEventKind
+  entity_id: string
+  entity_name: string
+  severity: MonSeverity
+  status: string
+  labels: Record<string, unknown>
+  first_seen_at: string
+  last_seen_at: string
+  resolved_at: string | null
+}
+
+export interface MonAlertEventQuery {
+  status?: string
+  severity?: MonSeverity
+  source?: MonSource
+  rule_id?: string
+  entity_id?: string
+  start?: string
+  end?: string
+  page?: number
+  size?: number
+}
+
+// WS /ws/monitor 推送帧契约 (api-design-v3.md §2, S→C)
+export type MonAlertAction = 'fire' | 'acknowledge' | 'escalate' | 'resolve' | 'suppress'
+
+export interface MonAlertOut {
+  id: string
+  rule_id: string | null
+  rule_name: string | null
+  entity: MonEntity
+  source: MonSource
+  status: string
+  severity: MonSeverity
+  last_value: number | null
+  fired_at: string | null
+  resolved_at: string | null
+  action: MonAlertAction
+  ts: string
+}
+
+export interface MonMetricFrame {
+  host_id: string
+  metric_name: string
+  value: number
+  ts: string
+}
+
+export interface MonWsFrame<T = unknown> {
+  type: 'hello' | 'alert' | 'metric' | 'pong' | string
+  data: T
+}
+
+export interface MonSubscribeIn {
+  scope?: string
+  ids?: string[]
+}
+
+export interface MonHelloData {
+  subscribed: boolean
+  ids: string[]
+}
+
+export interface AlertRuleCreate {
+  name: string
+  description?: string
+  enabled?: boolean
+  event_source?: MonSource | null
+  event_kind: MonEventKind
+  metric_name?: string
+  condition_operator: '>' | '<' | '>=' | '<=' | '==' | '!='
+  condition_threshold: number
+  condition_duration_seconds?: number
+  scope_type?: string | null
+  scope_ids?: string[] | null
+  level?: string
+  cooldown_seconds?: number
+  converge_sec?: number
+  escalation_enabled?: boolean
+  escalation_after_seconds?: number
+  escalation_severity?: MonSeverity
+  escalate_levels?: string[] | null
+  notify_scene?: string
+  notify_channel_ids?: number[]
+}
+
+export interface AlertRuleUpdate {
+  name?: string
+  description?: string | null
+  enabled?: boolean
+  event_source?: MonSource | null
+  event_kind?: MonEventKind
+  metric_name?: string | null
+  condition_operator?: string
+  condition_threshold?: number
+  condition_duration_seconds?: number
+  scope_type?: string | null
+  scope_ids?: string[] | null
+  level?: string
+  cooldown_seconds?: number
+  converge_sec?: number
+  escalation_enabled?: boolean
+  escalation_after_seconds?: number
+  escalation_severity?: MonSeverity
+  escalate_levels?: string[] | null
+  notify_scene?: string
+  notify_channel_ids?: number[]
+}
+
+export interface AlertRuleOut {
+  id: string
+  name: string
+  description: string | null
+  enabled: boolean
+  event_source: MonSource | null
+  event_kind: MonEventKind
+  metric_name: string | null
+  condition_operator: string
+  condition_threshold: number
+  condition_duration_seconds: number
+  scope_type: string | null
+  scope_ids: string[] | null
+  level: string
+  cooldown_seconds: number
+  converge_sec: number
+  escalation_enabled: boolean
+  escalation_after_seconds: number
+  escalation_severity: MonSeverity
+  escalate_levels: string[] | null
+  notify_scene: string
+  notify_channel_ids: number[]
+  created_by: number | null
+  created_at: string
+  updated_at: string
+}
+
+export interface AlertRuleQuery {
+  name?: string
+  enabled?: boolean
+  event_kind?: MonEventKind
+  event_source?: MonSource
+  page?: number
+  size?: number
+}
+
+export interface AdapterStatus {
+  type: MonSource
+  enabled: boolean
+  connected: boolean
+  detail: string
+  last_check_at: string | null
+}
+
+export interface AdapterTestResult {
+  ok: boolean
+  detail: string
+}
+
 

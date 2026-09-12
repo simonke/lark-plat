@@ -43,6 +43,16 @@
           <el-menu-item index="/operations/terminals" v-if="auth.hasPerm('terminal:list')">Web 终端</el-menu-item>
           <el-menu-item index="/operations/notifications" v-if="auth.hasPerm('notify:channel:list')">通知中心</el-menu-item>
         </el-sub-menu>
+        <el-sub-menu index="monitoring" v-if="auth.hasPerm('monitor:metric:view') || auth.hasPerm('monitor:alert:list') || auth.hasPerm('monitor:rule:list')">
+          <template #title>
+            <el-icon><DataLine /></el-icon>
+            <span>监控告警</span>
+          </template>
+          <el-menu-item index="/monitor/dashboard" v-if="auth.hasPerm('monitor:metric:view')">监控面板</el-menu-item>
+          <el-menu-item index="/monitor/alerts" v-if="auth.hasPerm('monitor:alert:list')">告警事件</el-menu-item>
+          <el-menu-item index="/monitor/rules" v-if="auth.hasPerm('monitor:rule:list')">告警规则</el-menu-item>
+          <el-menu-item index="/monitor/adapters" v-if="auth.hasPerm('monitor:rule:list')">采集适配器</el-menu-item>
+        </el-sub-menu>
       </el-menu>
     </el-aside>
     <el-container>
@@ -90,7 +100,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { DataBoard, Setting, ArrowDown, Monitor, Promotion, Finished } from '@element-plus/icons-vue'
+import { DataBoard, Setting, ArrowDown, Monitor, Promotion, Finished, DataLine } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 import { changePassword } from '../api/auth'
 import { extractError } from '../api/http'

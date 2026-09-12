@@ -80,6 +80,26 @@ const routes: RouteRecordRaw[] = [
         name: 'operations-notifications',
         component: () => import('../views/notify/NotifyView.vue'),
       },
+      {
+        path: 'monitor/dashboard',
+        name: 'monitor-dashboard',
+        component: () => import('../views/monitoring/MonitoringDashboardView.vue'),
+      },
+      {
+        path: 'monitor/alerts',
+        name: 'monitor-alerts',
+        component: () => import('../views/monitoring/AlertsView.vue'),
+      },
+      {
+        path: 'monitor/rules',
+        name: 'monitor-rules',
+        component: () => import('../views/monitoring/AlertRulesView.vue'),
+      },
+      {
+        path: 'monitor/adapters',
+        name: 'monitor-adapters',
+        component: () => import('../views/monitoring/AdaptersView.vue'),
+      },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/' },

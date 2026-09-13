@@ -43,10 +43,11 @@ C→S: {"type":"stop"} | {"type":"ping"}
 - `host_ids` 请求为 `number[]`；任务出参 `TransferTaskOut.host_ids` 透传 JSONB `{ids:[...]}` → `Record<string,unknown>|null`
 - 任务创建返回 `{id, task_no, status, pending}`（非全量 TaskOut）
 - 主机出参 `TransferHostOut` 含 `channel`（agent/ssh/degraded）
+- stats 归并口径（v1.2）：`failed` = 终态非成功计数（`failed/verify_failed` 失败 + `degraded/canceled` 不可用）；`transferring` = `transferring+pulling`；七键守恒（求和 = total）。任务聚合判定与 stats 数字归并两级语义分家：degraded 非失败只约束聚合（全 degraded=partial），stats 层面仍归入 failed 保持守恒
 
-两级状态枚举（权威，v1.1）：
+两级状态枚举（权威，v1.1，聚合规则 v1.2）：
 - **host 级**：`pending|pulling|transferring|verifying|success|failed|verify_failed|degraded|canceled`（含 pulling=拉取中；verify_failed 可 retry；degraded=通道不可用，非失败不计硬失败）
-- **task 级**：`processing|success|partial|failed|canceled`（聚合：全 success=success / 部分=partial / 全失败=failed）
+- **task 级**：`processing|success|partial|failed|canceled`（聚合：存在 success → success/partial（全 success=success，其余=partial）；无 success 时 → 无真失败则 partial（如全 degraded）否则 failed）
 
 权限点：transfer:package:list/add/del / transfer:task:list/run/stop/retry/log（「文件分发」菜单 `transfer:package:list` path=/transfer/tasks，children 含 task:list 共 7 按钮）
 

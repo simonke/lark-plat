@@ -10,8 +10,10 @@ host -> write back agent_id (contract §12 L229 payload carries hostname/ip).
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
+import os
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
@@ -22,9 +24,14 @@ from app.repositories import (
     ExecLogRepository,
     ExecTaskHostRepository,
     ExecTaskRepository,
+    FileItemRepository,
     HostRepository,
+    TransferHostRepository,
+    TransferTaskRepository,
+    TransferLogRepository,
 )
 from app.ws.exec_ws import broadcast
+from app.ws.transfer_ws import broadcast as broadcast_transfer
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -80,6 +87,17 @@ def task_has_inprocess_agent(db, task_id: int) -> bool:
     process. The exec frames must then be dispatched in-process so they reach the
     connected agent gateway (celery runs in a separate process)."""
     for th in ExecTaskHostRepository(db).by_task(task_id):
+        host = HostRepository(db).get(th.host_id) if th.host_id else None
+        if host and host.agent_id and agent_online(host.agent_id):
+            return True
+    return False
+
+
+def task_has_inprocess_transfer(db, task_id: int) -> bool:
+    """Same probe for transfer tasks (TransferHostRepository)."""
+    from app.repositories import TransferHostRepository
+
+    for th in TransferHostRepository(db).by_task(task_id):
         host = HostRepository(db).get(th.host_id) if th.host_id else None
         if host and host.agent_id and agent_online(host.agent_id):
             return True
@@ -158,6 +176,12 @@ async def _handle_frames(websocket, agent_id: str) -> None:
                 await _persist_logs(data)
             elif mtype == "exec_result":
                 await _persist_result(data)
+            elif mtype == "file_chunk_ack":
+                await _transfer_chunk_ack(data)
+            elif mtype == "file_chunk":
+                await _transfer_pull_chunk(data)
+            elif mtype == "file_result":
+                await _transfer_result(data)
             elif mtype == "pong":
                 pass
     except WebSocketDisconnect:
@@ -309,3 +333,118 @@ def _maybe_finalize_task(db, exec_task_id: int) -> None:
         task.version += 1
         task.finished_at = datetime.now(timezone.utc)
         db.commit()
+
+
+# =============================================================== transfer frames
+
+
+async def _transfer_chunk_ack(data: dict) -> None:
+    """C->S file_chunk_ack: advance the per-host chunk cursor (resume point)."""
+    db = SessionLocal()
+    try:
+        th = TransferHostRepository(db).by_id(int(data["transfer_host_id"]))
+        if th is None:
+            return
+        offset = int(data.get("offset", 0))
+        TransferHostRepository(db).update_status(th.id, th.status, current_offset=offset)
+        db.commit()
+        await broadcast_transfer(th.id, {"type": "progress", "data": {
+            "transfer_host_id": th.id, "host_id": th.host_id,
+            "offset": offset, "bytes": int(data.get("bytes", 0)),
+        }})
+    finally:
+        db.close()
+
+
+async def _transfer_pull_chunk(data: dict) -> None:
+    """C->S file_chunk (pull mode): persist bytes streamed back from the agent."""
+    db = SessionLocal()
+    try:
+        th = TransferHostRepository(db).by_id(int(data["transfer_host_id"]))
+        if th is None:
+            return
+        task = TransferTaskRepository(db).get(th.transfer_task_id)
+        if task is None or task.mode != "pull":
+            return
+        payload = base64.b64decode(data.get("data") or "")
+        if not payload:
+            return
+        path = _pull_store_path(task.id, task.source_host_path)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "ab") as fh:
+            fh.write(payload)
+        offset = int(data.get("offset", 0)) + len(payload)
+        TransferHostRepository(db).update_status(th.id, th.status, current_offset=offset)
+        db.commit()
+        await broadcast_transfer(th.id, {"type": "progress", "data": {
+            "transfer_host_id": th.id, "host_id": th.host_id,
+            "offset": offset, "bytes": int(data.get("bytes", 0)),
+        }})
+    finally:
+        db.close()
+
+
+def _pull_store_path(task_id: int, source_host_path: str | None) -> str:
+    base = os.path.join(settings.transfer_store_dir, "pull", str(task_id))
+    name = os.path.basename(source_host_path or "file").strip() or "file"
+    return os.path.join(base, name)
+
+
+def _expected_sha256(db, task, th) -> str | None:
+    if task.mode == "push" and task.package_id:
+        items = FileItemRepository(db).by_package(task.package_id)
+        if len(items) == 1:
+            return items[0].sha256
+        return None  # multi-file: verification reported per file by the agent
+    return None
+
+
+async def _transfer_result(data: dict) -> None:
+    """C->S file_result: finalize a transfer_host and aggregate the task."""
+    db = SessionLocal()
+    try:
+        th = TransferHostRepository(db).by_id(int(data["transfer_host_id"]))
+        if th is None:
+            return
+        task = TransferTaskRepository(db).get(th.transfer_task_id)
+        if task is None:
+            return
+        status = data.get("status", "success")
+        sha256 = (data.get("sha256") or "").lower()
+        error = data.get("error")
+        if task.verify and sha256:
+            expected = _expected_sha256(db, task, th)
+            if expected and sha256 != expected.lower():
+                status = "verify_failed"
+                error = f"sha256 mismatch (expect {expected}, got {sha256})"
+        if status not in ("success", "failed", "verify_failed", "canceled"):
+            status = "failed"
+        if task.mode == "pull" and status == "success":
+            await _append_transfer_log(db, th, f"pulled to {_pull_store_path(task.id, task.source_host_path)}")
+        TransferHostRepository(db).update_status(th.id, status,
+            verify_sha256=sha256 or None, error=error,
+            finished_at=datetime.now(timezone.utc))
+        db.commit()
+        await broadcast_transfer(th.id, {"type": "status", "data": {"status": status, "error": error}})
+        await broadcast_transfer(th.id, {"type": "result", "data": {
+            "transfer_host_id": th.id, "host_id": th.host_id, "hostname": th.hostname,
+            "status": status, "sha256": sha256 or None, "error": error,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }})
+        _maybe_finalize_transfer_task(db, th.transfer_task_id)
+    finally:
+        db.close()
+
+
+async def _append_transfer_log(db, th, content: str, level: str = "info") -> None:
+    repo = TransferLogRepository(db)
+    repo.append(th.id, repo.max_seq(th.id) + 1, level, content)
+
+
+def _maybe_finalize_transfer_task(db, transfer_task_id: int) -> None:
+    """End-of-run aggregation for transfer tasks (agent loop mirrors celery path)."""
+    from app.tasks.transfer_tasks import _maybe_finalize
+
+    task = TransferTaskRepository(db).get(transfer_task_id)
+    if task is not None:
+        _maybe_finalize(db, task)

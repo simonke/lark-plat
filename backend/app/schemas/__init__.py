@@ -448,6 +448,106 @@ class MonAdapterStatusIn(BaseModel):
     enabled: int = Field(ge=0, le=1)
 
 
+# ---------------------------------------------------------------- transfer
+
+
+class TransferPackageUploadIn(BaseModel):
+    name: str = Field(default="", max_length=256)
+
+
+class PackageItemOut(BaseModel):
+    path: str
+    size: int
+    sha256: str
+
+
+class TransferPackageOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+    file_count: int
+    total_size: int
+    created_by: int | None
+    created_at: datetime
+
+
+class TransferPackageDetail(TransferPackageOut):
+    items: list[PackageItemOut] = []
+
+
+class TransferTaskCreate(BaseModel):
+    mode: str = "push"  # push/pull
+    package_id: int | None = None  # required for push
+    source_host_id: int | None = None  # source host reference (pull)
+    source_host_path: str | None = None  # required for pull (whitelist checked)
+    target_path: str = Field(min_length=1, max_length=512)
+    host_ids: list[int] = Field(min_length=1)
+    overwrite: int = Field(default=0, ge=0, le=1)
+    verify: int = Field(default=1, ge=0, le=1)
+    limit_mbps: int | None = Field(default=None, ge=1, le=10000)
+
+
+class TransferTaskOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    task_no: str
+    mode: str
+    package_id: int | None
+    source_host_id: int | None
+    source_host_path: str | None
+    target_path: str
+    host_ids: dict | None
+    overwrite: int
+    verify: int
+    limit_mbps: int | None
+    status: str
+    created_by: int | None
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+
+
+class TransferTaskDetail(TransferTaskOut):
+    hosts: list["TransferHostOut"] = []
+
+
+class TransferHostOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    host_id: int
+    hostname: str
+    ip: str
+    channel: str
+    status: str
+    current_offset: int
+    verify_sha256: str | None
+    error: str | None
+    started_at: datetime | None
+    finished_at: datetime | None
+
+
+class TransferLogOut(BaseModel):
+    seq: int
+    level: str
+    content: str
+    created_at: datetime
+
+
+class TransferLogPage(BaseModel):
+    list: list[TransferLogOut]
+    next_seq: int
+
+
+class TransferStats(BaseModel):
+    total: int = 0
+    pending: int = 0
+    transferring: int = 0
+    verifying: int = 0
+    verify_failed: int = 0
+    success: int = 0
+    failed: int = 0
+
+
 # ---------------------------------------------------------------- terminal
 
 

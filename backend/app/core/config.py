@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     exec_host_concurrency: int = 5
     exec_batch_threshold: int = 50
 
+    transfer_store_dir: str = "data/transfer/packages"
+
     cors_origins: list[str] = ["http://localhost:5173"]
 
     audit_append_only: bool = True

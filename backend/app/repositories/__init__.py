@@ -38,6 +38,11 @@ from app.db.models import (
     ScriptVersion,
     TerminalRecordingChunk,
     TerminalSession,
+    FileItem,
+    FilePackage,
+    TransferHost,
+    TransferLog,
+    TransferTask,
     User,
     UserRole,
 )
@@ -816,3 +821,136 @@ class MonAlertEventLogRepository(BaseRepository[MonAlertEventLog]):
             select(MonAlertEventLog).where(MonAlertEventLog.alert_id == alert_id)
             .order_by(MonAlertEventLog.id.asc())
         ).all())
+
+
+class FilePackageRepository(BaseRepository[FilePackage]):
+    model = FilePackage
+
+    def search(self, name: str | None, start, end, page: int, size: int) -> tuple[list[FilePackage], int]:
+        stmt = select(FilePackage)
+        conds = []
+        if name:
+            conds.append(FilePackage.name.ilike(f"%{name}%"))
+        if start:
+            conds.append(FilePackage.created_at >= start)
+        if end:
+            conds.append(FilePackage.created_at <= end)
+        if conds:
+            stmt = stmt.where(*conds)
+        total = self.session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+        rows = self.session.scalars(
+            stmt.order_by(FilePackage.id.desc()).offset((page - 1) * size).limit(size)
+        ).all()
+        return list(rows), int(total)
+
+    def referenced_count(self, package_id: int) -> int:
+        return int(self.session.scalar(
+            select(func.count()).select_from(TransferTask).where(
+                TransferTask.package_id == package_id,
+                TransferTask.status.in_(("processing",)),
+            )
+        ) or 0)
+
+
+class FileItemRepository(BaseRepository[FileItem]):
+    model = FileItem
+
+    def by_package(self, package_id: int) -> list[FileItem]:
+        return list(self.session.scalars(
+            select(FileItem).where(FileItem.package_id == package_id).order_by(FileItem.id)
+        ).all())
+
+
+class TransferTaskRepository(BaseRepository[TransferTask]):
+    model = TransferTask
+
+    def by_task_no(self, task_no: str) -> TransferTask | None:
+        return self.session.scalar(select(TransferTask).where(TransferTask.task_no == task_no))
+
+    def search(self, filters: dict[str, Any], page: int, size: int) -> tuple[list[TransferTask], int]:
+        stmt = select(TransferTask)
+        conds = []
+        if filters.get("mode"):
+            conds.append(TransferTask.mode == filters["mode"])
+        if filters.get("status"):
+            conds.append(TransferTask.status == filters["status"])
+        if filters.get("created_by"):
+            conds.append(TransferTask.created_by == filters["created_by"])
+        if filters.get("start"):
+            conds.append(TransferTask.created_at >= filters["start"])
+        if filters.get("end"):
+            conds.append(TransferTask.created_at <= filters["end"])
+        if conds:
+            stmt = stmt.where(*conds)
+        total = self.session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+        rows = self.session.scalars(
+            stmt.order_by(TransferTask.id.desc()).offset((page - 1) * size).limit(size)
+        ).all()
+        return list(rows), int(total)
+
+    def optimistic_update(self, task_id: int, from_status: str, to_status: str, version: int) -> bool:
+        result = self.session.execute(
+            TransferTask.__table__.update()
+            .where(TransferTask.id == task_id, TransferTask.status == from_status,
+                   TransferTask.version == version)
+            .values(status=to_status, version=version + 1)
+        )
+        return result.rowcount == 1
+
+
+class TransferHostRepository(BaseRepository[TransferHost]):
+    model = TransferHost
+
+    def by_task(self, task_id: int) -> list[TransferHost]:
+        return list(self.session.scalars(
+            select(TransferHost).where(TransferHost.transfer_task_id == task_id)
+            .order_by(TransferHost.id)
+        ).all())
+
+    def by_id(self, transfer_host_id: int) -> TransferHost | None:
+        return self.session.get(TransferHost, transfer_host_id)
+
+    def stats(self, task_id: int) -> dict[str, int]:
+        rows = self.session.execute(
+            select(TransferHost.status, func.count()).where(TransferHost.transfer_task_id == task_id)
+            .group_by(TransferHost.status)
+        ).all()
+        return {s: c for s, c in rows}
+
+    def active_count(self, task_id: int) -> int:
+        return int(self.session.scalar(
+            select(func.count()).select_from(TransferHost).where(
+                TransferHost.transfer_task_id == task_id,
+                TransferHost.status.in_(("pending", "pulling", "transferring", "verifying")),
+            )
+        ) or 0)
+
+    def update_status(self, transfer_host_id: int, status: str, **fields) -> None:
+        values = {"status": status, **fields}
+        self.session.execute(
+            TransferHost.__table__.update().where(TransferHost.id == transfer_host_id).values(**values)
+        )
+
+
+class TransferLogRepository(BaseRepository[TransferLog]):
+    model = TransferLog
+
+    def append(self, transfer_host_id: int, seq: int, level: str, content: str) -> None:
+        self.session.add(TransferLog(
+            transfer_host_id=transfer_host_id, seq=seq, level=level, content=content
+        ))
+
+    def after_seq(self, transfer_host_id: int, after_seq: int, size: int) -> tuple[list[TransferLog], int]:
+        stmt = select(TransferLog).where(
+            TransferLog.transfer_host_id == transfer_host_id, TransferLog.seq > after_seq
+        )
+        total = self.session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+        rows = self.session.scalars(stmt.order_by(TransferLog.seq.asc()).limit(size)).all()
+        return list(rows), int(total)
+
+    def max_seq(self, transfer_host_id: int) -> int:
+        return int(self.session.scalar(
+            select(func.max(TransferLog.seq)).where(
+                TransferLog.transfer_host_id == transfer_host_id
+            )
+        ) or 0)

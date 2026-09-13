@@ -1,7 +1,7 @@
 """Seed-data existence contract (module-design §12).
 
 Static assertion against app/db/seed.py (DB-free): the RBAC baseline must
-declare the full permission-point tree (18 menus + 53 buttons post P2-MA) and
+declare the full permission-point tree (19 menus + 59 buttons post P2-1) and
 the 3 builtin roles. Runtime presence is verified by integration against
 /system/permissions; this guards the declared contract itself.
 """
@@ -22,8 +22,8 @@ MONITOR_CODES = {
 def test_seed_tree_permission_points():
     menus = [node[0] for node in PERMISSION_TREE]
     buttons = [child[0] for node in PERMISSION_TREE for child in node[5]]
-    assert len(menus) == 18
-    assert len(buttons) == 53
+    assert len(menus) == 19
+    assert len(buttons) == 59
     assert len(set(menus)) == len(menus)
     assert len(set(buttons)) == len(buttons)
 
@@ -106,11 +106,29 @@ def test_viewer_role_is_read_only():
     assert all(
         p.endswith(":list")
         or p in {
-            "dashboard:view", "exec:task:log", "terminal:view",
+            "dashboard:view", "exec:task:log", "transfer:task:log", "terminal:view",
             "monitor:metric:view", "monitor:alert:view",
         }
         for p in view
     )
+
+
+def test_p21_transfer_bindings():
+    """P2-1 frozen bindings: operator holds the full transfer surface; viewer is
+    read-only (package list + task list/log); task run is an operator-only op."""
+    op = set(DEFAULT_ROLES["operator"]["permissions"])
+    view = set(DEFAULT_ROLES["viewer"]["permissions"])
+    full = {
+        "transfer:package:list", "transfer:package:add", "transfer:package:del",
+        "transfer:task:list", "transfer:task:run", "transfer:task:stop",
+        "transfer:task:retry", "transfer:task:log",
+    }
+    assert full <= op
+    assert {"transfer:package:list", "transfer:task:list", "transfer:task:log"} <= view
+    assert not (view & {"transfer:package:add", "transfer:package:del",
+                        "transfer:task:run", "transfer:task:stop", "transfer:task:retry"})
+    path_by_code = {node[0]: node[3] for node in PERMISSION_TREE}
+    assert path_by_code["transfer:package:list"] == "/transfer/tasks"
 
 
 def test_admin_user_bound_to_admin_role_in_seed_source():

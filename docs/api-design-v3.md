@@ -12,7 +12,7 @@
 | GET | /transfer/packages | 分页列表：name/时间范围 → PageVO{list,total,page,size} |
 | GET | /transfer/packages/{id} | 包详情（files 校验和清单） |
 | DELETE | /transfer/packages/{id} | 删除上传包（被任务引用 409） |
-| POST | /transfer/tasks | {mode:push/pull, package_id?, source_host_path?, target_path, host_ids, overwrite, verify, limit_mbps?} → {id, task_no} |
+| POST | /transfer/tasks | {mode:push/pull, package_id?, source_host_path?, source_host_id?, target_path, host_ids, overwrite, verify, limit_mbps?} → {id, task_no, status, pending} |
 | GET | /transfer/tasks | 分页：mode/status/时间范围 |
 | GET | /transfer/tasks/{id} | 详情（hosts 汇总 + 校验状态） |
 | GET | /transfer/tasks/{id}/hosts/{transfer_host_id}/logs | ?after_seq=&size= 历史补拉（同 exec 语义） |
@@ -30,14 +30,25 @@ C→S: {"type":"stop"} | {"type":"ping"}
 
 请求示例（push）：
 ```json
-{ "mode": "push", "package_id": 7, "target_path": "/opt/pkg/app", "host_ids": [1,2,3], "overwrite": true, "verify": true }
+{ "mode": "push", "package_id": 7, "target_path": "/opt/pkg/app", "host_ids": [1,2,3], "overwrite": 1, "verify": 1 }
 ```
 响应 data：
 ```json
 { "id": 12, "task_no": "TF-20260908-001", "status": "processing", "pending": 3 }
 ```
 
-权限点：transfer:package:list/add/del / transfer:task:list/run/stop/retry/log
+字段形状（v1.1，落地实现为权威）：
+- 包列表项 `TransferPackageOut`：`file_count`/`total_size`（列表不含 items）；详情 `GET /packages/{id}` 返回 `TransferPackageDetail`（含 items[{path,size,sha256}]）；上传返回 `{package_id, items}`
+- `overwrite`/`verify` 为 0|1（int，JSON 宽进窄出，非 bool）
+- `host_ids` 请求为 `number[]`；任务出参 `TransferTaskOut.host_ids` 透传 JSONB `{ids:[...]}` → `Record<string,unknown>|null`
+- 任务创建返回 `{id, task_no, status, pending}`（非全量 TaskOut）
+- 主机出参 `TransferHostOut` 含 `channel`（agent/ssh/degraded）
+
+两级状态枚举（权威，v1.1）：
+- **host 级**：`pending|pulling|transferring|verifying|success|failed|verify_failed|degraded|canceled`（含 pulling=拉取中；verify_failed 可 retry；degraded=通道不可用，非失败不计硬失败）
+- **task 级**：`processing|success|partial|failed|canceled`（聚合：全 success=success / 部分=partial / 全失败=failed）
+
+权限点：transfer:package:list/add/del / transfer:task:list/run/stop/retry/log（「文件分发」菜单 `transfer:package:list` path=/transfer/tasks，children 含 task:list 共 7 按钮）
 
 ## 2. 监控告警（P2-2）
 

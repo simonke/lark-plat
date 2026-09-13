@@ -89,6 +89,7 @@ PERMISSION_TREE: list[tuple[str, str, str, str, str, list[tuple[str, str, str, s
         [
             ("transfer:package:add", "新建包", "button", "", "Plus"),
             ("transfer:package:del", "删除包", "button", "", "Delete"),
+            ("transfer:task:list", "任务列表", "button", "", "Tickets"),
             ("transfer:task:run", "分发任务", "button", "", "VideoPlay"),
             ("transfer:task:stop", "终止任务", "button", "", "VideoPause"),
             ("transfer:task:retry", "重试", "button", "", "Refresh"),

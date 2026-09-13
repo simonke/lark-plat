@@ -1,7 +1,7 @@
 """Seed-data existence contract (module-design §12).
 
 Static assertion against app/db/seed.py (DB-free): the RBAC baseline must
-declare the full permission-point tree (19 menus + 59 buttons post P2-1) and
+declare the full permission-point tree (19 menus + 60 buttons post P2-1) and
 the 3 builtin roles. Runtime presence is verified by integration against
 /system/permissions; this guards the declared contract itself.
 """
@@ -23,7 +23,7 @@ def test_seed_tree_permission_points():
     menus = [node[0] for node in PERMISSION_TREE]
     buttons = [child[0] for node in PERMISSION_TREE for child in node[5]]
     assert len(menus) == 19
-    assert len(buttons) == 59
+    assert len(buttons) == 60
     assert len(set(menus)) == len(menus)
     assert len(set(buttons)) == len(buttons)
 
@@ -110,6 +110,26 @@ def test_viewer_role_is_read_only():
             "monitor:metric:view", "monitor:alert:view",
         }
         for p in view
+    )
+
+
+def test_seed_tree_covers_every_role_referenced_code():
+    """Anti-drift guard (reviewer finding 2026-09-13): every permission code
+    referenced by DEFAULT_ROLES must be declared in PERMISSION_TREE, otherwise
+    seed_permissions never creates it and non-admin roles silently lose access
+    (e.g. missing transfer:task:list -> operator/viewer 403 on task list/stats).
+
+    Seed layer only applies tree-declared codes to roles; a role code that has no
+    tree node is skipped in the binding pass. This catches that gap statically.
+    """
+    seeded = {node[0] for node in PERMISSION_TREE} | {
+        child[0] for node in PERMISSION_TREE for child in node[5]
+    }
+    referenced = {code for role in DEFAULT_ROLES.values()
+                  for code in role.get("permissions", [])}
+    missing = referenced - seeded
+    assert not missing, (
+        f"role-referenced codes missing from PERMISSION_TREE (never seeded): {sorted(missing)}"
     )
 
 

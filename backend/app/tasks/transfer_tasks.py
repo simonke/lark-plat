@@ -115,9 +115,11 @@ def _maybe_finalize(db, task: TransferTask) -> None:
     failed = stats.get("failed", 0) + stats.get("verify_failed", 0) + stats.get("canceled", 0)
     total = sum(stats.values())
     new_status: str | None = None
-    if failed == 0 and total > 0 and (success + degraded) == total:
+    if total > 0 and success == total:
         new_status = "success"
     elif success > 0:
+        new_status = "partial"
+    elif failed == 0 and degraded > 0:
         new_status = "partial"
     else:
         new_status = "failed"

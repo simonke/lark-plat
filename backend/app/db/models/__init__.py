@@ -12,6 +12,17 @@ from app.db.models.exec import ExecLog, ExecTask, ExecTaskHost
 from app.db.models.schedule import ApprovalRecord, ApprovalRequest, ApprovalRule, ScheduleRun, ScheduleTask
 from app.db.models.notify import AuditLog, ConfigRule, NotifyChannel, NotifyRecord
 from app.db.models.terminal import TerminalRecordingChunk, TerminalSession
+from app.db.models.transfer import (
+    TRANSFER_CHANNELS,
+    TRANSFER_HOST_STATUSES,
+    TRANSFER_MODES,
+    TRANSFER_TASK_STATUSES,
+    FileItem,
+    FilePackage,
+    TransferHost,
+    TransferLog,
+    TransferTask,
+)
 from app.db.models.monitor import (
     MON_ADAPTER_STATUSES,
     MON_ADAPTER_TYPES,
@@ -58,6 +69,15 @@ __all__ = [
     "ConfigRule",
     "TerminalSession",
     "TerminalRecordingChunk",
+    "FilePackage",
+    "FileItem",
+    "TransferTask",
+    "TransferHost",
+    "TransferLog",
+    "TRANSFER_MODES",
+    "TRANSFER_CHANNELS",
+    "TRANSFER_TASK_STATUSES",
+    "TRANSFER_HOST_STATUSES",
     "MonMetricSample",
     "MonMetricDaily",
     "MonAdapter",

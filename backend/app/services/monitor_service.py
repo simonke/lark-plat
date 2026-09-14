@@ -398,11 +398,12 @@ def _persist_metric_sample(db: Session, adapter: MonAdapter, raw: dict, entity: 
     entity_id = str(entity.get("entity_id") or "unknown")
     entity_name = entity.get("entity_name") or entity_id
     fingerprint = raw.get("fingerprint") or build_fingerprint(raw)
+    source = raw.get("source", adapter.type)
     MonMetricSampleRepository(db).add_sample(
         entity_type, entity_id, entity_name, metric_name, value,
-        raw.get("source", adapter.type), ts, labels=raw.get("labels"), fingerprint=fingerprint,
+        source, ts, labels=raw.get("labels"), fingerprint=fingerprint,
     )
-    MonMetricSampleRepository(db).upsert_daily(entity_type, entity_id, metric_name, ts.date(), value)
+    MonMetricSampleRepository(db).upsert_daily(source, entity_type, entity_id, metric_name, ts.date(), value)
 
 
 
@@ -729,10 +730,15 @@ def create_rule(db: Session, user, data: schemas.MonRuleCreate) -> dict:
         condition_operator=data.condition_operator,
         condition_threshold=data.condition_threshold,
         condition_duration_seconds=data.condition_duration_seconds,
+        scope_type=data.scope_type,
+        scope_ids={"ids": data.scope_ids} if data.scope_ids else None,
+        level=data.level,
         cooldown_seconds=data.cooldown_seconds,
+        converge_sec=data.converge_sec,
         escalation_enabled=data.escalation_enabled,
         escalation_after_seconds=data.escalation_after_seconds,
         escalation_severity=data.escalation_severity,
+        escalate_levels={"ids": data.escalate_levels} if data.escalate_levels else None,
         notify_scene=data.notify_scene,
         notify_channel_ids={"ids": data.notify_channel_ids},
         created_by=user.id,
@@ -750,13 +756,18 @@ def update_rule(db: Session, user, rule_id: int, data: schemas.MonRuleUpdate) ->
         raise NotFoundError("rule not found")
     for field in ("name", "description", "enabled", "event_source", "event_kind", "metric_name",
                   "condition_operator", "condition_threshold", "condition_duration_seconds",
-                  "cooldown_seconds", "escalation_enabled", "escalation_after_seconds",
+                  "cooldown_seconds", "scope_type", "level", "converge_sec",
+                  "escalation_enabled", "escalation_after_seconds",
                   "escalation_severity", "notify_scene"):
         val = getattr(data, field)
         if val is not None:
             setattr(rule, field, val)
     if data.notify_channel_ids is not None:
         rule.notify_channel_ids = {"ids": data.notify_channel_ids}
+    if data.scope_ids is not None:
+        rule.scope_ids = {"ids": data.scope_ids}
+    if data.escalate_levels is not None:
+        rule.escalate_levels = {"ids": data.escalate_levels}
     db.commit()
     return _rule_out(rule)
 
@@ -826,10 +837,15 @@ def _rule_out(r: MonRule) -> dict:
         "condition_operator": r.condition_operator,
         "condition_threshold": r.condition_threshold,
         "condition_duration_seconds": r.condition_duration_seconds,
+        "scope_type": r.scope_type,
+        "scope_ids": _get_json_list(r.scope_ids),
+        "level": r.level,
         "cooldown_seconds": r.cooldown_seconds,
+        "converge_sec": r.converge_sec,
         "escalation_enabled": r.escalation_enabled,
         "escalation_after_seconds": r.escalation_after_seconds,
         "escalation_severity": r.escalation_severity,
+        "escalate_levels": _get_json_list(r.escalate_levels),
         "notify_scene": r.notify_scene,
         "notify_channel_ids": _get_json_list(r.notify_channel_ids),
         "enabled": r.enabled,
@@ -915,12 +931,11 @@ def test_adapter(db: Session, user, adapter_id: int) -> dict:
     endpoint = config.get("endpoint") or config.get("url") or config.get("server_uri")
     if adapter.type in ("prometheus", "elk", "webhook") and not endpoint:
         adapter.status = "degraded"
-        adapter.error_msg = "endpoint not configured"
+        adapter.error_message = "endpoint not configured"
         db.commit()
         return {"ok": False, "latency_ms": None, "error_message": "endpoint not configured"}
     adapter.status = "healthy"
-    adapter.error_msg = None
-    adapter.last_checked_at = datetime.now(timezone.utc)
+    adapter.error_message = None
     db.commit()
     return {"ok": True, "latency_ms": None, "error_message": None}
 
@@ -962,7 +977,7 @@ def _adapter_out(a: MonAdapter) -> dict:
         "enabled": a.enabled, "status": a.status,
         "last_heartbeat": a.last_heartbeat.isoformat() if a.last_heartbeat else None,
         "metrics_received_count": a.metrics_received_count,
-        "error_msg": a.error_msg,
+        "error_msg": a.error_message,
         "created_by": a.created_by,
         "created_at": a.created_at.isoformat() if a.created_at else None,
     }

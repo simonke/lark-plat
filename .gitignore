@@ -24,6 +24,9 @@ node_modules/
 dist/
 coverage/
 
+# Runtime data (transfer package store, pull output)
+data/
+
 # Go
 agent/bin/
 *.exe

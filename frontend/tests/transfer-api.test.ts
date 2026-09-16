@@ -100,7 +100,7 @@ describe('Transfer API', () => {
   })
 
   it('should list tasks via mine endpoint for viewer log entry', async () => {
-    const page = { list: [{ id: 1, task_no: 'TF-M', mode: 'pull', status: 'success', host_ids: { ids: [9] } }], total: 1, page: 1, size: 100 }
+    const page = { list: [{ id: 1, task_no: 'TF-M', mode: 'pull', status: 'success', host_ids: { ids: [9] }, hosts: [{ id: 8, hostname: 'agent-008' }] }], total: 1, page: 1, size: 100 }
     vi.mocked(http.get).mockResolvedValueOnce({ data: { code: 0, message: 'ok', data: page } })
     const result = await getMyTransferTasks()
     expect(http.get).toHaveBeenCalledWith('/transfer/tasks/mine', { params: undefined })

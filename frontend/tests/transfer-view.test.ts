@@ -170,7 +170,18 @@ describe('TransferView', () => {
 
     vi.mocked(transApi.getPackages).mockResolvedValue({ list: [], total: 0, page: 1, size: 10 })
     vi.mocked(transApi.getMyTransferTasks).mockResolvedValue({
-      list: [{ ...taskRow, id: 50, task_no: 'TF-LOG', host_ids: { ids: [11, 22] } }],
+      list: [
+        {
+          ...taskRow,
+          id: 50,
+          task_no: 'TF-LOG',
+          host_ids: { ids: [1, 2] },
+          hosts: [
+            { id: 26, hostname: 'agent-001' },
+            { id: 27, hostname: 'agent-002' },
+          ],
+        },
+      ],
       total: 1,
       page: 1,
       size: 10,
@@ -185,16 +196,20 @@ describe('TransferView', () => {
 
     expect(transApi.getMyTransferTasks).toHaveBeenCalled()
     expect(wrapper.text()).toContain('TF-LOG')
-    expect(wrapper.text()).toContain('#11 日志')
-    expect(wrapper.text()).toContain('#22 日志')
+    expect(wrapper.text()).toContain('agent-001 日志')
+    expect(wrapper.text()).toContain('agent-002 日志')
+    // transfer_host_id uses TransferHost ROW ids from hosts[], never the asset ids in host_ids
+    expect(wrapper.text()).not.toContain('#1 日志')
+    expect(wrapper.text()).not.toContain('#2 日志')
 
-    // click first host log button -> log dialog opens
-    const logBtn = wrapper.findAll('.host-log-btn').find((b) => b.text().includes('#11'))
+    // click first host log button -> log dialog opens with row id as task id + hostname label
+    const logBtn = wrapper.findAll('.host-log-btn').find((b) => b.text().includes('agent-001'))
     await logBtn!.trigger('click')
     await flushPromises()
 
     expect(wrapper.text()).toContain('实时日志')
-    expect(wrapper.text()).toContain('TF-LOG')
+    expect(wrapper.text()).toContain('agent-001')
+    expect(wrapper.text()).toContain('transfer_host_id=26')
   })
 
   it('operator with transfer:task:list sees both tabs', async () => {

@@ -176,11 +176,18 @@
             </el-table-column>
             <el-table-column label="目标主机" min-width="220">
               <template #default="{ row }">
-                <template v-for="hid in hostIds(row)" :key="hid">
-                  <el-button size="small" class="host-log-btn" @click="openLogFromTask(row, hid)">
-                    #{{ hid }} 日志
+                <template v-if="row.hosts.length > 0">
+                  <el-button
+                    v-for="h in row.hosts"
+                    :key="h.id"
+                    size="small"
+                    class="host-log-btn"
+                    @click="openLogViewer({ id: h.id, hostname: h.hostname }, row.id)"
+                  >
+                    {{ h.hostname }} 日志
                   </el-button>
                 </template>
+                <span v-else>—</span>
               </template>
             </el-table-column>
           </el-table>
@@ -357,6 +364,7 @@ import { useTransferRealtimeLog } from '../../composables/useTransferRealtimeLog
 import type {
   TransferPackageOut,
   TransferTaskOut,
+  TransferTaskMineOut,
   TransferTaskDetail,
   TransferTaskStatus,
   HostOut,
@@ -743,14 +751,9 @@ function openLogViewer(host: { id: number; hostname: string }, taskId?: number) 
   logSession.start()
 }
 
-const myTaskRows = ref<TransferTaskOut[]>([])
+const myTaskRows = ref<TransferTaskMineOut[]>([])
 const myTasksLoading = ref(false)
 const myTasksLoaded = ref(false)
-
-function hostIds(task: TransferTaskOut): number[] {
-  if (!task.host_ids || !Array.isArray(task.host_ids.ids)) return []
-  return (task.host_ids.ids as number[])
-}
 
 async function loadMyTasks() {
   myTasksLoading.value = true
@@ -763,13 +766,6 @@ async function loadMyTasks() {
   } finally {
     myTasksLoading.value = false
   }
-}
-
-function openLogFromTask(task: TransferTaskOut, transferHostId: number) {
-  openLogViewer(
-    { id: transferHostId, hostname: `任务 ${task.task_no} · 主机 #${transferHostId}` },
-    task.id,
-  )
 }
 
 function stopLogViewer() {

@@ -16,6 +16,7 @@ import type {
   TransferTaskCreate,
   TransferTaskCreated,
   TransferTaskOut,
+  TransferTaskMineOut,
   TransferTaskDetail,
   TransferTaskQuery,
   TransferLogPage,
@@ -57,8 +58,8 @@ export async function getTransferTasks(params?: TransferTaskQuery): Promise<Page
   return data.data
 }
 
-export async function getMyTransferTasks(params?: TransferTaskQuery): Promise<Page<TransferTaskOut>> {
-  const { data } = await http.get<Result<Page<TransferTaskOut>>>('/transfer/tasks/mine', { params })
+export async function getMyTransferTasks(params?: TransferTaskQuery): Promise<Page<TransferTaskMineOut>> {
+  const { data } = await http.get<Result<Page<TransferTaskMineOut>>>('/transfer/tasks/mine', { params })
   return data.data
 }
 

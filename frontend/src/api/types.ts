@@ -531,6 +531,15 @@ export interface TransferHostOut {
   finished_at: string | null
 }
 
+export interface TransferLogHostOut {
+  id: number
+  hostname: string
+}
+
+export interface TransferTaskMineOut extends TransferTaskOut {
+  hosts: TransferLogHostOut[]
+}
+
 export interface TransferTaskDetail extends TransferTaskOut {
   hosts: TransferHostOut[]
   stats: TransferStats

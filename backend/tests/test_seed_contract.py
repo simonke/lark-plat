@@ -135,7 +135,7 @@ def test_seed_tree_covers_every_role_referenced_code():
 
 def test_p21_transfer_bindings():
     """P2-1 frozen bindings: operator holds the full transfer surface; viewer is
-    read-only (package list + task list/log); task run is an operator-only op."""
+    read-only (package list + task log, no task list — architect ruling seq1671); task run is operator-only."""
     op = set(DEFAULT_ROLES["operator"]["permissions"])
     view = set(DEFAULT_ROLES["viewer"]["permissions"])
     full = {
@@ -144,7 +144,8 @@ def test_p21_transfer_bindings():
         "transfer:task:retry", "transfer:task:log",
     }
     assert full <= op
-    assert {"transfer:package:list", "transfer:task:list", "transfer:task:log"} <= view
+    assert {"transfer:package:list", "transfer:task:log"} <= view
+    assert "transfer:task:list" not in view
     assert not (view & {"transfer:package:add", "transfer:package:del",
                         "transfer:task:run", "transfer:task:stop", "transfer:task:retry"})
     path_by_code = {node[0]: node[3] for node in PERMISSION_TREE}

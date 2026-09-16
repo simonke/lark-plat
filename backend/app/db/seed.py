@@ -277,7 +277,7 @@ DEFAULT_ROLES: dict[str, dict[str, list[str]]] = {
             "asset:cred:list",
             "exec:task:list", "exec:task:log",
             "transfer:package:list",
-            "transfer:task:list", "transfer:task:log",
+            "transfer:task:log",
             "script:list",
             "schedule:list",
             "approval:list",

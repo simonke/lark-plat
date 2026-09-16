@@ -433,6 +433,141 @@ export interface WsTokenOut {
   token: string
 }
 
+// ---------------------------------------------------------------- transfer (P2-1, api-design-v3 §1 frozen)
+export type TransferMode = 'push' | 'pull'
+export type TransferTaskStatus = 'processing' | 'success' | 'partial' | 'failed' | 'canceled'
+export type TransferHostStatus =
+  | 'pending'
+  | 'pulling'
+  | 'transferring'
+  | 'verifying'
+  | 'success'
+  | 'failed'
+  | 'verify_failed'
+  | 'degraded'
+  | 'canceled'
+
+export interface TransferFileItem {
+  path: string
+  size: number
+  sha256: string
+}
+
+export interface TransferUploadResult {
+  package_id: number
+  items: TransferFileItem[]
+}
+
+export interface TransferPackageOut {
+  id: number
+  name: string
+  file_count: number
+  total_size: number
+  created_by: number | null
+  created_at: string
+}
+
+export interface TransferPackageDetail extends TransferPackageOut {
+  items: TransferFileItem[]
+}
+
+export interface TransferPackageQuery {
+  name?: string
+  start?: string
+  end?: string
+  page?: number
+  size?: number
+}
+
+export interface TransferTaskCreate {
+  mode: TransferMode
+  package_id?: number
+  source_host_id?: number
+  source_host_path?: string
+  target_path: string
+  host_ids: number[]
+  overwrite: 0 | 1
+  verify: 0 | 1
+  limit_mbps?: number
+}
+
+export interface TransferTaskCreated {
+  id: number
+  task_no: string
+  status: TransferTaskStatus
+  pending: number
+}
+
+export interface TransferTaskOut {
+  id: number
+  task_no: string
+  mode: TransferMode
+  package_id: number | null
+  source_host_id: number | null
+  source_host_path: string | null
+  target_path: string
+  host_ids: Record<string, unknown> | null
+  overwrite: 0 | 1
+  verify: 0 | 1
+  limit_mbps: number | null
+  status: TransferTaskStatus
+  created_by: number | null
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+}
+
+export interface TransferHostOut {
+  id: number
+  host_id: number
+  hostname: string
+  ip: string
+  channel: string
+  status: TransferHostStatus
+  current_offset: number
+  verify_sha256: string | null
+  error: string | null
+  started_at: string | null
+  finished_at: string | null
+}
+
+export interface TransferTaskDetail extends TransferTaskOut {
+  hosts: TransferHostOut[]
+  stats: TransferStats
+}
+
+export interface TransferLogOut {
+  seq: number
+  level: string
+  content: string
+  created_at: string
+}
+
+export interface TransferLogPage {
+  list: TransferLogOut[]
+  next_seq: number
+}
+
+export interface TransferStats {
+  total: number
+  pending: number
+  transferring: number
+  verifying: number
+  verify_failed: number
+  success: number
+  failed: number
+}
+
+export interface TransferTaskQuery {
+  task_no?: string
+  mode?: TransferMode
+  status?: TransferTaskStatus
+  start?: string
+  end?: string
+  page?: number
+  size?: number
+}
+
 // ---------------------------------------------------------------- approval (stage 4 preview, types only)
 
 export interface ApproveIn {

@@ -1,6 +1,6 @@
-"""Transfer endpoints: packages (multipart), tasks (run/stop/retry/stats/logs).
+"""Transfer endpoints: packages (multipart), tasks (run/stop/retry/stats/logs/mine).
 
-Mirrors api-design-v3 §transfer: 12 endpoints. Static segments register before
+Mirrors api-design-v3 §transfer: 13 endpoints. Static segments register before
 `{id}` param segments. Feature-flag/whitelist/perm guards live in the service.
 """
 
@@ -70,6 +70,20 @@ def list_tasks(
     size: Annotated[int, Query(ge=1, le=100)] = 10,
 ):
     return Result.ok(transfer_service.list_tasks(db, user, mode, status, start, end, page, size))
+
+
+@router.get("/tasks/mine", response_model=Result)
+def list_my_tasks(
+    db: DbDep,
+    user: UserDep,
+    mode: str | None = None,
+    status: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    size: Annotated[int, Query(ge=1, le=100)] = 10,
+):
+    return Result.ok(transfer_service.list_my_tasks(db, user, mode, status, start, end, page, size))
 
 
 @router.get("/tasks/{task_id}", response_model=Result)

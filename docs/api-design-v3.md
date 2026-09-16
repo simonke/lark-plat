@@ -14,6 +14,7 @@
 | DELETE | /transfer/packages/{id} | 删除上传包（被任务引用 409） |
 | POST | /transfer/tasks | {mode:push/pull, package_id?, source_host_path?, source_host_id?, target_path, host_ids, overwrite, verify, limit_mbps?} → {id, task_no, status, pending} |
 | GET | /transfer/tasks | 分页：mode/status/时间范围 |
+| GET | /transfer/tasks/mine | viewer 日志入口：按 transfer:task:log 门禁枚举可读任务（非 admin 仅 created_by=user.id），复用 task 输出形状（task_id + host_ids 资产 id 零漂移）+ hosts:[{id, hostname}]（TransferHost 行 id，两 id 空间显式区分，seq1724 方案B） |
 | GET | /transfer/tasks/{id} | 详情（hosts 汇总 + 校验状态） |
 | GET | /transfer/tasks/{id}/hosts/{transfer_host_id}/logs | ?after_seq=&size= 历史补拉（同 exec 语义） |
 | GET | /transfer/tasks/{id}/hosts/{transfer_host_id}/ws-token | WS 握手 token（绑定 transfer_host_id, 5min） |

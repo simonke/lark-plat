@@ -19,6 +19,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.core.exceptions import ForbiddenError
 from app.services import transfer_service
 from app.tasks import transfer_tasks
 
@@ -64,12 +65,13 @@ class _Db:
 class _TaskRepo:
     """Optimistic-update seam; records the write for assertion."""
 
-    def __init__(self):
+    def __init__(self, succeed: bool = True):
         self.writes = []
+        self._succeed = succeed
 
     def optimistic_update(self, task_id, from_status, to_status, version):
         self.writes.append((task_id, from_status, to_status, version))
-        return True
+        return self._succeed
 
 
 class _HostRepo:
@@ -84,9 +86,10 @@ class _HostRepo:
         return self._active
 
 
-def _finalize(task, host_stats: dict, active: int = 0) -> tuple[_TaskRepo, dict | None]:
+def _finalize(task, host_stats: dict, active: int = 0,
+              repo_ok: bool = True) -> tuple[_TaskRepo, dict | None]:
     db = _Db()
-    task_repo = _TaskRepo()
+    task_repo = _TaskRepo(repo_ok)
     transfer_tasks.TransferHostRepository = lambda db, *a, **k: _HostRepo(host_stats, active)
     transfer_tasks.TransferTaskRepository = lambda db, *a, **k: task_repo
     transfer_tasks.transfer_dispatch  # ensure module import is stable
@@ -146,3 +149,216 @@ def test_finalize_skips_non_processing_task():
     task_repo, status = _finalize(task, {"success": 1})
     assert status == "canceled"
     assert task_repo.writes == []
+
+
+# ============================================= v1.3 boundary pins (degraded/canceled
+# merge, empty stats no-op, optimistic-update conflict)
+
+
+def test_finalize_noop_on_empty_stats():
+    """No host rows yet -> finalize is a no-op (no status change, no write)."""
+    task = SimpleNamespace(id=1, status="processing", version=0, finished_at=None)
+    task_repo, status = _finalize(task, {})
+    assert status == "processing"
+    assert task_repo.writes == []
+
+
+def test_finalize_canceled_only_is_failed():
+    """canceled merges into the hard-failure count for task aggregation."""
+    task = SimpleNamespace(id=1, status="processing", version=0, finished_at=None)
+    task_repo, status = _finalize(task, {"canceled": 2})
+    assert status == "failed"
+    assert task_repo.writes[0][2] == "failed"
+
+
+def test_finalize_degraded_plus_canceled_is_failed():
+    """A hard terminal (canceled) next to degraded still fails the task."""
+    task = SimpleNamespace(id=1, status="processing", version=0, finished_at=None)
+    task_repo, status = _finalize(task, {"degraded": 1, "canceled": 2})
+    assert status == "failed"
+    assert task_repo.writes[0][2] == "failed"
+
+
+def test_finalize_optimistic_update_conflict_is_noop():
+    """Concurrent finalize: version-conflict update writes nothing; the task
+    stays processing with version/finished_at untouched."""
+    task = SimpleNamespace(id=1, status="processing", version=0, finished_at=None)
+    task_repo, status = _finalize(task, {"success": 3}, repo_ok=False)
+    assert status == "processing"
+    assert task.version == 0
+    assert task.finished_at is None
+    assert task_repo.writes  # attempted write recorded, but rejected
+
+
+# ============================================= transfer:task:log 'mine' endpoint
+# (P2-1 closeout: viewer log entry, seq1696-1698). Freezes: task:log gate (NOT
+# task:list), non-admin created_by filter (data isolation), _task_out shape.
+
+
+class _User:
+    def __init__(self, is_admin: bool = False, uid: int = 1, perms=()):
+        self.is_admin = is_admin
+        self.id = uid
+        self.permissions = set(perms)
+
+    def require_perm(self, code: str) -> None:
+        if not self.is_admin and code not in self.permissions:
+            raise ForbiddenError(f"permission denied: {code}")
+
+
+class _SearchRepo:
+    """TransferTaskRepository seam recording the search() argument for assertion."""
+
+    def __init__(self, rows):
+        self._rows = rows
+        self.filters = None
+
+    def search(self, filters, page, size):
+        self.filters = dict(filters)
+        return list(self._rows), len(self._rows)
+
+
+class _MineHostRepo:
+    """TransferHostRepository seam for mine: per-task TransferHost row list."""
+
+    def __init__(self, hosts=None):
+        self._hosts = hosts or {}
+
+    def by_task(self, task_id):
+        return list(self._hosts.get(task_id, []))
+
+
+def _mine(user, filters=None, rows=None, hosts=None):
+    filters = filters or {}
+    repo = _SearchRepo(rows or [])
+    transfer_service.TransferTaskRepository = lambda db, *a, **k: repo
+    transfer_service.TransferHostRepository = lambda db, *a, **k: _MineHostRepo(hosts)
+    result = transfer_service.list_my_tasks(
+        None, user, filters.get("mode"), filters.get("status"),
+        None, None, 1, 10,
+    )
+    return repo, result
+
+
+def test_mine_requires_task_log_not_task_list():
+    """viewer (task:log, no task:list) reaches mine; a user without task:log is 403."""
+    viewer = _User(uid=26, perms={"transfer:task:log"})
+    repo, _ = _mine(viewer)
+    assert repo.filters is not None
+
+    no_log = _User(uid=1, perms={"transfer:task:list"})
+    with pytest.raises(ForbiddenError):
+        _mine(no_log)
+
+
+def test_mine_filters_created_by_for_non_admin():
+    """mine for a viewer/operator passes created_by=user.id to the shared filter
+    bottom layer (same search() as list_tasks), so data isolation is intact."""
+    viewer = _User(uid=26, perms={"transfer:task:log"})
+    repo, result = _mine(viewer)
+    assert repo.filters["created_by"] == 26
+    assert result == {"list": [], "total": 0, "page": 1, "size": 10}
+
+
+def test_mine_admin_has_no_own_filter():
+    """admin may enumerate all tasks (no created_by constraint)."""
+    admin = _User(is_admin=True, uid=24)
+    repo, result = _mine(admin)
+    assert "created_by" not in repo.filters
+    assert result["total"] == 0
+
+
+def test_mine_reuses_task_out_shape_zero_drift():
+    """mine rows carry the same _task_out fields as list_tasks: id (task_id) +
+    host_ids record (asset id space), so the frontend log dropdown can reach
+    logs/ws-token; hosts (TransferHost row id space) is the additive field."""
+    rows = [
+        SimpleNamespace(
+            id=7, task_no="TF-20260916-007", mode="push", package_id=3,
+            source_host_id=1, source_host_path="/a", target_path="/b",
+            host_ids={"ids": [11, 12]}, overwrite=True, verify=True,
+            limit_mbps=None, status="processing", created_by=26,
+            created_at=datetime(2026, 9, 16, tzinfo=timezone.utc),
+            started_at=None, finished_at=None,
+        )
+    ]
+    # TransferHost rows: row id 26/27 (NOT asset ids 11/12) -> two id spaces distinct.
+    host_rows = [
+        SimpleNamespace(id=26, hostname="agent-001"),
+        SimpleNamespace(id=27, hostname="agent-002"),
+    ]
+    viewer = _User(uid=26, perms={"transfer:task:log"})
+    repo, result = _mine(viewer, rows=rows, hosts={7: host_rows})
+    row = result["list"][0]
+    assert row["id"] == 7
+    assert row["host_ids"] == {"ids": [11, 12]}
+    assert set(row) - {"hosts"} == set(transfer_service._task_out(rows[0]))
+    assert set(row) == set(transfer_service._task_out(rows[0])) | {"hosts"}
+
+
+def test_mine_hosts_shape_row_id_plus_hostname():
+    """方案B (seq1724): hosts = [{id, hostname}] where id is the TransferHost
+    ROW id and hostname the display name - directly usable for logs/ws-token."""
+    rows = [
+        SimpleNamespace(
+            id=7, task_no="TF-20260916-007", mode="push", package_id=3,
+            source_host_id=1, source_host_path="/a", target_path="/b",
+            host_ids={"ids": [11, 12]}, overwrite=True, verify=True,
+            limit_mbps=None, status="processing", created_by=26,
+            created_at=datetime(2026, 9, 16, tzinfo=timezone.utc),
+            started_at=None, finished_at=None,
+        )
+    ]
+    viewer = _User(uid=26, perms={"transfer:task:log"})
+    _, result = _mine(
+        viewer, rows=rows,
+        hosts={7: [SimpleNamespace(id=26, hostname="agent-001"),
+                   SimpleNamespace(id=27, hostname="agent-002")]},
+    )
+    assert result["list"][0]["hosts"] == [
+        {"id": 26, "hostname": "agent-001"},
+        {"id": 27, "hostname": "agent-002"},
+    ]
+
+
+def test_mine_two_id_spaces_do_not_mix():
+    """Ruling seq1722/1724: host_ids.ids (asset Host id) NEVER equals hosts[].id
+    (TransferHost row id); feeding asset id into logs would 404. The lock
+    asserts the spaces are observably parent/child distinct."""
+    rows = [
+        SimpleNamespace(
+            id=7, task_no="TF-20260916-007", mode="push", package_id=3,
+            source_host_id=1, source_host_path="/a", target_path="/b",
+            host_ids={"ids": [11, 12]}, overwrite=True, verify=True,
+            limit_mbps=None, status="processing", created_by=26,
+            created_at=datetime(2026, 9, 16, tzinfo=timezone.utc),
+            started_at=None, finished_at=None,
+        )
+    ]
+    host_rows = [SimpleNamespace(id=26, hostname="agent-001")]
+    viewer = _User(uid=26, perms={"transfer:task:log"})
+    _, result = _mine(viewer, rows=rows, hosts={7: host_rows})
+    row = result["list"][0]
+    asset_ids = row["host_ids"]["ids"]
+    transfer_ids = [h["id"] for h in row["hosts"]]
+    assert 11 in asset_ids and 12 in asset_ids
+    assert transfer_ids == [26]
+    assert set(asset_ids).isdisjoint(transfer_ids), "asset/transfer id spaces must not overlap"
+
+
+def test_mine_hosts_empty_when_no_transfer_host_rows():
+    """A task row with no TransferHost rows yet (or pre-summary) yields hosts: []
+    rather than a crash or a missing key - the UI degrades gracefully."""
+    rows = [
+        SimpleNamespace(
+            id=8, task_no="TF-20260916-008", mode="push", package_id=4,
+            source_host_id=None, source_host_path=None, target_path="/x",
+            host_ids={"ids": [1]}, overwrite=True, verify=True,
+            limit_mbps=None, status="processing", created_by=26,
+            created_at=datetime(2026, 9, 16, tzinfo=timezone.utc),
+            started_at=None, finished_at=None,
+        )
+    ]
+    viewer = _User(uid=26, perms={"transfer:task:log"})
+    _, result = _mine(viewer, rows=rows)
+    assert result["list"][0]["hosts"] == []

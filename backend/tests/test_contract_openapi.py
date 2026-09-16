@@ -110,7 +110,7 @@ def test_login_refresh_public_and_rest_guarded(openapi_spec):
 
 def test_path_count_stable(openapi_spec):
     paths = openapi_spec["paths"]
-    assert len(paths) == 90
+    assert len(paths) == 100
 
 
 def test_stage4_terminal_paths_present(openapi_spec):
@@ -140,6 +140,7 @@ def test_static_route_before_id(openapi_spec):
         ("/api/v1/assets/hosts/export", "/api/v1/assets/hosts/{host_id}"),
         ("/api/v1/assets/hosts/stats", "/api/v1/assets/hosts/{host_id}"),
         ("/api/v1/assets/groups/tree", "/api/v1/assets/groups/{group_id}"),
+        ("/api/v1/transfer/tasks/mine", "/api/v1/transfer/tasks/{task_id}"),
     ):
         assert paths.index(static) < paths.index(dynamic), f"{static} must precede {dynamic}"
 

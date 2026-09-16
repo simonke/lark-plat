@@ -280,6 +280,39 @@ def list_tasks(db: Session, user, mode: str | None, status: str | None, start, e
     return {"list": [_task_out(t) for t in rows], "total": total, "page": page, "size": size}
 
 
+def list_my_tasks(db: Session, user, mode: str | None, status: str | None, start, end,
+                  page: int, size: int) -> dict:
+    """Transfer tasks the current user may read logs for (viewer log entry).
+
+    Gated by transfer:task:log (not transfer:task:list) so a viewer can enumerate
+    their own tasks to reach logs/ws-token. Non-admins are filtered to
+    created_by=user.id, reusing the list filtering bottom layer; data isolation
+    is identical to the transfer:task:list surface.
+
+    Ruling 2026-09-13 (方案B): each row keeps the _task_out fields verbatim and
+    adds `hosts: [{id, hostname}]` where id is the TransferHost ROW id and
+    hostname the display name - so a viewer (no transfer:task:list, cannot reach
+    task detail _host_out) can drive logs/ws-token/retry directly. The two id
+    spaces stay explicitly distinct: host_ids.ids = asset Host ids vs hosts[].id
+    = transfer_host row ids (seq1724).
+    """
+    user.require_perm("transfer:task:log")
+    filters = {"mode": mode, "status": status, "start": start, "end": end}
+    if not user.is_admin:
+        filters["created_by"] = user.id
+    rows, total = TransferTaskRepository(db).search(filters, page, size)
+    th_repo = TransferHostRepository(db)
+    return {"list": [_task_out_with_hosts(t, th_repo.by_task(t.id)) for t in rows],
+            "total": total, "page": page, "size": size}
+
+
+def _task_out_with_hosts(t: TransferTask, host_rows: list) -> dict:
+    """_task_out verbatim + hosts [TransferHost row id, hostname] (方案B)."""
+    out = _task_out(t)
+    out["hosts"] = [{"id": h.id, "hostname": h.hostname} for h in host_rows]
+    return out
+
+
 def _task_out(t: TransferTask) -> dict:
     return {
         "id": t.id, "task_no": t.task_no, "mode": t.mode, "package_id": t.package_id,

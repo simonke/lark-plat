@@ -48,9 +48,9 @@
         condition: service_healthy
     expose:
       - "8000"
-    command: >
-      sh -c "alembic upgrade head &&
-             uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2"
+    # Entrypoint converges on the single Dockerfile CMD (docker-entrypoint.sh):
+    # alembic upgrade head && uvicorn --workers ${UVICORN_WORKERS:-2}. No command
+    # override here -> one authoritative uvicorn invocation (dual-uvicorn convergence).
     restart: unless-stopped
 
   celery_worker:

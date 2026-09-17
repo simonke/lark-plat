@@ -704,3 +704,51 @@ def test_normalize_metric_name_noop_when_unresolvable():
     assert monitor_service._normalize_metric_name(raw) is None
     assert "metric_name" not in raw["labels"]
 
+
+# ── I1 boundary: the fabricated "unknown" sentinel must not persist ──────────
+
+
+def test_resolve_metric_name_rejects_unknown_sentinel():
+    assert monitor_service._resolve_metric_name({"labels": {"metric_name": "unknown"}}) is None
+    assert monitor_service._resolve_metric_name({"metric_name": "  Unknown "}) is None
+    assert monitor_service._resolve_metric_name({"labels": {"__name__": "unknown"}}) is None
+    assert monitor_service._resolve_metric_name({"labels": {"metric_name": "cpu_usage"}}) == "cpu_usage"
+    assert monitor_service._resolve_metric_name({"name": "cpu_up"}) == "cpu_up"
+
+
+def test_normalize_prometheus_missing_name_no_unknown_sentinel():
+    events, _meta = monitor_service.normalize_prometheus_remote(
+        {"metric": [{"labels": {"instance": "10.0.0.1"}, "samples": [{"ts": 0, "value": 1}]}]}
+    )
+    assert len(events) == 1
+    assert "metric_name" not in events[0]["labels"]
+    assert events[0]["raw"]["scrape_error"] == "missing_metric_name"
+    assert monitor_service._resolve_metric_name(events[0]) is None
+
+
+def test_process_event_dead_letters_unknown_metric_name(monkeypatch):
+    db = _Db()
+    adapter = SimpleNamespace(id=1, type="prometheus", enabled=1, name="p")
+    event = {
+        "source": "prometheus", "kind": "metric",
+        "entity": {"entity_type": "host", "entity_id": "10.0.0.1", "entity_name": "h1"},
+        "labels": {}, "name": "unknown",
+        "ts": NOW.isoformat(), "value": 1.0,
+    }
+    seen: dict = {}
+    monkeypatch.setattr(monitor_service.MonEventInboxRepository, "by_event_key",
+                        lambda self, k: None)
+    monkeypatch.setattr(monitor_service.MonEventInboxRepository, "add_event",
+                        lambda self, **kw: SimpleNamespace(kind="metric"))
+    monkeypatch.setattr(monitor_service, "_dead_letter",
+                        lambda db, adapter_id, raw, error, detail=None:
+                        (seen.update(error=error), {"accepted": False, "error": error})[1])
+    monkeypatch.setattr(monitor_service, "_persist_metric_sample",
+                        lambda *a, **kw: seen.update(persisted=True))
+
+    out = monitor_service._process_event(db, adapter, event)
+    assert out["accepted"] is False
+    assert seen["error"] == "unresolvable metric_name"
+    assert "persisted" not in seen
+
+

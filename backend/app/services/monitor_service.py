@@ -175,11 +175,19 @@ def normalize_prometheus_remote(payload: dict) -> tuple[list[dict], Any]:
         values = series.get("samples") or series.get("values") or []
         entity_id = labels.get("instance") or "unknown"
         entity_name = labels.get("hostname") or entity_id
-        scrape_error = "missing_instance_label" if entity_id == "unknown" else ""
+        label_name = labels.get("__name__") or labels.get("metric_name") or series.get("name")
+        errors = []
+        if entity_id == "unknown":
+            errors.append("missing_instance_label")
+        if not label_name:
+            errors.append("missing_metric_name")
+        scrape_error = ",".join(errors)
         for s in values:
             ts = s.get("ts") if isinstance(s, dict) else (s[0] if isinstance(s, list) and len(s) > 1 else None)
             value = s.get("value") if isinstance(s, dict) else (s[1] if isinstance(s, list) and len(s) > 1 else None)
-            label_name = labels.get("__name__") or labels.get("metric_name") or (series.get("name") or "unknown")
+            event_labels = dict(labels)
+            if label_name:  # I1: never fabricate the "unknown" sentinel
+                event_labels["metric_name"] = label_name
             events.append({
                 "source": "prometheus",
                 "kind": "metric",
@@ -187,7 +195,7 @@ def normalize_prometheus_remote(payload: dict) -> tuple[list[dict], Any]:
                 "ts": ts or _now_iso(),
                 "value": _to_float(value),
                 "severity": None,
-                "labels": {**labels, "metric_name": label_name},
+                "labels": event_labels,
                 "raw": {"job": labels.get("job"), "scrape_error": scrape_error} if scrape_error else {"job": labels.get("job")},
                 "event_id": None,
             })
@@ -420,10 +428,19 @@ def _coerce_ts(value: Any) -> datetime:
 
 def _resolve_metric_name(raw: dict) -> str | None:
     """I1: resolve metric_name from labels.metric_name -> labels.__name__ ->
-    top-level metric_name/name. None = unresolvable (caller dead-letters)."""
+    top-level metric_name/name. None = unresolvable (caller dead-letters).
+
+    The literal `"unknown"` sentinel is also treated as unresolvable so a
+    malformed source can never persist/rule-match on a fabricated name."""
     labels = raw.get("labels") or {}
-    return (labels.get("metric_name") or labels.get("__name__")
+    name = (labels.get("metric_name") or labels.get("__name__")
             or raw.get("metric_name") or raw.get("name") or None)
+    if name is None:
+        return None
+    name = str(name).strip()
+    if not name or name.lower() == "unknown":
+        return None
+    return name
 
 
 def _normalize_metric_name(raw: dict) -> str | None:

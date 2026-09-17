@@ -983,7 +983,7 @@ export interface MonAlertOut {
   fired_at: string | null
   resolved_at: string | null
   action: MonAlertAction
-  ts: string
+  ts: string | null
 }
 
 export interface MonMetricFrame {
@@ -1011,7 +1011,7 @@ export interface MonHelloData {
 export interface AlertRuleCreate {
   name: string
   description?: string
-  enabled?: boolean
+  enabled?: number
   event_source?: MonSource | null
   event_kind: MonEventKind
   metric_name?: string
@@ -1023,7 +1023,7 @@ export interface AlertRuleCreate {
   level?: string
   cooldown_seconds?: number
   converge_sec?: number
-  escalation_enabled?: boolean
+  escalation_enabled?: number
   escalation_after_seconds?: number
   escalation_severity?: MonSeverity
   escalate_levels?: string[] | null
@@ -1034,7 +1034,7 @@ export interface AlertRuleCreate {
 export interface AlertRuleUpdate {
   name?: string
   description?: string | null
-  enabled?: boolean
+  enabled?: number | null
   event_source?: MonSource | null
   event_kind?: MonEventKind
   metric_name?: string | null
@@ -1046,7 +1046,7 @@ export interface AlertRuleUpdate {
   level?: string
   cooldown_seconds?: number
   converge_sec?: number
-  escalation_enabled?: boolean
+  escalation_enabled?: number | null
   escalation_after_seconds?: number
   escalation_severity?: MonSeverity
   escalate_levels?: string[] | null
@@ -1058,7 +1058,7 @@ export interface AlertRuleOut {
   id: number
   name: string
   description: string | null
-  enabled: boolean
+  enabled: number
   event_source: MonSource | null
   event_kind: MonEventKind
   metric_name: string | null
@@ -1070,7 +1070,7 @@ export interface AlertRuleOut {
   level: string
   cooldown_seconds: number
   converge_sec: number
-  escalation_enabled: boolean
+  escalation_enabled: number
   escalation_after_seconds: number
   escalation_severity: MonSeverity
   escalate_levels: string[] | null

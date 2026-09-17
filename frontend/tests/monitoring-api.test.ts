@@ -94,7 +94,7 @@ describe('Monitoring API', () => {
       level: 'warning',
       cooldown_seconds: 300,
       converge_sec: 0,
-      escalation_enabled: true,
+      escalation_enabled: 1,
       escalation_after_seconds: 600,
       escalation_severity: 'warning' as const,
       escalate_levels: ['warning', 'critical'],

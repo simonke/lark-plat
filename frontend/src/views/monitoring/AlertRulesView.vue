@@ -53,14 +53,14 @@
         </el-table-column>
         <el-table-column label="升级" width="90">
           <template #default="{ row }">
-            <el-tag v-if="row.escalation_enabled" size="small" type="warning">开</el-tag>
+            <el-tag v-if="row.escalation_enabled === 1" size="small" type="warning">开</el-tag>
             <span v-else>关</span>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
-            <el-tag :type="row.enabled ? 'success' : 'info'">
-              {{ row.enabled ? '启用' : '停用' }}
+            <el-tag :type="row.enabled === 1 ? 'success' : 'info'">
+              {{ row.enabled === 1 ? '启用' : '停用' }}
             </el-tag>
           </template>
         </el-table-column>
@@ -68,7 +68,7 @@
           <template #default="{ row }">
             <el-button size="small" v-perm="'monitor:rule:edit'" @click="openRule(row)">编辑</el-button>
             <el-button size="small" v-perm="'monitor:rule:status'" @click="toggleRule(row)">
-              {{ row.enabled ? '停用' : '启用' }}
+              {{ row.enabled === 1 ? '停用' : '启用' }}
             </el-button>
             <el-button size="small" type="danger" v-perm="'monitor:rule:del'" @click="onDeleteRule(row)">删除</el-button>
           </template>
@@ -304,7 +304,7 @@ function openRule(row?: AlertRuleOut) {
     ruleId.value = row.id
     form.name = row.name
     form.description = row.description ?? ''
-    form.enabled = row.enabled
+    form.enabled = row.enabled === 1
     form.event_source = row.event_source
     form.event_kind = row.event_kind
     form.metric_name = row.metric_name ?? ''
@@ -316,7 +316,7 @@ function openRule(row?: AlertRuleOut) {
     form.level = row.level ?? 'warning'
     form.cooldown_seconds = row.cooldown_seconds
     form.converge_sec = row.converge_sec ?? 0
-    form.escalation_enabled = row.escalation_enabled
+    form.escalation_enabled = row.escalation_enabled === 1
     form.escalation_after_seconds = row.escalation_after_seconds
     form.escalation_severity = row.escalation_severity
     form.escalate_levels = row.escalate_levels ? [...row.escalate_levels] : []
@@ -357,7 +357,7 @@ async function onSaveRule() {
       await updateAlertRule(ruleId.value, {
         name: form.name,
         description: form.description || null,
-        enabled: form.enabled,
+        enabled: form.enabled ? 1 : 0,
         event_source: form.event_source ?? null,
         event_kind: form.event_kind,
         metric_name: form.metric_name || null,
@@ -369,7 +369,7 @@ async function onSaveRule() {
         level: form.level,
         cooldown_seconds: form.cooldown_seconds,
         converge_sec: form.converge_sec,
-        escalation_enabled: form.escalation_enabled,
+        escalation_enabled: form.escalation_enabled ? 1 : 0,
         escalation_after_seconds: form.escalation_after_seconds,
         escalation_severity: form.escalation_severity,
         escalate_levels: form.escalate_levels.length ? form.escalate_levels : null,
@@ -379,7 +379,7 @@ async function onSaveRule() {
       await createAlertRule({
         name: form.name,
         description: form.description || undefined,
-        enabled: form.enabled,
+        enabled: form.enabled ? 1 : 0,
         event_source: form.event_source ?? null,
         event_kind: form.event_kind,
         metric_name: form.metric_name || undefined,
@@ -391,7 +391,7 @@ async function onSaveRule() {
         level: form.level,
         cooldown_seconds: form.cooldown_seconds,
         converge_sec: form.converge_sec,
-        escalation_enabled: form.escalation_enabled,
+        escalation_enabled: form.escalation_enabled ? 1 : 0,
         escalation_after_seconds: form.escalation_after_seconds,
         escalation_severity: form.escalation_severity,
         escalate_levels: form.escalate_levels.length ? form.escalate_levels : undefined,
@@ -409,7 +409,7 @@ async function onSaveRule() {
 }
 
 function toggleRule(row: AlertRuleOut) {
-  setRuleStatus(row.id, !row.enabled)
+  setRuleStatus(row.id, row.enabled !== 1)
     .then(() => {
       ElMessage.success('状态已更新')
       loadRules()

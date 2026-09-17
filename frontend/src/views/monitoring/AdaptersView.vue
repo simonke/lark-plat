@@ -30,8 +30,8 @@
         </el-table-column>
         <el-table-column label="启用" width="80">
           <template #default="{ row }">
-            <el-tag :type="row.enabled ? 'success' : 'info'" size="small">
-              {{ row.enabled ? '是' : '否' }}
+            <el-tag :type="row.enabled === 1 ? 'success' : 'info'" size="small">
+              {{ row.enabled === 1 ? '是' : '否' }}
             </el-tag>
           </template>
         </el-table-column>

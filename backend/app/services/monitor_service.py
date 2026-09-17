@@ -345,8 +345,10 @@ def ingest(db: Session, adapter_id: int, payload: Any) -> dict:
         events, _meta = normalize_event(adapter.type, payload)
 
     if not events:
-        return _dead_letter(db, adapter_id, None, "unsupported payload shape",
-                            {"adapter_id": adapter_id})
+        result = _dead_letter(db, adapter_id, None, "unsupported payload shape",
+                              {"adapter_id": adapter_id})
+        db.commit()  # Z4: single explicit boundary for the early-return path
+        return result
 
     accepted = 0
     rejected = 0
@@ -356,9 +358,9 @@ def ingest(db: Session, adapter_id: int, payload: Any) -> dict:
             accepted += 1
         else:
             rejected += 1
-            if result.get("error"):
+            if result.get("error") and not result.get("dead_lettered"):
                 _dead_letter(db, adapter.id, raw, result["error"])
-    db.commit()
+    db.commit()  # Z4: single commit boundary per ingest batch
     return {"accepted": accepted, "rejected": rejected, "adapter_id": adapter_id}
 
 
@@ -390,9 +392,18 @@ def _process_event(db: Session, adapter: MonAdapter, raw: dict) -> dict:
 
     ts = _coerce_ts(raw.get("ts"))
 
+    kind = raw.get("kind", "metric")
+    metric_name = None
+    if kind == "metric":
+        metric_name = _resolve_metric_name(raw)
+        if not metric_name:
+            # Z2: resolve BEFORE inserting the inbox row so an unresolvable
+            # metric produces a single dead_letter row (no ghost "pending").
+            return _dead_letter(db, adapter.id, raw, "unresolvable metric_name")
+
     inbox = MonEventInboxRepository(db).add_event(
         source=raw.get("source", adapter.type),
-        kind=raw.get("kind", "metric"),
+        kind=kind,
         entity=entity,
         ts=ts,
         value=_to_float(raw.get("value")),
@@ -406,9 +417,6 @@ def _process_event(db: Session, adapter: MonAdapter, raw: dict) -> dict:
     )
 
     if inbox.kind == "metric":
-        metric_name = _resolve_metric_name(raw)
-        if not metric_name:
-            return _dead_letter(db, adapter.id, raw, "unresolvable metric_name")
         _persist_metric_sample(db, adapter, raw, entity, ts, metric_name)
 
     evaluate_event(db, raw)
@@ -477,25 +485,30 @@ def _persist_metric_sample(db: Session, adapter: MonAdapter, raw: dict, entity: 
 
 def _dead_letter(db: Session, adapter_id: int | None, raw: dict | None, error: str,
                  detail: dict | None = None) -> dict:
+    """Record a dead-letter row under a SAVEPOINT.
+
+    Z4: the commit boundary belongs to the caller (ingest commits once per
+    batch); a failed bookkeeping write rolls back only the savepoint so it can
+    never poison in-flight rows and never raises."""
     try:
-        MonEventInboxRepository(db).add_event(
-            source=(raw or {}).get("source", "webhook"),
-            kind=(raw or {}).get("kind", "metric"),
-            entity=(raw or {}).get("entity") or dict(_MAPPING_FALLBACK_ENTITY),
-            ts=_coerce_ts((raw or {}).get("ts")) if raw else datetime.now(timezone.utc),
-            value=_to_float((raw or {}).get("value")) if raw else None,
-            severity=(raw or {}).get("severity"),
-            labels=(raw or {}).get("labels"),
-            raw=raw,
-            fingerprint=(raw or {}).get("fingerprint") or "dead-letter",
-            status="dead_letter",
-            error=(error[:512]) if detail is None else (error[:464] + json.dumps(detail, ensure_ascii=False)[:64]),
-        )
-        db.commit()
+        with db.begin_nested():
+            MonEventInboxRepository(db).add_event(
+                source=(raw or {}).get("source", "webhook"),
+                kind=(raw or {}).get("kind", "metric"),
+                entity=(raw or {}).get("entity") or dict(_MAPPING_FALLBACK_ENTITY),
+                ts=_coerce_ts((raw or {}).get("ts")) if raw else datetime.now(timezone.utc),
+                value=_to_float((raw or {}).get("value")) if raw else None,
+                severity=(raw or {}).get("severity"),
+                labels=(raw or {}).get("labels"),
+                raw=raw,
+                fingerprint=(raw or {}).get("fingerprint") or "dead-letter",
+                status="dead_letter",
+                error=(error[:512]) if detail is None else (error[:464] + json.dumps(detail, ensure_ascii=False)[:64]),
+            )
     except Exception:  # noqa: BLE001 - dead-letter bookkeeping must not raise
-        db.rollback()
+        logger.warning("monitor: dead-letter write failed (adapter=%s): %s", adapter_id, error)
     logger.warning("monitor: event dead-lettered (adapter=%s): %s", adapter_id, error)
-    return {"accepted": False, "error": error}
+    return {"accepted": False, "error": error, "dead_lettered": True}
 
 
 # =============================================================================

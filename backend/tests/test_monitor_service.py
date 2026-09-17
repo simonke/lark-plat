@@ -10,6 +10,7 @@ Pins contract (2026-09-09):
 
 from __future__ import annotations
 
+import contextlib
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -57,6 +58,9 @@ class _Db:
 
     def execute(self, *a, **kw):
         return self.scalars(*a, **kw)
+
+    def begin_nested(self):
+        return contextlib.nullcontext()
 
 
 def _user(uid=1, admin=True):
@@ -750,5 +754,71 @@ def test_process_event_dead_letters_unknown_metric_name(monkeypatch):
     assert out["accepted"] is False
     assert seen["error"] == "unresolvable metric_name"
     assert "persisted" not in seen
+
+
+def test_process_event_unresolvable_metric_single_dead_letter_row(monkeypatch):
+    """Z2/Z4: unresolvable metric -> exactly one add_event (dead_letter), zero pending."""
+    db = _Db()
+    adapter = SimpleNamespace(id=1, type="prometheus", enabled=1, name="p")
+    event = {
+        "source": "prometheus", "kind": "metric",
+        "entity": {"entity_type": "host", "entity_id": "10.0.0.1", "entity_name": "h1"},
+        "labels": {"instance": "10.0.0.1"},  # no metric name -> unresolvable
+        "ts": NOW.isoformat(), "value": 1.0,
+    }
+    rows: list[dict] = []
+
+    def _add_event(self, **kw):
+        rows.append(kw)
+        return SimpleNamespace(kind=kw.get("kind", "metric"))
+
+    monkeypatch.setattr(monitor_service.MonEventInboxRepository, "by_event_key",
+                        lambda self, k: None)
+    monkeypatch.setattr(monitor_service.MonEventInboxRepository, "add_event", _add_event)
+    monkeypatch.setattr(monitor_service, "_persist_metric_sample",
+                        lambda *a, **kw: rows.append({"status": "persisted"}))
+
+    out = monitor_service._process_event(db, adapter, event)
+    assert out["accepted"] is False
+    assert len(rows) == 1, f"expected single dead_letter row, got {rows}"
+    assert rows[0]["status"] == "dead_letter"
+    assert rows[0]["error"] == "unresolvable metric_name"
+    assert not [r for r in rows if r.get("status") == "pending"]
+    assert db.commits == 0  # Z4: commit boundary is the caller's, not _dead_letter
+
+
+def test_ingest_unresolvable_metric_single_dead_letter_row_and_one_commit(monkeypatch):
+    """Z2/Z4 end-to-end: one dead_letter row, no pending ghost, single commit."""
+    db = _Db()
+    adapter = SimpleNamespace(id=1, type="prometheus", enabled=1, name="p")
+    payload = {
+        "source": "prometheus", "kind": "metric", "adapter": None,
+        "entity": {"entity_type": "host", "entity_id": "10.0.0.1", "entity_name": "h1"},
+        "labels": {"instance": "10.0.0.1"},  # no metric name -> unresolvable
+        "ts": NOW.isoformat(), "value": 1.0,
+    }
+    rows: list[dict] = []
+
+    def _add_event(self, **kw):
+        rows.append(kw)
+        return SimpleNamespace(kind=kw.get("kind", "metric"))
+
+    monkeypatch.setattr(monitor_service, "_feature_enabled", lambda db: True)
+    monkeypatch.setattr(monitor_service.MonAdapterRepository, "get", lambda self, i: adapter)
+    monkeypatch.setattr(monitor_service.MonEventInboxRepository, "by_event_key",
+                        lambda self, k: None)
+    monkeypatch.setattr(monitor_service.MonEventInboxRepository, "add_event", _add_event)
+    monkeypatch.setattr(monitor_service, "_persist_metric_sample",
+                        lambda *a, **kw: rows.append({"status": "persisted"}))
+
+    out = monitor_service.ingest(db, 1, payload)
+    assert out["rejected"] == 1 and out["accepted"] == 0
+    assert len(rows) == 1, f"expected single dead_letter row, got {rows}"
+    assert rows[0]["status"] == "dead_letter"
+    assert rows[0]["error"] == "unresolvable metric_name"
+    assert not [r for r in rows if r.get("status") == "pending"]
+    assert db.commits == 1
+
+
 
 

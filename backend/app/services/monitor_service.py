@@ -360,6 +360,9 @@ def _process_event(db: Session, adapter: MonAdapter, raw: dict) -> dict:
     if not valid:
         return {"accepted": False, "error": error}
 
+    if raw.get("kind", "metric") == "metric":
+        _normalize_metric_name(raw)
+
     fingerprint = raw.get("fingerprint") or build_fingerprint(raw)
     event_key = build_event_key(raw.get("source", adapter.type), raw.get("event_id"))
     if event_key:
@@ -421,6 +424,17 @@ def _resolve_metric_name(raw: dict) -> str | None:
     labels = raw.get("labels") or {}
     return (labels.get("metric_name") or labels.get("__name__")
             or raw.get("metric_name") or raw.get("name") or None)
+
+
+def _normalize_metric_name(raw: dict) -> str | None:
+    """I1 single ingest normalization: make `labels.metric_name` the one field
+    that persist / rule-match / fingerprint all read (incl. top-level names)."""
+    resolved = _resolve_metric_name(raw)
+    if resolved:
+        labels = dict(raw.get("labels") or {})
+        labels["metric_name"] = resolved
+        raw["labels"] = labels
+    return resolved
 
 
 def _persist_metric_sample(db: Session, adapter: MonAdapter, raw: dict, entity: dict,
@@ -490,8 +504,7 @@ def _rule_pertains(rule: MonRule, event: dict) -> bool:
     if rule.event_source and rule.event_source != event.get("source"):
         return False
     if rule.event_kind == "metric":
-        labels = event.get("labels") or {}
-        metric_name = labels.get("metric_name") or labels.get("__name__") or ""
+        metric_name = _resolve_metric_name(event) or ""
         if rule.metric_name and metric_name != rule.metric_name:
             return False
     if rule.scope_type:

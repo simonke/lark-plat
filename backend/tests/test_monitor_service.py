@@ -641,3 +641,66 @@ def test_query_metrics_agg_points_carry_entity_id(monkeypatch):
     assert out["agg"] == "5m"
     assert [p["entity_id"] for p in out["points"]] == ["10.0.0.1", "10.0.0.2"]
     assert all(p["value"] == p["avg"] and p["ts"] == p["bucket"] for p in out["points"])
+
+
+# ── W2 / I1: metric ingest single-point name normalization ───────────────────
+
+
+def test_rule_pertains_reads_top_level_metric_name():
+    rule = _rule(metric_name="cpu_usage")
+    event = {
+        "kind": "metric", "source": "prometheus", "labels": {},
+        "metric_name": "cpu_usage",
+        "entity": {"entity_type": "host", "entity_id": "10.0.0.1", "entity_name": "h1"},
+    }
+    assert monitor_service._rule_pertains(rule, event) is True
+    event["metric_name"] = "mem_usage"
+    assert monitor_service._rule_pertains(rule, event) is False
+
+
+def test_rule_pertains_reads_labels_dunder_name():
+    rule = _rule(metric_name="cpu_usage")
+    event = {
+        "kind": "metric", "source": "prometheus", "labels": {"__name__": "cpu_usage"},
+        "entity": {"entity_type": "host", "entity_id": "10.0.0.1", "entity_name": "h1"},
+    }
+    assert monitor_service._rule_pertains(rule, event) is True
+
+
+def test_process_event_normalizes_top_level_metric_name_into_labels(monkeypatch):
+    db = _Db()
+    adapter = SimpleNamespace(id=1, type="prometheus", enabled=1, name="p")
+    event = {
+        "source": "prometheus", "kind": "metric",
+        "entity": {"entity_type": "host", "entity_id": "10.0.0.1", "entity_name": "h1"},
+        "labels": {"job": "node"}, "metric_name": "cpu_usage",
+        "ts": NOW.isoformat(), "value": 90.0,
+    }
+    captured: dict = {}
+
+    def _add_event(self, **kw):
+        captured["inbox_labels"] = kw.get("labels")
+        return SimpleNamespace(kind="metric")
+
+    monkeypatch.setattr(monitor_service.MonEventInboxRepository, "by_event_key",
+                        lambda self, k: None)
+    monkeypatch.setattr(monitor_service.MonEventInboxRepository, "add_event", _add_event)
+    monkeypatch.setattr(monitor_service, "_persist_metric_sample",
+                        lambda db, adapter, raw, entity, ts, metric_name=None:
+                        captured.update(persist_name=metric_name))
+    monkeypatch.setattr(monitor_service, "evaluate_event",
+                        lambda db, ev: captured.update(eval_labels=dict(ev.get("labels") or {})))
+
+    out = monitor_service._process_event(db, adapter, event)
+    assert out["accepted"] is True
+    assert captured["inbox_labels"]["metric_name"] == "cpu_usage"
+    assert captured["persist_name"] == "cpu_usage"
+    assert captured["eval_labels"]["metric_name"] == "cpu_usage"
+    assert event["labels"]["metric_name"] == "cpu_usage"
+
+
+def test_normalize_metric_name_noop_when_unresolvable():
+    raw = {"kind": "metric", "labels": {"job": "node"}}
+    assert monitor_service._normalize_metric_name(raw) is None
+    assert "metric_name" not in raw["labels"]
+

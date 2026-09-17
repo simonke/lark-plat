@@ -59,7 +59,7 @@ from app import schemas
 logger = logging.getLogger(__name__)
 
 # Entity mapping fallback / schema-validation source identifiers
-_VALID_SOURCES = set(MON_SOURCES) | {"alertmanager"}
+_VALID_SOURCES = set(MON_SOURCES)
 _VALID_KINDS = set(MON_KINDS)
 _VALID_LEVELS = set(MON_LEVELS)
 _VALID_OPS = set(MON_RULE_OPS)
@@ -278,15 +278,38 @@ def _mask_adapter_config(config: dict) -> dict:
     return out
 
 
+def _is_masked_secret(val: str) -> bool:
+    """A read-side masked secret (config_mask) must never be re-encrypted over the
+    real ciphertext (P2-4): mask_secret -> 'ab******yz' / '****' / '***'."""
+    return "*" in val
+
+
 def _encrypt_config_secrets(config: dict, existing: dict | None = None) -> dict:
-    """Encrypt secret keys with AES-GCM. Missing secrets are preserved from `existing`."""
+    """Encrypt secret keys with AES-GCM, recursing into nested dicts AND lists.
+
+    Missing/masked secrets are preserved from `existing` (P2-4): a PUT that echoes
+    back `config_mask` (e.g. "ab******yz") must not overwrite the stored ciphertext.
+    """
     merged = dict(existing or {})
     for key, val in config.items():
-        if key in _SECRET_KEYS and isinstance(val, str) and not val.startswith("enc:"):
-            merged[key] = "enc:" + encrypt_secret(val)
+        if key in _SECRET_KEYS and isinstance(val, str):
+            if val.startswith("enc:") or _is_masked_secret(val):
+                merged[key] = merged.get(key, val)  # preserve existing ciphertext
+            else:
+                merged[key] = "enc:" + encrypt_secret(val)
         elif isinstance(val, dict):
             nested = merged.get(key) if isinstance(merged.get(key), dict) else {}
             merged[key] = _encrypt_config_secrets(val, nested)
+        elif isinstance(val, list):
+            prev = merged.get(key) if isinstance(merged.get(key), list) else []
+            out: list[Any] = []
+            for i, item in enumerate(val):
+                if isinstance(item, dict):
+                    nest = prev[i] if i < len(prev) and isinstance(prev[i], dict) else {}
+                    out.append(_encrypt_config_secrets(item, nest))
+                else:
+                    out.append(item)
+            merged[key] = out
         else:
             merged[key] = val
     return merged
@@ -442,53 +465,100 @@ _TRANSITIONS = {
 }
 
 
-def _rule_matches(rule: MonRule, event: dict) -> tuple[bool, str]:
-    """Check whether a normalized event pertains to a rule (kind + source + metric + scope)."""
-    kind = event.get("kind")
-    if kind != rule.event_kind:
-        return False, ""
+def _rule_pertains(rule: MonRule, event: dict) -> bool:
+    """Perception stage: does this event belong to this rule at all?
+
+    Non-pertain events are IGNORED and must never resolve an existing alert
+    (seq1767 B1): only a pertain-but-condition-not-met event may resolve.
+    """
+    if event.get("kind") != rule.event_kind:
+        return False
     if rule.event_source and rule.event_source != event.get("source"):
-        return False, ""
-
+        return False
     if rule.event_kind == "metric":
-        metric_name = (event.get("labels") or {}).get("metric_name") or \
-                      (event.get("labels") or {}).get("__name__") or ""
+        labels = event.get("labels") or {}
+        metric_name = labels.get("metric_name") or labels.get("__name__") or ""
         if rule.metric_name and metric_name != rule.metric_name:
-            return False, ""
-
-    # US-03: server-side entity scope filtering
+            return False
     if rule.scope_type:
         entity = event.get("entity") or {}
         scope = _get_json_list(rule.scope_ids)
         if scope and str(entity.get("entity_id")) not in scope:
-            return False, ""
+            return False
+    return True
 
-    return True, ""
+
+def _condition_met(rule: MonRule, event: dict) -> bool:
+    """Condition stage: threshold evaluation on the event value.
+
+    Events without a numeric value (alert/log/apm) satisfy the condition once
+    they pertain (the event itself is the signal)."""
+    value = event.get("value")
+    if value is None:
+        return True
+    return _check_condition(rule, value if isinstance(value, (int, float)) else _to_float(value))
+
+
+def _try_converge(db: Session, rule: MonRule, event: dict,
+                  alert_repo: MonAlertRepository) -> MonAlert | None:
+    """converge_sec window: a hit on a recently resolved (rule,entity) alert
+    reopens/aggregates it instead of creating a new alert (seq1767 B / P2-3)."""
+    window = rule.converge_sec or 0
+    if window <= 0:
+        return None
+    entity_id = (event.get("entity") or {}).get("entity_id")
+    recent = alert_repo.recently_resolved(rule.id, entity_id, window)
+    if recent is None:
+        return None
+    if not alert_repo.optimistic_update(recent.id, "resolved", "pending", recent.version,
+                                        resolved_at=None, fired_at=None):
+        return None
+    recent.version += 1
+    recent.status = "pending"
+    recent.resolved_at = None
+    recent.fired_at = None
+    recent.hit_count += 1
+    recent.last_value = _to_float(event.get("value"))
+    _log_alert_event(db, recent, "fire", "resolved", "pending", recent.severity,
+                     {"reason": "converge window reopen", "converge_sec": window})
+    _broadcast_alert(recent)
+    return recent
 
 
 def evaluate_event(db: Session, event: dict) -> list[dict]:
-    """Public rule-eval entry: run one normalized event through every enabled rule
-    and return per-rule outcome records (fire/resolve/suppress + state)."""
+    """Public rule-eval entry: run one normalized event through every enabled rule.
+
+    Per rule: pertain=False -> ignore; pertain & condition not met -> resolved;
+    pertain & condition met -> pending (duration) / firing + notify / escalate.
+    """
     outcomes: list[dict] = []
-    now = datetime.now(timezone.utc)
+    entity_id = (event.get("entity") or {}).get("entity_id")
+    alert_repo = MonAlertRepository(db)
     for rule in MonRuleRepository(db).enabled_rules():
-        matched, _reason = _rule_matches(rule, event)
-        alert_repo = MonAlertRepository(db)
-        alert = alert_repo.active_by_rule_entity(rule.id, (event.get("entity") or {}).get("entity_id"))
-        if not matched:
-            if alert is not None and alert.fired_at:
+        alert = alert_repo.active_by_rule_entity(rule.id, entity_id)
+        if not _rule_pertains(rule, event):
+            continue  # never resolve on a non-pertain event
+
+        now = datetime.now(timezone.utc)
+        if not _condition_met(rule, event):
+            if alert is not None and alert.status != "resolved":
                 _resolve_alert_engine(db, alert, "condition not met")
                 outcomes.append({"rule_id": rule.id, "action": "resolve"})
             continue
 
         if alert is None:
+            reopened = _try_converge(db, rule, event, alert_repo)
+            if reopened is not None:
+                outcomes.append({"rule_id": rule.id, "action": "converge",
+                                 "to_status": reopened.status})
+                continue
             alert = MonAlert(
                 rule_id=rule.id,
                 rule_name=rule.name,
                 entity=event.get("entity") or dict(_MAPPING_FALLBACK_ENTITY),
                 source=event.get("source", "agent"),
                 status="pending",
-                severity=event.get("severity", "warning"),
+                severity=rule.level or event.get("severity") or "warning",
                 last_value=_to_float(event.get("value")),
                 hit_count=1,
             )
@@ -496,14 +566,14 @@ def evaluate_event(db: Session, event: dict) -> list[dict]:
             db.flush()
             _log_alert_event(db, alert, "fire", None, "pending", alert.severity,
                              {"reason": "first condition hit"})
+            _broadcast_alert(alert)
             outcomes.append({"rule_id": rule.id, "action": "fire", "to_status": "pending"})
             continue
 
         alert.hit_count += 1
         alert.last_value = _to_float(event.get("value"))
-        now = datetime.now(timezone.utc)
 
-        if alert.status in ("pending",):
+        if alert.status == "pending":
             elapsed = (now - alert.created_at).total_seconds()
             if elapsed >= rule.condition_duration_seconds:
                 if alert_repo.optimistic_update(alert.id, "pending", "firing", alert.version,
@@ -514,6 +584,7 @@ def evaluate_event(db: Session, event: dict) -> list[dict]:
                     _log_alert_event(db, alert, "fire", "pending", "firing", alert.severity,
                                      {"condition_duration_seconds": rule.condition_duration_seconds})
                     outcome = _maybe_notify(db, alert, rule, "firing")
+                    _broadcast_alert(alert)
                     outcomes.append({"rule_id": rule.id, "action": outcome, "to_status": "firing"})
             else:
                 _log_alert_event(db, alert, "suppress", "pending", "pending", alert.severity,
@@ -526,23 +597,36 @@ def evaluate_event(db: Session, event: dict) -> list[dict]:
             outcome = _maybe_notify(db, alert, rule, alert.status)
             escalated = _maybe_escalate(db, alert, rule)
             action = "escalate" if escalated else outcome
+            if action != "suppress":
+                _broadcast_alert(alert)
             outcomes.append({"rule_id": rule.id, "action": action, "to_status": alert.status})
     return outcomes
 
 
 def _maybe_escalate(db: Session, alert: MonAlert, rule: MonRule) -> bool:
+    """B2: escalate to the NEXT level in escalate_levels. Each level waits one
+    escalation_after_seconds window, measured progressively from fired_at (so the
+    n-th escalation needs n windows) - no per-event re-escalation."""
     if not rule.escalation_enabled or (rule.escalation_after_seconds or 0) <= 0 or not alert.fired_at:
         return False
-    escalate_levels = _get_json_list(rule.escalate_levels)
-    if not escalate_levels or alert.severity in escalate_levels:
+    levels = _get_json_list(rule.escalate_levels)
+    if not levels:
         return False
+    try:
+        idx = levels.index(alert.severity)
+    except ValueError:
+        idx = -1  # unknown current level -> start at the first escalation level
+    next_idx = idx + 1
+    if next_idx >= len(levels):
+        return False  # already at the top of the escalation path
     now = datetime.now(timezone.utc)
-    if (now - alert.fired_at).total_seconds() < rule.escalation_after_seconds:
+    if (now - alert.fired_at).total_seconds() < rule.escalation_after_seconds * (next_idx + 1):
         return False
-    target = escalate_levels[0]
+    target = levels[next_idx]
+    from_status = alert.status
     alert.severity = target
-    _log_alert_event(db, alert, "escalate", "firing", "firing", target,
-                     {"after_seconds": rule.escalation_after_seconds})
+    _log_alert_event(db, alert, "escalate", from_status, alert.status, target,
+                     {"after_seconds": rule.escalation_after_seconds, "level": target})
     _send_alert_notify(db, alert, rule, f"升级告警提醒：{alert.rule_name}")
     return True
 
@@ -612,6 +696,49 @@ def _log_alert_event(db: Session, alert: MonAlert, action: str, from_status: str
 
 
 # =============================================================================
+# US-03 data-level entity scope (B4) + realtime alert broadcast (B4)
+
+
+def _visible_entity_ids(db: Session, user) -> list[str] | None:
+    """None = unrestricted (admin / no group restriction); else the identifiers the
+    user may see (host ip ∪ hostname ∪ str(id)), matching metric entity_id usage."""
+    if getattr(user, "is_admin", False):
+        return None
+    groups = getattr(user, "visible_group_ids", None)
+    if groups is None:
+        return None
+    return HostRepository(db).visible_entity_ids(groups)
+
+
+def _entity_in_scope(visible: list[str] | None, entity: dict | None) -> bool:
+    if visible is None:
+        return True
+    return str((entity or {}).get("entity_id")) in set(visible)
+
+
+def _scope_metric_ids(db: Session, user, entity_ids: list[str] | None) -> list[str] | None:
+    """P2-1: explicit metric entity_ids are intersected with the visible set, so a
+    non-admin cannot widen scope by passing arbitrary entity ids. None = unrestricted."""
+    visible = _visible_entity_ids(db, user)
+    if visible is None:
+        return entity_ids
+    vset = set(visible)
+    if entity_ids:
+        return [e for e in entity_ids if e in vset]
+    return list(vset)
+
+
+def _broadcast_alert(alert: MonAlert) -> None:
+    """B4: wire the alert frame producer (broadcast_sync previously had zero calls)."""
+    try:
+        from app.ws.monitor_ws import broadcast_sync_all
+
+        broadcast_sync_all({"type": "alert", "data": _alert_out(alert)})
+    except Exception:  # noqa: BLE001 - realtime push must never break the engine
+        logger.warning("monitor: alert broadcast failed for alert %s", alert.id, exc_info=True)
+
+
+# =============================================================================
 # Alert operations (REST)
 
 
@@ -634,6 +761,10 @@ def _alert_out(a: MonAlert, ts: str | None = None) -> dict:
 
 def list_alerts(db: Session, user, filters: dict, page: int, size: int) -> dict:
     user.require_perm("monitor:alert:list")
+    filters = dict(filters)
+    visible = _visible_entity_ids(db, user)
+    if visible is not None:
+        filters["entity_ids"] = visible
     rows, total = MonAlertRepository(db).search(filters, page, size)
     return {
         "list": [_alert_out(a) for a in rows],
@@ -644,7 +775,7 @@ def list_alerts(db: Session, user, filters: dict, page: int, size: int) -> dict:
 def get_alert(db: Session, user, alert_id: int) -> dict:
     user.require_perm("monitor:alert:view")
     alert = MonAlertRepository(db).get(alert_id)
-    if alert is None:
+    if alert is None or not _entity_in_scope(_visible_entity_ids(db, user), alert.entity):
         raise NotFoundError("alert not found")
     data = _alert_out(alert)
     data["events"] = [
@@ -659,7 +790,7 @@ def get_alert(db: Session, user, alert_id: int) -> dict:
 def alert_events(db: Session, user, alert_id: int) -> dict:
     user.require_perm("monitor:alert:view")
     alert = MonAlertRepository(db).get(alert_id)
-    if alert is None:
+    if alert is None or not _entity_in_scope(_visible_entity_ids(db, user), alert.entity):
         raise NotFoundError("alert not found")
     return {"list": MonAlertEventLogRepository(db).timeline(alert_id)}
 
@@ -668,7 +799,7 @@ def acknowledge_alert(db: Session, user, alert_id: int, remark: str) -> dict:
     user.require_perm("monitor:alert:ack")
     repo = MonAlertRepository(db)
     alert = repo.get(alert_id)
-    if alert is None:
+    if alert is None or not _entity_in_scope(_visible_entity_ids(db, user), alert.entity):
         raise NotFoundError("alert not found")
     if alert.status != "firing":
         raise BadRequestError(f"alert not firing (status={alert.status})")
@@ -681,6 +812,7 @@ def acknowledge_alert(db: Session, user, alert_id: int, remark: str) -> dict:
         {"remark": remark}, operator_id=user.id
     )
     db.commit()
+    _broadcast_alert(alert)
     return _alert_out(alert)
 
 
@@ -688,7 +820,7 @@ def resolve_alert(db: Session, user, alert_id: int, remark: str) -> dict:
     user.require_perm("monitor:alert:resolve")
     repo = MonAlertRepository(db)
     alert = repo.get(alert_id)
-    if alert is None:
+    if alert is None or not _entity_in_scope(_visible_entity_ids(db, user), alert.entity):
         raise NotFoundError("alert not found")
     if alert.status not in ("pending", "firing", "acknowledged"):
         raise BadRequestError(f"alert already resolved (status={alert.status})")
@@ -704,6 +836,7 @@ def resolve_alert(db: Session, user, alert_id: int, remark: str) -> dict:
         alert.severity, {"remark": remark}, operator_id=user.id
     )
     db.commit()
+    _broadcast_alert(alert)
     return _alert_out(alert)
 
 
@@ -812,7 +945,7 @@ def test_rule(db: Session, user, rule_id: int) -> dict:
 
 def _check_condition(rule: MonRule, value: float) -> bool:
     try:
-        if rule.condition_operator == "=":
+        if rule.condition_operator == "==":
             return value == rule.condition_threshold
         if rule.condition_operator == "!=":
             return value != rule.condition_threshold
@@ -917,6 +1050,8 @@ def set_adapter_status(db: Session, user, adapter_id: int, enabled: int) -> dict
     adapter.enabled = enabled
     if not enabled:
         adapter.status = "disabled"
+    elif adapter.status == "disabled":
+        adapter.status = "healthy"  # re-enable falls back to a live status (B3)
     db.commit()
     return {"id": adapter.id, "enabled": adapter.enabled, "status": adapter.status}
 
@@ -990,8 +1125,7 @@ def _adapter_out(a: MonAdapter) -> dict:
 def query_metrics(db: Session, user, entity_ids: list[str] | None, group_id: int | None,
                   metric_name: str, start, end, agg: str, page: int, size: int) -> dict:
     user.require_perm("monitor:metric:view")
-    if not user.is_admin and not entity_ids:
-        entity_ids = HostRepository(db).entity_ids_in_groups(user.visible_group_ids)
+    entity_ids = _scope_metric_ids(db, user, entity_ids)
     repo = MonMetricSampleRepository(db)
     if agg in ("5m", "1h", "1d"):
         rows = repo.query_bucketed(entity_ids, metric_name, start, end, agg)
@@ -1005,8 +1139,7 @@ def query_metrics(db: Session, user, entity_ids: list[str] | None, group_id: int
 
 def current_metrics(db: Session, user, entity_ids: list[str] | None, metric_name: str | None) -> dict:
     user.require_perm("monitor:metric:view")
-    if not user.is_admin and not entity_ids:
-        entity_ids = HostRepository(db).entity_ids_in_groups(user.visible_group_ids)
+    entity_ids = _scope_metric_ids(db, user, entity_ids)
     rows = MonMetricSampleRepository(db).latest_by_entity(entity_ids, metric_name)
     return {"list": [
         {"entity_id": r.entity_id, "metric_name": r.metric_name, "value": r.value,
@@ -1016,6 +1149,10 @@ def current_metrics(db: Session, user, entity_ids: list[str] | None, metric_name
 
 def list_events(db: Session, user, filters: dict, page: int, size: int) -> dict:
     user.require_perm("monitor:alert:view")
+    filters = dict(filters)
+    visible = _visible_entity_ids(db, user)
+    if visible is not None:
+        filters["entity_ids"] = visible
     rows, total = MonEventInboxRepository(db).search(filters, page, size)
     return {"list": [_event_out(e) for e in rows], "total": total, "page": page, "size": size}
 
@@ -1024,7 +1161,7 @@ def get_event(db: Session, user, event_id: int) -> dict:
     user.require_perm("monitor:alert:view")
     repo = MonEventInboxRepository(db)
     event = repo.get(event_id)
-    if event is None:
+    if event is None or not _entity_in_scope(_visible_entity_ids(db, user), event.entity):
         raise NotFoundError("event not found")
     return _event_out(event)
 
@@ -1044,3 +1181,46 @@ def ws_token(db: Session, user) -> dict:
     from app.ws.monitor_ws import create_ws_token
 
     return {"token": create_ws_token(user.id)}
+
+
+# =============================================================================
+# Time trigger (B1): Celery beat sweep - no-event duration/escalation advance
+
+
+def sweep_alerts(db: Session) -> dict:
+    """Advance time-driven alert transitions without a new event:
+
+    - pending & condition_duration_seconds elapsed -> firing (+notify)
+    - firing/acknowledged & escalation window elapsed -> next escalation level
+
+    'sustained' semantics: an alert not resolved is still condition-met (no event
+    is not a clear signal), so the sweep only moves state forward.
+    """
+    if not _feature_enabled(db):
+        return {"fired": 0, "escalated": 0, "skipped": "feature_disabled"}
+    now = datetime.now(timezone.utc)
+    repo = MonAlertRepository(db)
+    rule_repo = MonRuleRepository(db)
+    fired = escalated = 0
+    for alert in repo.active():
+        rule = rule_repo.get(alert.rule_id) if alert.rule_id else None
+        if rule is None or rule.deleted or not rule.enabled:
+            continue
+        if alert.status == "pending":
+            elapsed = (now - alert.created_at).total_seconds()
+            if elapsed >= (rule.condition_duration_seconds or 0) and repo.optimistic_update(
+                alert.id, "pending", "firing", alert.version, fired_at=now
+            ):
+                alert.version += 1
+                alert.status = "firing"
+                alert.fired_at = now
+                _log_alert_event(db, alert, "fire", "pending", "firing", alert.severity,
+                                 {"reason": "sweep duration elapsed"})
+                _maybe_notify(db, alert, rule, "firing")
+                _broadcast_alert(alert)
+                fired += 1
+        elif _maybe_escalate(db, alert, rule):
+            _broadcast_alert(alert)
+            escalated += 1
+    db.commit()
+    return {"fired": fired, "escalated": escalated}

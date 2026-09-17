@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any, Sequence
 
 from sqlalchemy import String, delete, func, select
@@ -198,6 +199,23 @@ class HostRepository(BaseRepository[Host]):
             return []
         stmt = select(Host.ip).where(Host.group_id.in_(group_ids))
         return list(self.session.scalars(stmt).all())
+
+    def visible_entity_ids(self, group_ids: list[int] | None) -> list[str]:
+        """US-03 (B4): identifiers of hosts in the given groups that external/agent
+        events may use as entity_id - ip ∪ hostname ∪ str(id). Empty groups -> []."""
+        if not group_ids:
+            return []
+        rows = self.session.execute(
+            select(Host.id, Host.hostname, Host.ip).where(Host.group_id.in_(group_ids))
+        ).all()
+        out: set[str] = set()
+        for host_id, hostname, ip in rows:
+            if ip:
+                out.add(str(ip))
+            if hostname:
+                out.add(str(hostname))
+            out.add(str(host_id))
+        return list(out)
 
 
 class CredentialRepository(BaseRepository[HostCredential]):
@@ -722,6 +740,8 @@ class MonEventInboxRepository(BaseRepository[MonEventInbox]):
             conds.append(MonEventInbox.ts >= filters["start"])
         if filters.get("end"):
             conds.append(MonEventInbox.ts <= filters["end"])
+        if filters.get("entity_ids") is not None:
+            conds.append(MonEventInbox.entity["entity_id"].as_string().in_(filters["entity_ids"]))
         if conds:
             stmt = stmt.where(*conds)
         total = self.session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
@@ -786,6 +806,8 @@ class MonAlertRepository(BaseRepository[MonAlert]):
             conds.append(MonAlert.fired_at >= filters["start"])
         if filters.get("end"):
             conds.append(MonAlert.fired_at <= filters["end"])
+        if filters.get("entity_ids") is not None:
+            conds.append(MonAlert.entity["entity_id"].as_string().in_(filters["entity_ids"]))
         if conds:
             stmt = stmt.where(*conds)
         total = self.session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
@@ -793,6 +815,27 @@ class MonAlertRepository(BaseRepository[MonAlert]):
             stmt.order_by(MonAlert.id.desc()).offset((page - 1) * size).limit(size)
         ).all()
         return list(rows), int(total)
+
+    def recently_resolved(self, rule_id: int, entity_id: str, window_sec: int) -> MonAlert | None:
+        """Latest alert for (rule, entity) resolved within the converge window."""
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=max(window_sec, 0))
+        return self.session.scalar(
+            select(MonAlert).where(
+                MonAlert.rule_id == rule_id,
+                MonAlert.entity["entity_id"].as_string() == entity_id,
+                MonAlert.status == "resolved",
+                MonAlert.resolved_at.is_not(None),
+                MonAlert.resolved_at >= cutoff,
+            ).order_by(MonAlert.id.desc())
+        )
+
+    def active(self, limit: int = 500) -> list[MonAlert]:
+        """Active alerts (pending/firing/acknowledged) for the sweep task (B1)."""
+        return list(self.session.scalars(
+            select(MonAlert)
+            .where(MonAlert.status.in_(("pending", "firing", "acknowledged")))
+            .order_by(MonAlert.id.asc()).limit(limit)
+        ).all())
 
     def optimistic_update(self, alert_id: int, from_status: str, to_status: str, version: int,
                           **fields) -> bool:

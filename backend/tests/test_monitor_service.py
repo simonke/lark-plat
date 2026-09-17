@@ -287,7 +287,9 @@ def test_new_alert_created_on_first_hit(monkeypatch):
     assert db.added and isinstance(db.added[0], monitor_service.MonAlert)
 
 
-def test_non_matching_event_resolves_firing_alert(monkeypatch):
+def test_non_pertain_event_does_not_resolve_alert(monkeypatch):
+    """B1 (seq1767): a non-pertain event (wrong kind) is IGNORED and must NOT
+    resolve an existing alert - only pertain+condition-not-met may resolve."""
     db = _Db()
     rule = _rule(event_kind="metric")
     alert = _alert(status="firing", fired_at=NOW)
@@ -296,7 +298,31 @@ def test_non_matching_event_resolves_firing_alert(monkeypatch):
         "kind": "alert", "source": "alertmanager",
         "entity": {"entity_id": "10.0.0.1"}, "ts": NOW.isoformat(),
     })
+    assert outcomes == []
+    assert alert.status == "firing"
+
+
+def test_pertain_condition_not_met_resolves_alert(monkeypatch):
+    """B1: pertain + condition not met -> resolve."""
+    db = _Db()
+    rule = _rule(event_kind="metric", condition_operator=">", condition_threshold=80)
+    alert = _alert(status="firing", fired_at=NOW)
+    _patch_engine(monkeypatch, rule, alert)
+    outcomes = monitor_service.evaluate_event(db, _metric_event(value=10.0))
     assert outcomes == [{"rule_id": 1, "action": "resolve"}]
+
+
+def test_new_alert_severity_uses_rule_level(monkeypatch):
+    """B1: new alert severity comes from rule.level, not the event severity."""
+    db = _Db()
+    rule = _rule(condition_duration_seconds=0, level="critical")
+    monkeypatch.setattr(monitor_service.MonRuleRepository, "enabled_rules", lambda self: [rule])
+    monkeypatch.setattr(monitor_service.MonAlertRepository, "active_by_rule_entity",
+                        lambda self, rid, eid: None)
+    monkeypatch.setattr(monitor_service, "_log_alert_event", lambda *a, **kw: None)
+    monitor_service.evaluate_event(db, _metric_event(value=95.0))
+    created = [a for a in db.added if isinstance(a, monitor_service.MonAlert)]
+    assert created and created[0].severity == "critical"
 
 
 def test_scope_filter_excludes_outside_entities(monkeypatch):

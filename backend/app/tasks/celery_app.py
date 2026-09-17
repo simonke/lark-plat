@@ -25,7 +25,7 @@ celery_app.conf.update(
     # Ensure the worker registers exec tasks (exec_dispatch / scan_timeouts). The
     # module is otherwise only imported lazily from services, which would leave the
     # worker without the task registry entries beat schedules and brokers dispatch.
-    imports=("app.tasks.exec_tasks",),
+    imports=("app.tasks.exec_tasks", "app.tasks.monitor_tasks"),
 )
 
 celery_app.conf.beat_schedule = {
@@ -36,5 +36,9 @@ celery_app.conf.beat_schedule = {
     "trigger-schedules": {
         "task": "app.tasks.schedule_tasks.trigger_schedules",
         "schedule": crontab(minute="*"),
+    },
+    "monitor-alert-sweep": {
+        "task": "app.tasks.monitor_tasks.monitor_alert_sweep",
+        "schedule": 30.0,
     },
 }

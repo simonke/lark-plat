@@ -20,15 +20,15 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, SoftDeleteMixin, TimestampMixin
 
-MON_SOURCES = ("agent", "prometheus", "elk", "skywalking")
+MON_SOURCES = ("agent", "prometheus", "elk", "skywalking", "alertmanager", "webhook")
 MON_KINDS = ("metric", "alert", "log", "apm")
-MON_ADAPTER_TYPES = ("prometheus", "elk", "skywalking")
+MON_ADAPTER_TYPES = ("prometheus", "elk", "skywalking", "alertmanager", "webhook")
 MON_LEVELS = ("info", "warning", "critical")
 MON_RULE_OPS = (">", "<", ">=", "<=", "==", "!=")
 MON_ALERT_STATUSES = ("pending", "firing", "acknowledged", "resolved")
 MON_ALERT_ACTIONS = ("fire", "acknowledge", "escalate", "resolve", "suppress")
 MON_EVENT_STATUSES = ("pending", "processed", "dead_letter")
-MON_ADAPTER_STATUSES = ("healthy", "degraded", "disconnected", "dead")
+MON_ADAPTER_STATUSES = ("healthy", "degraded", "disconnected", "dead", "disabled")
 MON_NOTIFY_SCENES = ("alert", "exec", "schedule")
 
 

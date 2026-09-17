@@ -72,17 +72,77 @@ def broadcast_sync(user_id: int, message: dict) -> None:
         pass
 
 
+async def broadcast_all(message: dict) -> None:
+    """Send a frame to every connected user, filtered by each connection's
+    server-resolved visible entity set (US-03, B4)."""
+    async with _lock:
+        pairs = [(ws, dict(_subs.get(ws, {})))
+                 for sockets in _clients.values() for ws in sockets]
+    for ws, sub in pairs:
+        if not _matches_subscription(message, sub):
+            continue
+        try:
+            await ws.send_text(json.dumps(message))
+        except Exception:
+            pass
+
+
+def broadcast_sync_all(message: dict) -> None:
+    """Thread-safe global broadcast from sync contexts (rule engine / celery)."""
+    loop = _app_loop
+    if loop is None or loop.is_closed():
+        return
+    try:
+        fut = asyncio.run_coroutine_threadsafe(broadcast_all(message), loop)
+        fut.add_done_callback(lambda f: None)
+    except Exception:
+        pass
+
+
+def _resolve_visible(user_id: int) -> set[str] | None:
+    """Server-resolved visible entity ids for a WS user (None = unrestricted).
+    Fail-closed: any error yields an empty set (no entities visible)."""
+    try:
+        from sqlalchemy import select
+
+        from app.db.models import User, UserRole
+        from app.db.session import SessionLocal
+        from app.repositories import HostRepository, RoleRepository
+
+        db = SessionLocal()
+        try:
+            user = db.get(User, user_id)
+            if user is None or user.deleted or user.status != 1:
+                return set()
+            if user.is_admin:
+                return None
+            role_ids = list(db.scalars(
+                select(UserRole.role_id).where(UserRole.user_id == user_id)
+            ).all())
+            groups = RoleRepository(db).visible_group_ids(role_ids)
+            return set(HostRepository(db).visible_entity_ids(groups))
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001 - WS must not crash; fail closed
+        return set()
+
+
 def _matches_subscription(message: dict, sub: dict) -> bool:
-    """US-03: server-side scope filtering for WS messages."""
-    scope = sub.get("scope", "all")
-    if scope == "all":
-        return True
-    ids = sub.get("ids", set())
-    if not ids:
-        return True
+    """US-03: server-side scope filtering for WS messages.
+
+    `ids` from the client are intersected with the connection's server-resolved
+    visible entity set; `scope=all` means "all entities the user may see", NOT the
+    whole platform. `visible is None` = unrestricted (admin)."""
     data = message.get("data") or {}
     entity = data.get("entity") or {}
     entity_id = str(entity.get("entity_id") or data.get("entity_id") or "")
+    visible = sub.get("visible")  # None = unrestricted
+    if visible is not None and entity_id not in visible:
+        return False
+    scope = sub.get("scope", "all")
+    ids = sub.get("ids", set())
+    if scope == "all" or not ids:
+        return True
     return entity_id in ids
 
 
@@ -113,7 +173,7 @@ async def ws_monitor(websocket: WebSocket, token: str):
 
     async with _lock:
         _clients.setdefault(user_id, []).append(websocket)
-        _subs[websocket] = {"scope": "all", "ids": set()}
+        _subs[websocket] = {"scope": "all", "ids": set(), "visible": _resolve_visible(user_id)}
 
     # Send hello frame with current subscription
     await websocket.send_text(json.dumps({
@@ -121,9 +181,12 @@ async def ws_monitor(websocket: WebSocket, token: str):
         "data": {"subscribed": True, "ids": []},
     }))
 
-    # Flush buffered messages
+    # Flush buffered messages (filtered by this connection's visibility)
     buf = _buffer.pop(user_id, [])
+    sub = _subs.get(websocket, {})
     for msg in buf:
+        if not _matches_subscription(msg, sub):
+            continue
         try:
             await websocket.send_text(json.dumps(msg))
         except Exception:
@@ -144,7 +207,9 @@ async def ws_monitor(websocket: WebSocket, token: str):
                 scope = data.get("scope", "all")
                 ids = set(str(i) for i in (data.get("ids") or []))
                 async with _lock:
-                    _subs[websocket] = {"scope": scope, "ids": ids}
+                    prev = _subs.get(websocket, {})
+                    visible = prev.get("visible", _resolve_visible(user_id))
+                    _subs[websocket] = {"scope": scope, "ids": ids, "visible": visible}
                 await websocket.send_text(json.dumps({
                     "type": "hello",
                     "data": {"subscribed": True, "ids": list(ids)},

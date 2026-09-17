@@ -921,12 +921,17 @@ export interface MonMetricQuery {
 }
 
 // agg 命中时后端返回的分桶点
+// 契约 §2 冻结 ts/value；bucket/avg/max/min/count/entity_id 为附加键（add-only，
+// 架构师裁定 C：只加不改）。ts/value 暂标可选以兼容修复前后端旧形状。
 export interface MonMetricBucket {
-  bucket: string
-  avg: number
-  max: number
-  min: number
-  count: number
+  ts?: string
+  value?: number
+  bucket?: string
+  avg?: number
+  max?: number
+  min?: number
+  count?: number
+  entity_id?: string
 }
 
 // 未分桶时后端返回的原始采样点

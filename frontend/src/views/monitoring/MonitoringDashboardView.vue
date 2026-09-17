@@ -136,13 +136,8 @@ import { TooltipComponent, LegendComponent, GridComponent } from 'echarts/compon
 import { CanvasRenderer } from 'echarts/renderers'
 import { DataLine, Warning, Bell, CircleCheck } from '@element-plus/icons-vue'
 import { getMetrics, listAlerts, getMonitoringWsToken } from '../../api/monitoring'
-import type {
-  MonAlertOut,
-  MonMetricResult,
-  MonMetricBucket,
-  MonMetricSamplePoint,
-  MonWsFrame,
-} from '../../api/types'
+import { buildMetricSeries } from './metricSeries'
+import type { MonAlertOut, MonMetricResult, MonWsFrame } from '../../api/types'
 
 echarts.use([LineChart, TooltipComponent, LegendComponent, GridComponent, CanvasRenderer])
 
@@ -165,22 +160,9 @@ const alertStats = computed(() => {
   return { firing, critical, warning }
 })
 
-// 后端 /monitor/metrics：不传 agg → 原始采样点（含 entity_id/source）；传 agg → 分桶点（bucket/avg）
-const chartSeries = computed(() => {
-  const res = metricResult.value
-  if (!res || res.points.length === 0) return [] as { name: string; data: [string, number][] }[]
-  if (res.agg) {
-    const pts = res.points as MonMetricBucket[]
-    return [{ name: `${metricName.value} (${res.agg} avg)`, data: pts.map((p) => [p.bucket, p.avg] as [string, number]) }]
-  }
-  const byEntity = new Map<string, [string, number][]>()
-  for (const p of res.points as MonMetricSamplePoint[]) {
-    const list = byEntity.get(p.entity_id) ?? []
-    list.push([p.ts, p.value])
-    byEntity.set(p.entity_id, list)
-  }
-  return [...byEntity.entries()].map(([eid, data]) => ({ name: eid, data }))
-})
+// 后端 /monitor/metrics：不传 agg → 原始采样点（含 entity_id/source）；传 agg → 分桶点
+// 契约冻结 agg 点为 {ts,value}，附加键 bucket/avg/entity_id 容错解析（架构师裁定 C）
+const chartSeries = computed(() => buildMetricSeries(metricResult.value, metricName.value))
 
 const SOURCE_MAP: Record<string, string> = {
   agent: 'Agent',

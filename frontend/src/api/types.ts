@@ -887,7 +887,7 @@ export interface RecentApproval {
 // ---------------------------------------------------------------- monitoring (P2-MA v3.0)
 // 归一化事件模型 MonEvent 契约 (api-design v3.0 §P2-MA)
 export type MonEventKind = 'metric' | 'alert' | 'log' | 'apm'
-export type MonSource = 'agent' | 'prometheus' | 'elk' | 'skywalking'
+export type MonSource = 'agent' | 'prometheus' | 'elk' | 'skywalking' | 'alertmanager' | 'webhook'
 export type MonSeverity = 'critical' | 'warning' | 'info'
 
 export interface MonEntity {
@@ -908,53 +908,57 @@ export interface MonEvent {
   fingerprint: string
 }
 
+// /monitor/metrics 查询参数（后端 acceptance: entity_ids/group_id/metric_name/start/end/agg/page/size）
 export interface MonMetricQuery {
-  source?: MonSource
+  entity_ids?: string
+  group_id?: number
   metric_name?: string
-  entity_type?: 'host' | 'app' | 'service'
-  entity_id?: string
   start?: string
   end?: string
   agg?: '5m' | '1h' | '1d'
+  page?: number
+  size?: number
 }
 
-export interface MonMetricPoint {
+// agg 命中时后端返回的分桶点
+export interface MonMetricBucket {
+  bucket: string
+  avg: number
+  max: number
+  min: number
+  count: number
+}
+
+// 未分桶时后端返回的原始采样点
+export interface MonMetricSamplePoint {
   ts: string
+  entity_id: string
   value: number
+  source: MonSource
 }
 
-export interface MonMetricSeries {
+// GET /monitor/metrics 统一返回体：{agg, points, total?, page?, size?}
+export interface MonMetricResult {
+  agg: '5m' | '1h' | '1d' | null
+  points: (MonMetricBucket | MonMetricSamplePoint)[]
+  total?: number
+  page?: number
+  size?: number
+}
+
+// GET /monitor/metrics/current 返回 {list:[...]}
+export interface MonCurrentMetric {
+  entity_id: string
   metric_name: string
-  entity_id: string
-  entity_name: string
-  source: MonSource
-  points: MonMetricPoint[]
+  value: number
+  ts: string | null
 }
 
-export interface MonAlertEventOut {
-  id: string
-  rule_id: string | null
-  rule_name: string | null
-  source: MonSource
-  kind: MonEventKind
-  entity_id: string
-  entity_name: string
-  severity: MonSeverity
-  status: string
-  labels: Record<string, unknown>
-  first_seen_at: string
-  last_seen_at: string
-  resolved_at: string | null
-}
-
-export interface MonAlertEventQuery {
+// /monitor/alerts 查询参数（后端支持 status/severity/rule_id + 分页）
+export interface MonAlertQuery {
   status?: string
   severity?: MonSeverity
-  source?: MonSource
-  rule_id?: string
-  entity_id?: string
-  start?: string
-  end?: string
+  rule_id?: number
   page?: number
   size?: number
 }
@@ -963,8 +967,8 @@ export interface MonAlertEventQuery {
 export type MonAlertAction = 'fire' | 'acknowledge' | 'escalate' | 'resolve' | 'suppress'
 
 export interface MonAlertOut {
-  id: string
-  rule_id: string | null
+  id: number
+  rule_id: number | null
   rule_name: string | null
   entity: MonEntity
   source: MonSource
@@ -1046,7 +1050,7 @@ export interface AlertRuleUpdate {
 }
 
 export interface AlertRuleOut {
-  id: string
+  id: number
   name: string
   description: string | null
   enabled: boolean
@@ -1073,25 +1077,33 @@ export interface AlertRuleOut {
 }
 
 export interface AlertRuleQuery {
-  name?: string
-  enabled?: boolean
+  enabled?: number
   event_kind?: MonEventKind
-  event_source?: MonSource
   page?: number
   size?: number
 }
 
-export interface AdapterStatus {
+// GET /monitor/adapters 列表项（后端 _adapter_out）
+export interface MonAdapterOut {
+  id: number
+  name: string
   type: MonSource
-  enabled: boolean
-  connected: boolean
-  detail: string
-  last_check_at: string | null
+  endpoint: string | null
+  config_mask: Record<string, unknown>
+  enabled: number
+  status: string
+  last_heartbeat: string | null
+  metrics_received_count: number
+  error_msg: string | null
+  created_by: number | null
+  created_at: string | null
 }
 
+// POST /monitor/adapters/{id}/test 返回体（后端 test_adapter）
 export interface AdapterTestResult {
   ok: boolean
-  detail: string
+  latency_ms: number | null
+  error_message: string | null
 }
 
 

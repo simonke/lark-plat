@@ -30,7 +30,7 @@ function makeWrapper() {
 }
 
 const ruleRow = {
-  id: 'r1',
+  id: 1,
   name: 'high-cpu',
   description: null,
   enabled: true,
@@ -184,7 +184,7 @@ describe('AlertRulesView', () => {
     await flushPromises()
 
     expect(monApi.updateAlertRule).not.toHaveBeenCalled()
-    expect(monApi.setRuleStatus).toHaveBeenCalledWith('r1', false)
+    expect(monApi.setRuleStatus).toHaveBeenCalledWith(1, false)
     wrapper.unmount()
   })
 })

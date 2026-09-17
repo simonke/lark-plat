@@ -17,43 +17,44 @@
       />
 
       <el-table :data="adapters" v-loading="loading" border>
-        <el-table-column label="适配器" width="180">
+        <el-table-column prop="name" label="适配器" min-width="160" show-overflow-tooltip>
           <template #default="{ row }">
             <div class="adapter-name">
               <el-icon :size="18" :style="{ color: adapterColor(row.type) }"><Grid /></el-icon>
-              <span>{{ adapterLabel(row.type) }}</span>
+              <span>{{ row.name }}</span>
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="type" label="类型" width="130" />
-        <el-table-column label="启用" width="90">
+        <el-table-column label="类型" width="130">
+          <template #default="{ row }">{{ adapterLabel(row.type) }}</template>
+        </el-table-column>
+        <el-table-column label="启用" width="80">
           <template #default="{ row }">
             <el-tag :type="row.enabled ? 'success' : 'info'" size="small">
               {{ row.enabled ? '是' : '否' }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="连通" width="90">
+        <el-table-column label="状态" width="100">
           <template #default="{ row }">
-            <el-tag :type="row.connected ? 'success' : 'danger'" size="small">
-              {{ row.connected ? '在线' : '离线' }}
-            </el-tag>
+            <el-tag :type="statusTag(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="detail" label="详情" min-width="200" show-overflow-tooltip />
-        <el-table-column prop="last_check_at" label="最近检查" min-width="160">
-          <template #default="{ row }">
-            {{ formatTime(row.last_check_at) }}
-          </template>
+        <el-table-column prop="metrics_received_count" label="指标数" width="90" />
+        <el-table-column label="最近心跳" min-width="160">
+          <template #default="{ row }">{{ formatTime(row.last_heartbeat) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="140" fixed="right">
+        <el-table-column label="错误" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.error_msg || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="130" fixed="right">
           <template #default="{ row }">
             <el-button
               size="small"
               type="warning"
-              :loading="testing === row.type"
+              :loading="testing === row.id"
               v-perm="'monitor:rule:test'"
-              @click="onTest(row.type)"
+              @click="onTest(row.id)"
             >
               测试连通
             </el-button>
@@ -68,19 +69,21 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Grid } from '@element-plus/icons-vue'
-import { listAdapterStatus, testAdapter } from '../../api/monitoring'
-import type { AdapterStatus } from '../../api/types'
+import { getAdapters, testAdapter } from '../../api/monitoring'
+import type { MonAdapterOut } from '../../api/types'
 import { extractError } from '../../api/http'
 
 const loading = ref(false)
-const testing = ref<string | null>(null)
-const adapters = ref<AdapterStatus[]>([])
+const testing = ref<number | null>(null)
+const adapters = ref<MonAdapterOut[]>([])
 
 const ADAPTER_MAP: Record<string, string> = {
   agent: 'Agent 自采集',
   prometheus: 'Prometheus',
+  alertmanager: 'Alertmanager',
   elk: 'ELK',
   skywalking: 'SkyWalking',
+  webhook: 'Webhook',
 }
 
 function adapterLabel(type: string): string {
@@ -90,10 +93,32 @@ function adapterColor(type: string): string {
   const map: Record<string, string> = {
     agent: '#409eff',
     prometheus: '#e6a23c',
+    alertmanager: '#f56c6c',
     elk: '#67c23a',
     skywalking: '#f56c6c',
+    webhook: '#909399',
   }
   return map[type] ?? '#909399'
+}
+const STATUS_MAP: Record<string, string> = {
+  healthy: '正常',
+  degraded: '降级',
+  disabled: '停用',
+  error: '异常',
+  unknown: '未知',
+}
+function statusLabel(st: string): string {
+  return STATUS_MAP[st] ?? st
+}
+function statusTag(st: string): string {
+  const map: Record<string, string> = {
+    healthy: 'success',
+    degraded: 'warning',
+    disabled: 'info',
+    error: 'danger',
+    unknown: 'info',
+  }
+  return map[st] ?? 'info'
 }
 function formatTime(v: string | null | undefined): string {
   return v ? new Date(v).toLocaleString() : '-'
@@ -102,7 +127,8 @@ function formatTime(v: string | null | undefined): string {
 async function loadStatus() {
   loading.value = true
   try {
-    adapters.value = await listAdapterStatus()
+    const page = await getAdapters({ page: 1, size: 100 })
+    adapters.value = page.list
   } catch (e) {
     ElMessage.error(extractError(e))
   } finally {
@@ -110,14 +136,14 @@ async function loadStatus() {
   }
 }
 
-async function onTest(type: string) {
-  testing.value = type
+async function onTest(id: number) {
+  testing.value = id
   try {
-    const result = await testAdapter(type)
+    const result = await testAdapter(id)
     if (result.ok) {
-      ElMessage.success(`${adapterLabel(type)} 连通正常：${result.detail}`)
+      ElMessage.success(`${result.error_message ?? '连通正常'}`)
     } else {
-      ElMessage.error(`${adapterLabel(type)} 连通失败：${result.detail}`)
+      ElMessage.error(`连通失败：${result.error_message ?? '未知原因'}`)
     }
     loadStatus()
   } catch (e) {

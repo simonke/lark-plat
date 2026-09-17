@@ -85,8 +85,8 @@
             <el-empty v-if="realtimeAlerts.length === 0" description="暂无实时告警" :image-size="50" />
             <div v-for="item in realtimeAlerts" :key="item.id" class="stream-item">
               <el-tag :type="severityTag(item.severity)" size="small">{{ item.severity }}</el-tag>
-              <span class="stream-text">{{ item.rule_name ?? item.entity_name }}</span>
-              <span class="stream-time">{{ shortTime(item.last_seen_at) }}</span>
+              <span class="stream-text">{{ item.rule_name ?? item.entity?.entity_name }}</span>
+              <span class="stream-time">{{ shortTime(item.ts) }}</span>
             </div>
           </div>
         </el-card>
@@ -111,14 +111,18 @@
             <span>{{ sourceLabel(row.source) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="entity_name" label="对象" min-width="130" show-overflow-tooltip />
+        <el-table-column label="对象" min-width="130" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.entity?.entity_name ?? '-' }}</template>
+        </el-table-column>
         <el-table-column prop="rule_name" label="规则" min-width="140" show-overflow-tooltip />
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
             <el-tag :type="statusTag(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="last_seen_at" label="最近时间" min-width="160" show-overflow-tooltip />
+        <el-table-column label="最近时间" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.ts ?? '-' }}</template>
+        </el-table-column>
       </el-table>
     </el-card>
   </div>
@@ -131,8 +135,14 @@ import { LineChart } from 'echarts/charts'
 import { TooltipComponent, LegendComponent, GridComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { DataLine, Warning, Bell, CircleCheck } from '@element-plus/icons-vue'
-import { getMetrics, listAlertEvents, getMonitoringWsToken } from '../../api/monitoring'
-import type { MonAlertEventOut, MonAlertOut, MonMetricSeries, MonWsFrame } from '../../api/types'
+import { getMetrics, listAlerts, getMonitoringWsToken } from '../../api/monitoring'
+import type {
+  MonAlertOut,
+  MonMetricResult,
+  MonMetricBucket,
+  MonMetricSamplePoint,
+  MonWsFrame,
+} from '../../api/types'
 
 echarts.use([LineChart, TooltipComponent, LegendComponent, GridComponent, CanvasRenderer])
 
@@ -141,11 +151,11 @@ let chart: ChartType | null = null
 
 const trendEl = ref<HTMLElement>()
 const metricName = ref('cpu_usage_percent')
-const metricSeries = ref<MonMetricSeries[]>([])
+const metricResult = ref<MonMetricResult | null>(null)
 
 const alertLoading = ref(false)
-const recentAlerts = ref<MonAlertEventOut[]>([])
-const realtimeAlerts = ref<MonAlertEventOut[]>([])
+const recentAlerts = ref<MonAlertOut[]>([])
+const realtimeAlerts = ref<MonAlertOut[]>([])
 const wsConnected = ref(false)
 
 const alertStats = computed(() => {
@@ -155,11 +165,30 @@ const alertStats = computed(() => {
   return { firing, critical, warning }
 })
 
+// 后端 /monitor/metrics：不传 agg → 原始采样点（含 entity_id/source）；传 agg → 分桶点（bucket/avg）
+const chartSeries = computed(() => {
+  const res = metricResult.value
+  if (!res || res.points.length === 0) return [] as { name: string; data: [string, number][] }[]
+  if (res.agg) {
+    const pts = res.points as MonMetricBucket[]
+    return [{ name: `${metricName.value} (${res.agg} avg)`, data: pts.map((p) => [p.bucket, p.avg] as [string, number]) }]
+  }
+  const byEntity = new Map<string, [string, number][]>()
+  for (const p of res.points as MonMetricSamplePoint[]) {
+    const list = byEntity.get(p.entity_id) ?? []
+    list.push([p.ts, p.value])
+    byEntity.set(p.entity_id, list)
+  }
+  return [...byEntity.entries()].map(([eid, data]) => ({ name: eid, data }))
+})
+
 const SOURCE_MAP: Record<string, string> = {
   agent: 'Agent',
   prometheus: 'Prometheus',
+  alertmanager: 'Alertmanager',
   elk: 'ELK',
   skywalking: 'SkyWalking',
+  webhook: 'Webhook',
 }
 const SEVERITY_MAP: Record<string, string> = {
   critical: '严重',
@@ -169,6 +198,7 @@ const SEVERITY_MAP: Record<string, string> = {
 const STATUS_MAP: Record<string, string> = {
   pending: '待评估',
   firing: '触发中',
+  acknowledged: '已确认',
   resolved: '已解决',
 }
 
@@ -186,46 +216,50 @@ function statusLabel(st: string): string {
   return STATUS_MAP[st] ?? st
 }
 function statusTag(st: string): string {
-  const map: Record<string, string> = { pending: 'info', firing: 'danger', resolved: 'success' }
+  const map: Record<string, string> = {
+    pending: 'info',
+    firing: 'danger',
+    acknowledged: 'warning',
+    resolved: 'success',
+  }
   return map[st] ?? 'info'
 }
-function shortTime(v: string): string {
+function shortTime(v: string | null | undefined): string {
   return v ? new Date(v).toLocaleTimeString() : ''
 }
 
 function renderChart() {
   if (!trendEl.value) return
   if (!chart) chart = echarts.init(trendEl.value)
-  const series = metricSeries.value.map((s) => ({
-    name: `${s.entity_name} (${s.source})`,
-    type: 'line' as const,
-    smooth: true,
-    showSymbol: false,
-    data: s.points.map((p) => [p.ts, p.value]),
-  }))
   chart.setOption({
     tooltip: { trigger: 'axis' },
     legend: { type: 'scroll' },
     grid: { left: 60, right: 20, top: 40, bottom: 30 },
     xAxis: { type: 'time' },
     yAxis: { type: 'value' },
-    series,
-  })
+    series: chartSeries.value.map((s) => ({
+      name: s.name,
+      type: 'line' as const,
+      smooth: true,
+      showSymbol: false,
+      data: s.data,
+    })),
+  }, true)
 }
 
 async function loadMetrics() {
   try {
-    metricSeries.value = await getMetrics({ metric_name: metricName.value, agg: '5m' })
-    renderChart()
+    metricResult.value = await getMetrics({ metric_name: metricName.value, size: 500 })
   } catch {
-    metricSeries.value = []
+    metricResult.value = null
   }
+  renderChart()
 }
 
 async function loadAlerts() {
   alertLoading.value = true
   try {
-    const page = await listAlertEvents({ size: 10 })
+    const page = await listAlerts({ size: 10 })
     recentAlerts.value = page.list
   } catch {
     recentAlerts.value = []
@@ -257,8 +291,7 @@ async function connectWs() {
         return
       }
       if (frame.type === 'alert' && frame.data) {
-        const alert = frame.data as MonAlertOut
-        realtimeAlerts.value.unshift(toAlertEvent(alert))
+        realtimeAlerts.value.unshift(frame.data as MonAlertOut)
         if (realtimeAlerts.value.length > 20) realtimeAlerts.value.pop()
       }
     }
@@ -293,24 +326,6 @@ function stopPing() {
   if (pingTimer !== null) {
     clearInterval(pingTimer)
     pingTimer = null
-  }
-}
-
-function toAlertEvent(alert: MonAlertOut): MonAlertEventOut {
-  return {
-    id: alert.id,
-    rule_id: alert.rule_id,
-    rule_name: alert.rule_name,
-    source: alert.source,
-    kind: 'alert',
-    entity_id: alert.entity.entity_id,
-    entity_name: alert.entity.entity_name,
-    severity: alert.severity,
-    status: alert.status,
-    labels: {},
-    first_seen_at: alert.fired_at ?? alert.ts,
-    last_seen_at: alert.ts,
-    resolved_at: alert.resolved_at,
   }
 }
 

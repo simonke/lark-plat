@@ -9,9 +9,10 @@
 
       <el-form inline :model="query" @submit.prevent="loadAlerts">
         <el-form-item label="状态">
-          <el-select v-model="query.status" clearable placeholder="全部" style="width: 120px">
+          <el-select v-model="query.status" clearable placeholder="全部" style="width: 130px">
             <el-option label="待评估" value="pending" />
             <el-option label="触发中" value="firing" />
+            <el-option label="已确认" value="acknowledged" />
             <el-option label="已解决" value="resolved" />
           </el-select>
         </el-form-item>
@@ -22,16 +23,8 @@
             <el-option label="信息" value="info" />
           </el-select>
         </el-form-item>
-        <el-form-item label="来源">
-          <el-select v-model="query.source" clearable placeholder="全部" style="width: 160px">
-            <el-option label="Agent 自采集" value="agent" />
-            <el-option label="Prometheus" value="prometheus" />
-            <el-option label="ELK" value="elk" />
-            <el-option label="SkyWalking" value="skywalking" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="对象">
-          <el-input v-model="query.entity_id" clearable placeholder="主机/服务 ID" style="width: 180px" />
+        <el-form-item label="规则ID">
+          <el-input-number v-model="query.rule_id" :min="1" controls-position="right" placeholder="全部" style="width: 140px" />
         </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="loadAlerts">查询</el-button>
@@ -50,15 +43,21 @@
             <span>{{ sourceLabel(row.source) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="entity_name" label="对象" min-width="130" show-overflow-tooltip />
+        <el-table-column label="对象" min-width="130" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.entity?.entity_name ?? '-' }}</template>
+        </el-table-column>
         <el-table-column prop="rule_name" label="规则" min-width="150" show-overflow-tooltip />
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
             <el-tag :type="statusTag(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="first_seen_at" label="首次时间" min-width="160" show-overflow-tooltip />
-        <el-table-column prop="last_seen_at" label="最近时间" min-width="160" show-overflow-tooltip />
+        <el-table-column label="首次时间" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.fired_at ?? row.ts ?? '-' }}</template>
+        </el-table-column>
+        <el-table-column label="最近时间" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.ts ?? '-' }}</template>
+        </el-table-column>
         <el-table-column label="操作" width="120" fixed="right">
           <template #default="{ row }">
             <el-button
@@ -90,20 +89,22 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { listAlertEvents, resolveAlert } from '../../api/monitoring'
-import type { MonAlertEventOut, MonAlertEventQuery } from '../../api/types'
+import { listAlerts, resolveAlert } from '../../api/monitoring'
+import type { MonAlertOut, MonAlertQuery } from '../../api/types'
 import { extractError } from '../../api/http'
 
 const loading = ref(false)
-const alerts = ref<MonAlertEventOut[]>([])
+const alerts = ref<MonAlertOut[]>([])
 const total = ref(0)
-const query = reactive<MonAlertEventQuery>({ page: 1, size: 10 })
+const query = reactive<MonAlertQuery>({ page: 1, size: 10 })
 
 const SOURCE_MAP: Record<string, string> = {
   agent: 'Agent',
   prometheus: 'Prometheus',
+  alertmanager: 'Alertmanager',
   elk: 'ELK',
   skywalking: 'SkyWalking',
+  webhook: 'Webhook',
 }
 const SEVERITY_MAP: Record<string, string> = {
   critical: '严重',
@@ -113,6 +114,7 @@ const SEVERITY_MAP: Record<string, string> = {
 const STATUS_MAP: Record<string, string> = {
   pending: '待评估',
   firing: '触发中',
+  acknowledged: '已确认',
   resolved: '已解决',
 }
 
@@ -130,14 +132,19 @@ function statusLabel(st: string): string {
   return STATUS_MAP[st] ?? st
 }
 function statusTag(st: string): string {
-  const map: Record<string, string> = { pending: 'info', firing: 'danger', resolved: 'success' }
+  const map: Record<string, string> = {
+    pending: 'info',
+    firing: 'danger',
+    acknowledged: 'warning',
+    resolved: 'success',
+  }
   return map[st] ?? 'info'
 }
 
 async function loadAlerts() {
   loading.value = true
   try {
-    const page = await listAlertEvents(query)
+    const page = await listAlerts(query)
     alerts.value = page.list
     total.value = page.total
   } catch (e) {
@@ -150,13 +157,12 @@ async function loadAlerts() {
 function resetQuery() {
   query.status = undefined
   query.severity = undefined
-  query.source = undefined
-  query.entity_id = undefined
+  query.rule_id = undefined
   query.page = 1
   loadAlerts()
 }
 
-async function onResolve(row: MonAlertEventOut) {
+async function onResolve(row: MonAlertOut) {
   try {
     await resolveAlert(row.id)
     ElMessage.success('已解决')

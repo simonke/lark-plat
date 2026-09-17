@@ -9,9 +9,6 @@
       </template>
 
       <el-form inline :model="query" @submit.prevent="loadRules">
-        <el-form-item label="名称">
-          <el-input v-model="query.name" clearable placeholder="规则名" style="width: 180px" />
-        </el-form-item>
         <el-form-item label="事件类型">
           <el-select v-model="query.event_kind" clearable placeholder="全部" style="width: 130px">
             <el-option label="指标" value="metric" />
@@ -20,9 +17,10 @@
             <el-option label="APM" value="apm" />
           </el-select>
         </el-form-item>
-        <el-form-item label="来源">
-          <el-select v-model="query.event_source" clearable placeholder="全部" style="width: 160px">
-            <el-option v-for="s in sources" :key="s.value" :label="s.label" :value="s.value" />
+        <el-form-item label="状态">
+          <el-select v-model="query.enabled" clearable placeholder="全部" style="width: 120px">
+            <el-option label="启用" :value="1" />
+            <el-option label="停用" :value="0" />
           </el-select>
         </el-form-item>
         <el-form-item>
@@ -210,7 +208,7 @@ const sources = [
 const operators = ['>', '<', '>=', '<=', '==', '!=']
 
 const ruleVisible = ref(false)
-const ruleId = ref<string | null>(null)
+const ruleId = ref<number | null>(null)
 interface RuleForm {
   name: string
   description: string
@@ -295,9 +293,8 @@ async function loadRules() {
 }
 
 function resetQuery() {
-  query.name = undefined
   query.event_kind = undefined
-  query.event_source = undefined
+  query.enabled = undefined
   query.page = 1
   loadRules()
 }

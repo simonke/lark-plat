@@ -193,13 +193,6 @@ class HostRepository(BaseRepository[Host]):
                 online += 1
         return {"total": len(rows), "online": online, "offline": len(rows) - online, "by_env": by_env}
 
-    def entity_ids_in_groups(self, group_ids: list[int] | None) -> list[str]:
-        """Return IP strings for hosts in the given group IDs (used for metric entity_id filtering)."""
-        if not group_ids:
-            return []
-        stmt = select(Host.ip).where(Host.group_id.in_(group_ids))
-        return list(self.session.scalars(stmt).all())
-
     def visible_entity_ids(self, group_ids: list[int] | None) -> list[str]:
         """O2/US-03 visibility seam: identifiers of hosts in the given groups that
         external/agent events may use as entity_id - ip ∪ hostname ∪ str(id)."""

@@ -1282,7 +1282,7 @@ def _sweep_due(db: Session, now: datetime) -> bool:
     return True
 
 
-def sweep_alerts(db: Session) -> dict:
+def sweep_active_alerts(db: Session) -> dict:
     """H1 time trigger: advance time-driven alert transitions (no new event).
 
     - pending & condition_duration_seconds elapsed -> firing (+notify)

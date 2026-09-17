@@ -99,9 +99,33 @@ def broadcast_sync_all(message: dict) -> None:
         pass
 
 
+def _visible_entities(db, user) -> set[str] | None:
+    """Single source of WS visibility (R1/R2): None = unrestricted (admin /
+    visible_group_ids None); else the host ip∪hostname∪id set (visible_entity_ids)."""
+    if user is None:
+        return set()
+    if getattr(user, "is_admin", False):
+        return None
+    groups = getattr(user, "visible_group_ids", None)
+    if groups is None:
+        return None
+    from app.repositories import HostRepository
+
+    return set(HostRepository(db).visible_entity_ids(groups))
+
+
+def clamp_subscription(db, user, ids: set[str]) -> set[str]:
+    """R1/R2: sole public WS-clamp seam. Intersects the requested ids with the
+    server-resolved visible entities; admin / no group restriction -> unchanged."""
+    visible = _visible_entities(db, user)
+    if visible is None:
+        return set(ids)
+    return set(ids) & visible
+
+
 def _resolve_visible(user_id: int) -> set[str] | None:
     """Server-resolved visible entity ids for a WS user (None = unrestricted).
-    Fail-closed: any error yields an empty set (no entities visible)."""
+    Reuses `_visible_entities`; fail-closed on error."""
     try:
         from sqlalchemy import select
 

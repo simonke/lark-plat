@@ -26,7 +26,7 @@ def monitor_alert_sweep() -> dict:
 
     db = _new_session()
     try:
-        result = monitor_service.sweep_alerts(db)
+        result = monitor_service.sweep_active_alerts(db)
         logger.info("monitor: alert sweep %s", result)
         return result
     finally:

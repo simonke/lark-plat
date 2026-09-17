@@ -95,6 +95,8 @@ Agent 收到 → 落盘 temp + 累进写 offset 回传 → 完成 → file_verif
 - 告警处置：列表/详情/确认(acknowledge)/恢复(resolve)/手动触发规则测试；告警历史可查。
 - 实时推送：WS `/ws/monitor` 订阅指标/告警（帧协议权威见 api-design-v3.md §2；subscribe 范围服务端按 US-03 强制过滤）。
 
+> **实现口径（裁定 R seq1804，终版冻结）**：sweep 入口 `monitor_service.sweep_active_alerts`（Celery 任务 `app.tasks.monitor_tasks.monitor_alert_sweep`，beat 固定 30s tick，运行时读 `config_rule monitor.sweep_interval`，未到则跳过）；活跃集 `MonAlertRepository.active()`；metric 新鲜度锚 `mon_alert.last_event_at` + `config_rule monitor.metric_freshness_seconds`（默认 300，stale 不 firing/不升级）。可见性唯一源 `HostRepository.visible_entity_ids`（ip∪hostname∪id）；WS 唯一裁剪 seam `monitor_ws.clamp_subscription`（与 REST 同源）。非 admin 对 app/service 型实体 fail-closed（功能限制，登记 P3 ⑨，本批不扩面）。
+
 ### 4.2 数据模型（表名遵循一期前缀惯例：`mon_*`；API 路由仍为 `/monitor/*`）
 - `mon_metric_sample`：host_id, metric_name, value, ts（按日分区 + (host_id, metric_name, ts) 索引；raw 7d 后清理，聚合入 `mon_metric_daily`）。
 - `mon_adapter`：name(unique), type(prometheus|alertmanager|elk|skywalking), endpoint, config(JSONB，密钥类密文), enabled, status(healthy 等), error_message, last_heartbeat, metrics_received_count, created_by。（对齐落地 schema `{name,type,endpoint,config,enabled}`，旧 `direction`/`kind` 字段已弃用）
@@ -116,7 +118,7 @@ Agent 收到 → 落盘 temp + 累进写 offset 回传 → 完成 → file_verif
 
 转移事件枚举：`fire|acknowledge|escalate|resolve|suppress`；留痕表 `mon_alert_event_log(action, from_status, to_status, severity, detail, operator_id→sys_user, at)`。
 
-- 收敛（dedup）：firing 后同源同键在 `converge_sec` 内重复命中只去重（transient suppressed），不重复 notify；升级由 `escalate_levels` 逐级提级，写 action=escalate。
+- 收敛（dedup，裁定 O1/R2 终版）：活跃期同 `(rule, entity)` 由 `active_by_rule_entity` 复用同一行；resolve 后 `converge_sec` 窗口内再次命中由 `_try_converge`（`MonAlertRepository.recently_resolved`）**reopen**（resolved→pending），置 `pending_since` re-arm 并写 `last_event_at`；`converge_sec=0` 正常新建。通知静默由 `cooldown_seconds` 独立承担（记 action=suppress）。升级由 `escalate_levels` 逐级提级，写 action=escalate。
 - 并发/竞态：state_store 用 CAS 乐观锁（rule_id+entity+收敛键唯一）；超时未收到事件 → 自动 resolved（可配，默认 10min）；已触发告警保留原规则快照；from_status→to_status 非法转移拒绝（TRANSITIONS 白名单）。
 
 ## 5. 身份集成（LDAP / OAuth2 SSO）

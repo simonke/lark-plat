@@ -201,8 +201,8 @@ class HostRepository(BaseRepository[Host]):
         return list(self.session.scalars(stmt).all())
 
     def visible_entity_ids(self, group_ids: list[int] | None) -> list[str]:
-        """US-03 (B4): identifiers of hosts in the given groups that external/agent
-        events may use as entity_id - ip ∪ hostname ∪ str(id). Empty groups -> []."""
+        """O2/US-03 visibility seam: identifiers of hosts in the given groups that
+        external/agent events may use as entity_id - ip ∪ hostname ∪ str(id)."""
         if not group_ids:
             return []
         rows = self.session.execute(
@@ -597,9 +597,11 @@ class MonMetricSampleRepository(BaseRepository[MonMetricSample]):
             labels=labels, fingerprint=fingerprint or "auto",
         ))
 
-    def query(self, entity_ids: list[str] | None, metric_name: str, start, end,
+    def query(self, entity_ids: list[str] | None, metric_name: str | None, start, end,
               page: int, size: int) -> tuple[list[MonMetricSample], int]:
-        stmt = select(MonMetricSample).where(MonMetricSample.metric_name == metric_name)
+        stmt = select(MonMetricSample)
+        if metric_name:  # J: empty/None = no filter (not always-empty)
+            stmt = stmt.where(MonMetricSample.metric_name == metric_name)
         if entity_ids:
             stmt = stmt.where(MonMetricSample.entity_id.in_(entity_ids))
         if start:
@@ -612,7 +614,7 @@ class MonMetricSampleRepository(BaseRepository[MonMetricSample]):
         ).all()
         return list(rows), int(total)
 
-    def query_bucketed(self, entity_ids: list[str] | None, metric_name: str, start, end,
+    def query_bucketed(self, entity_ids: list[str] | None, metric_name: str | None, start, end,
                        agg: str) -> list[dict]:
         """Time-bucketed aggregation (5m|1h|1d) returning [{bucket, avg, max, min, count}]."""
         trunc_map = {"5m": "minute", "1h": "hour", "1d": "day"}
@@ -631,8 +633,9 @@ class MonMetricSampleRepository(BaseRepository[MonMetricSample]):
                 func.min(MonMetricSample.value).label("min"),
                 func.count().label("count"),
             )
-            .where(MonMetricSample.metric_name == metric_name)
         )
+        if metric_name:  # J: empty/None = no filter
+            stmt = stmt.where(MonMetricSample.metric_name == metric_name)
         if entity_ids:
             stmt = stmt.where(MonMetricSample.entity_id.in_(entity_ids))
         if start:
@@ -736,6 +739,8 @@ class MonEventInboxRepository(BaseRepository[MonEventInbox]):
         for key in ("source", "kind", "severity", "status"):
             if filters.get(key):
                 conds.append(getattr(MonEventInbox, key) == filters[key])
+        if filters.get("entity_id"):
+            conds.append(MonEventInbox.entity["entity_id"].as_string() == filters["entity_id"])
         if filters.get("start"):
             conds.append(MonEventInbox.ts >= filters["start"])
         if filters.get("end"):
@@ -817,7 +822,8 @@ class MonAlertRepository(BaseRepository[MonAlert]):
         return list(rows), int(total)
 
     def recently_resolved(self, rule_id: int, entity_id: str, window_sec: int) -> MonAlert | None:
-        """Latest alert for (rule, entity) resolved within the converge window."""
+        """O1 convergence seam: latest (rule, entity) alert resolved within the
+        window (used by _try_converge to reopen/aggregate instead of a new row)."""
         cutoff = datetime.now(timezone.utc) - timedelta(seconds=max(window_sec, 0))
         return self.session.scalar(
             select(MonAlert).where(
@@ -830,7 +836,7 @@ class MonAlertRepository(BaseRepository[MonAlert]):
         )
 
     def active(self, limit: int = 500) -> list[MonAlert]:
-        """Active alerts (pending/firing/acknowledged) for the sweep task (B1)."""
+        """Active alerts (pending/firing/acknowledged) for the sweep task (O2/H1)."""
         return list(self.session.scalars(
             select(MonAlert)
             .where(MonAlert.status.in_(("pending", "firing", "acknowledged")))

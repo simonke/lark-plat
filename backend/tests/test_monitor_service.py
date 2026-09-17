@@ -427,6 +427,7 @@ def test_process_event_dedups_same_event_key(monkeypatch):
     event = {
         "source": "prometheus", "kind": "metric",
         "entity": {"entity_type": "host", "entity_id": "10.0.0.1", "entity_name": "h1"},
+        "labels": {"metric_name": "cpu_usage"},
         "ts": NOW.isoformat(), "value": 90.0, "event_id": "evt-1",
     }
     monkeypatch.setattr(monitor_service.MonEventInboxRepository, "by_event_key",
@@ -456,6 +457,7 @@ def test_process_event_second_send_does_not_persist_duplicate(monkeypatch):
     event = {
         "source": "prometheus", "kind": "metric",
         "entity": {"entity_type": "host", "entity_id": "10.0.0.1", "entity_name": "h1"},
+        "labels": {"metric_name": "cpu_usage"},
         "ts": NOW.isoformat(), "value": 90.0, "event_id": "evt-1",
     }
     added = []

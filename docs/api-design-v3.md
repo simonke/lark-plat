@@ -56,7 +56,7 @@ C→S: {"type":"stop"} | {"type":"ping"}
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | /monitor/metrics | 时序查询：host_ids/group_id/metric_name/start/end/agg(5m/1h/1d) → {points:[{ts,value}]} |
+| GET | /monitor/metrics | 时序查询：entity_ids/group_id/metric_name/start/end/agg(5m/1h/1d) → {points:[{ts,value}]} |
 | GET | /monitor/metrics/current | 最新心跳值（主机详情页展示） |
 | POST | /monitor/rules | {name, event_kind, metric_name, condition_operator, condition_threshold, condition_duration_seconds, scope_type, scope_ids:list[str], level, cooldown_seconds, converge_sec, escalate_levels, notify_channel_ids} |
 | GET | /monitor/rules | 分页 |
@@ -131,6 +131,8 @@ C→S:
 `MonAlertOut = {id, rule_id, rule_name, entity{entity_type,entity_id,entity_name}, source, status, severity, last_value, fired_at, resolved_at, action(fire|acknowledge|escalate|resolve|suppress), ts}`。
 
 权限点：monitor:metric:view / monitor:rule:list/add/edit/del/status/test / monitor:alert:list/view/ack/resolve
+
+> 变更注记（add-only，裁定 L seq1788）：原 `/monitor/metrics` 查询参数 `host_ids` 更正为 `entity_ids`；`entity_ids` 为归一化 entity id 列表（字符串），非资产主键，可为 host/app/service。
 
 ## 3. 身份集成 LDAP/OAuth（P2-3）
 

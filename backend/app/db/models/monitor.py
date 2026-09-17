@@ -201,6 +201,10 @@ class MonAlert(Base, TimestampMixin):
     # Timestamps
     fired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # H2: freshness basis for the sweep (add-only); NOT updated_at
+    last_event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # O1 re-arm: pending duration anchor, reset on create/reopen (legacy -> created_at)
+    pending_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # CAS optimistic lock (concurrent state transitions)
     version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

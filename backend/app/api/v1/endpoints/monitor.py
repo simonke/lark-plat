@@ -57,6 +57,9 @@ def list_alerts(
     status: str | None = None,
     severity: str | None = None,
     rule_id: int | None = None,
+    entity_id: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
     page: Annotated[int, Query(ge=1)] = 1,
     size: Annotated[int, Query(ge=1, le=100)] = 10,
 ):
@@ -67,6 +70,12 @@ def list_alerts(
         filters["severity"] = severity
     if rule_id:
         filters["rule_id"] = rule_id
+    if entity_id:
+        filters["entity_id"] = entity_id
+    if start:
+        filters["start"] = start
+    if end:
+        filters["end"] = end
     return Result.ok(monitor_service.list_alerts(db, user, filters, page, size))
 
 
@@ -185,6 +194,9 @@ def list_events(
     source: str | None = None,
     kind: str | None = None,
     status: str | None = None,
+    entity_id: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
     page: Annotated[int, Query(ge=1)] = 1,
     size: Annotated[int, Query(ge=1, le=100)] = 10,
 ):
@@ -195,6 +207,12 @@ def list_events(
         filters["kind"] = kind
     if status:
         filters["status"] = status
+    if entity_id:
+        filters["entity_id"] = entity_id
+    if start:
+        filters["start"] = start
+    if end:
+        filters["end"] = end
     return Result.ok(monitor_service.list_events(db, user, filters, page, size))
 
 

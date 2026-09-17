@@ -209,6 +209,8 @@ async def ws_monitor(websocket: WebSocket, token: str):
                 async with _lock:
                     prev = _subs.get(websocket, {})
                     visible = prev.get("visible", _resolve_visible(user_id))
+                    if visible is not None:
+                        ids = ids & visible  # K/B4: clamp requested ids to visible
                     _subs[websocket] = {"scope": scope, "ids": ids, "visible": visible}
                 await websocket.send_text(json.dumps({
                     "type": "hello",

@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.security import hash_password
-from app.db.models import Permission, Role, RolePermission, User, UserRole
+from app.db.models import ConfigRule, Permission, Role, RolePermission, User, UserRole
 from app.db.session import SessionLocal
 
 logger = logging.getLogger(__name__)
@@ -460,13 +460,31 @@ def seed_admin_user(db: Session) -> bool:
     return bind
 
 
+DEFAULT_CONFIG_RULES: dict[str, dict] = {
+    # P2-MA O3/I2: sweep cadence + metric freshness defaults (never overwrite existing)
+    "monitor.sweep_interval": {"seconds": 30},
+    "monitor.metric_freshness_seconds": {"seconds": 300},
+}
+
+
+def seed_config_rules(db: Session) -> int:
+    created = 0
+    for key, value in DEFAULT_CONFIG_RULES.items():
+        if db.scalar(select(ConfigRule).where(ConfigRule.rule_key == key)) is None:
+            db.add(ConfigRule(rule_key=key, rule_value=value, remark="P2-MA default (O3/I2)"))
+            created += 1
+    return created
+
+
 def run_seed(db: Session) -> dict:
     perms = seed_permissions(db)
     roles = seed_roles(db)
     users = seed_bootstrap_users(db)
+    configs = seed_config_rules(db)
     admin = users.get("admin", False)
     db.commit()
-    summary = {"permissions": perms, "roles_bound": roles, "admin_created": admin, "users": users}
+    summary = {"permissions": perms, "roles_bound": roles, "admin_created": admin,
+               "config_rules": configs, "users": users}
     if any(summary.values()):
         logger.info("seed: applied %s", summary)
     return summary

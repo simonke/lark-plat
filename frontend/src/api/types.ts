@@ -964,6 +964,9 @@ export interface MonAlertQuery {
   status?: string
   severity?: MonSeverity
   rule_id?: number
+  entity_id?: string
+  start?: string
+  end?: string
   page?: number
   size?: number
 }

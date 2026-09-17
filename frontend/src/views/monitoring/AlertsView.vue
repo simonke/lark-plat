@@ -26,6 +26,15 @@
         <el-form-item label="规则ID">
           <el-input-number v-model="query.rule_id" :min="1" controls-position="right" placeholder="全部" style="width: 140px" />
         </el-form-item>
+        <el-form-item label="实体">
+          <el-input v-model="query.entity_id" clearable placeholder="如 10.0.0.1" style="width: 160px" />
+        </el-form-item>
+        <el-form-item label="开始">
+          <el-date-picker v-model="query.start" type="datetime" value-format="YYYY-MM-DD HH:mm:ss" placeholder="全部" />
+        </el-form-item>
+        <el-form-item label="结束">
+          <el-date-picker v-model="query.end" type="datetime" value-format="YYYY-MM-DD HH:mm:ss" placeholder="全部" />
+        </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="loadAlerts">查询</el-button>
           <el-button @click="resetQuery">重置</el-button>
@@ -158,6 +167,9 @@ function resetQuery() {
   query.status = undefined
   query.severity = undefined
   query.rule_id = undefined
+  query.entity_id = undefined
+  query.start = undefined
+  query.end = undefined
   query.page = 1
   loadAlerts()
 }

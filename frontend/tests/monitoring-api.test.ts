@@ -52,13 +52,20 @@ describe('Monitoring API', () => {
     expect(result).toEqual(list)
   })
 
-  it('should list alerts via /monitor/alerts with supported filters', async () => {
+  it('should list alerts via /monitor/alerts with supported filters incl entity/time (裁定E)', async () => {
     const page = { list: [{ id: 7, status: 'firing', severity: 'critical', source: 'agent', entity: { entity_type: 'host', entity_id: 'h1', entity_name: 'h1' }, ts: '2026-09-09T00:00:00Z' }], total: 1, page: 1, size: 10 }
     vi.mocked(http.get).mockResolvedValue({ data: { code: 0, message: 'ok', data: page } })
 
-    const result = await listAlerts({ status: 'firing', severity: 'critical' })
+    const params = {
+      status: 'firing',
+      severity: 'critical' as const,
+      entity_id: '10.0.0.1',
+      start: '2026-09-09 00:00:00',
+      end: '2026-09-09 23:59:59',
+    }
+    const result = await listAlerts(params)
 
-    expect(http.get).toHaveBeenCalledWith('/monitor/alerts', { params: { status: 'firing', severity: 'critical' } })
+    expect(http.get).toHaveBeenCalledWith('/monitor/alerts', { params })
     expect(result).toEqual(page)
   })
 

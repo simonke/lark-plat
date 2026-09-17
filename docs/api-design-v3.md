@@ -56,7 +56,7 @@ C→S: {"type":"stop"} | {"type":"ping"}
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | /monitor/metrics | 时序查询：entity_ids/group_id/metric_name/start/end/agg(5m/1h/1d) → {points:[{ts,value}]} |
+| GET | /monitor/metrics | 时序查询：entity_ids/group_id/metric_name/start/end/agg(5m/1h/1d) → {points:[{entity_id,ts,value}]}（agg 按 (entity_id,bucket) 分组） |
 | GET | /monitor/metrics/current | 最新心跳值（主机详情页展示） |
 | POST | /monitor/rules | {name, event_kind, metric_name, condition_operator, condition_threshold, condition_duration_seconds, scope_type, scope_ids:list[str], level, cooldown_seconds, converge_sec, escalate_levels, notify_channel_ids} |
 | GET | /monitor/rules | 分页 |
@@ -133,6 +133,8 @@ C→S:
 权限点：monitor:metric:view / monitor:rule:list/add/edit/del/status/test / monitor:alert:list/view/ack/resolve
 
 > 变更注记（add-only，裁定 L seq1788）：原 `/monitor/metrics` 查询参数 `host_ids` 更正为 `entity_ids`；`entity_ids` 为归一化 entity id 列表（字符串），非资产主键，可为 host/app/service。
+
+> 变更注记（add-only，裁定 T seq1810）：`agg` 模式下 points 按 `(entity_id,bucket)` 分组，每点含 `entity_id`（多实体不混合成单序列，前端 `buildMetricSeries` 据此拆分）；另含 `bucket/avg/max/min/count`，并保留 `ts=bucket`、`value=avg` 兼容字段。
 
 ## 3. 身份集成 LDAP/OAuth（P2-3）
 

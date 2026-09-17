@@ -592,3 +592,52 @@ def test_check_condition_ops():
     assert monitor_service._check_condition(rule, 79.0) is False
     rule2 = _rule(condition_operator="<=", condition_threshold=80)
     assert monitor_service._check_condition(rule2, 80.0) is True
+
+
+# ── C residual: multi-entity agg must not mix into one series ────────────────
+
+
+def test_query_bucketed_groups_by_entity_and_bucket():
+    from app.repositories import MonMetricSampleRepository
+
+    captured: dict = {}
+
+    class _Session:
+        def execute(self, stmt, *a, **kw):
+            captured["stmt"] = stmt
+            return _Rows([
+                SimpleNamespace(entity_id="10.0.0.1", bucket=NOW, avg=1.0, max=2.0, min=0.5, count=2),
+                SimpleNamespace(entity_id="10.0.0.2", bucket=NOW, avg=9.0, max=9.0, min=9.0, count=3),
+            ])
+
+    repo = MonMetricSampleRepository(_Session())
+    rows = repo.query_bucketed(["10.0.0.1", "10.0.0.2"], "cpu", None, None, "5m")
+
+    assert [r["entity_id"] for r in rows] == ["10.0.0.1", "10.0.0.2"]
+    assert {r["entity_id"] for r in rows} == {"10.0.0.1", "10.0.0.2"}
+
+    sql = str(captured["stmt"].compile())
+    assert "GROUP BY" in sql and "entity_id" in sql.split("GROUP BY", 1)[1]
+
+
+def test_query_metrics_agg_points_carry_entity_id(monkeypatch):
+    captured: dict = {}
+
+    class _Repo:
+        def __init__(self, db):
+            pass
+
+        def query_bucketed(self, entity_ids, metric_name, start, end, agg):
+            captured["entity_ids"] = entity_ids
+            return [
+                {"entity_id": "10.0.0.1", "bucket": "b1", "avg": 3.0, "max": 3.0, "min": 3.0, "count": 1},
+                {"entity_id": "10.0.0.2", "bucket": "b1", "avg": 7.0, "max": 7.0, "min": 7.0, "count": 1},
+            ]
+
+    monkeypatch.setattr(monitor_service, "MonMetricSampleRepository", _Repo)
+    monkeypatch.setattr(monitor_service, "_scope_metric_ids", lambda db, user, ids, gid: ["10.0.0.1", "10.0.0.2"])
+    out = monitor_service.query_metrics(_Db(), _user(), None, None, "cpu", None, None, "5m", 1, 20)
+
+    assert out["agg"] == "5m"
+    assert [p["entity_id"] for p in out["points"]] == ["10.0.0.1", "10.0.0.2"]
+    assert all(p["value"] == p["avg"] and p["ts"] == p["bucket"] for p in out["points"])

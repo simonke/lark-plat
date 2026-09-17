@@ -609,7 +609,13 @@ class MonMetricSampleRepository(BaseRepository[MonMetricSample]):
 
     def query_bucketed(self, entity_ids: list[str] | None, metric_name: str | None, start, end,
                        agg: str) -> list[dict]:
-        """Time-bucketed aggregation (5m|1h|1d) returning [{bucket, avg, max, min, count}]."""
+        """Time-bucketed aggregation (5m|1h|1d) returning
+        [{entity_id, bucket, avg, max, min, count}] per (entity_id, bucket).
+
+        C (裁定 T seq1810): group by (entity_id, bucket) so multiple entity_ids
+        never collapse into one mixed series; frontend buildMetricSeries relies
+        on entity_id to split series.
+        """
         trunc_map = {"5m": "minute", "1h": "hour", "1d": "day"}
         trunc_unit = trunc_map.get(agg, "hour")
         if trunc_unit == "minute":
@@ -620,6 +626,7 @@ class MonMetricSampleRepository(BaseRepository[MonMetricSample]):
             bucket_expr = func.date_trunc("hour", MonMetricSample.ts)
         stmt = (
             select(
+                MonMetricSample.entity_id.label("entity_id"),
                 bucket_expr.label("bucket"),
                 func.avg(MonMetricSample.value).label("avg"),
                 func.max(MonMetricSample.value).label("max"),
@@ -635,10 +642,13 @@ class MonMetricSampleRepository(BaseRepository[MonMetricSample]):
             stmt = stmt.where(MonMetricSample.ts >= start)
         if end:
             stmt = stmt.where(MonMetricSample.ts <= end)
-        stmt = stmt.group_by("bucket").order_by("bucket")
+        stmt = stmt.group_by(MonMetricSample.entity_id, bucket_expr).order_by(
+            MonMetricSample.entity_id, bucket_expr
+        )
         rows = self.session.execute(stmt).all()
         return [
-            {"bucket": str(r.bucket), "avg": float(r.avg or 0), "max": float(r.max or 0),
+            {"entity_id": r.entity_id, "bucket": str(r.bucket),
+             "avg": float(r.avg or 0), "max": float(r.max or 0),
              "min": float(r.min or 0), "count": int(r.count or 0)}
             for r in rows
         ]

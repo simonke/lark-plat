@@ -26,6 +26,14 @@ class User(Base, TimestampMixin, SoftDeleteMixin):
     status: Mapped[int] = mapped_column(Integer, default=1, nullable=False)  # 1 active / 0 disabled
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     is_admin: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # P2-3 identity integration (additive; existing rows stay 'local')
+    auth_source: Mapped[str] = mapped_column(
+        String(16), default="local", server_default="local", nullable=False
+    )
+    external_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    last_external_login_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     roles: Mapped[list["Role"]] = relationship(secondary="sys_user_role", back_populates="users")
 

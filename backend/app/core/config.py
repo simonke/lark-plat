@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     # Bootstrap admin for seed (env-only; prod requires an explicit value)
     seed_admin_password: str = ""
 
+    # P2-3 SSO: offline/bootstrap fallback for the OAuth2 302 token redirect.
+    # Runtime source of truth is config_rule `sso.frontend_callback_url`.
+    sso_frontend_callback_url: str = ""
+
     @model_validator(mode="after")
     def _fail_fast_on_weak_secrets(self) -> Self:
         if self.app_env == "prod":

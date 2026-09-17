@@ -14,6 +14,7 @@ from app.db.models import (
     ApprovalRule,
     AssetGroup,
     AuditLog,
+    AuthProvider,
     ConfigRule,
     ExecLog,
     ExecTask,
@@ -492,6 +493,20 @@ class ConfigRuleRepository(BaseRepository[ConfigRule]):
 
     def by_key(self, key: str) -> ConfigRule | None:
         return self.session.scalar(select(ConfigRule).where(ConfigRule.rule_key == key))
+
+
+class AuthProviderRepository(BaseRepository[AuthProvider]):
+    model = AuthProvider
+
+    def by_code(self, code: str) -> AuthProvider | None:
+        return self.session.scalar(select(AuthProvider).where(AuthProvider.code == code))
+
+    def list_enabled(self) -> list[AuthProvider]:
+        return list(
+            self.session.scalars(
+                select(AuthProvider).where(AuthProvider.enabled == 1).order_by(AuthProvider.id)
+            ).all()
+        )
 
 
 class PermissionTreeRepository(BaseRepository[Permission]):

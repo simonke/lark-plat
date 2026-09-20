@@ -26,8 +26,15 @@ STAGE1_PATHS = {
     "/api/v1/system/audit-logs/export",
 }
 
-# Public operations exempt from bearer auth (api-design v2.1 §1)
-PUBLIC_OPS = {("/api/v1/auth/login", "post"), ("/api/v1/auth/refresh", "post")}
+# Public operations exempt from bearer auth (api-design v2.1 §1 + P2-3 §3)
+PUBLIC_OPS = {
+    ("/api/v1/auth/login", "post"),
+    ("/api/v1/auth/refresh", "post"),
+    ("/api/v1/auth/providers", "get"),
+    ("/api/v1/auth/ldap/login", "post"),
+    ("/api/v1/auth/oauth/{provider}/login", "get"),
+    ("/api/v1/auth/oauth/{provider}/callback", "get"),
+}
 
 # Stage-4 terminal scope (§6.5), frozen 2026-09-05
 STAGE4_TERMINAL_PATHS = {
@@ -59,6 +66,17 @@ STAGE_MONITOR_PATHS = {
     "/api/v1/monitor/events/{event_id}",
     "/api/v1/monitor/ingest/{adapter_id}",
     "/api/v1/monitor/ws-token",
+}
+
+# P2-3 identity integration scope (/auth/providers, /auth/ldap, /auth/oauth), frozen 2026-09-17
+STAGE_P23_PATHS = {
+    "/api/v1/auth/providers",
+    "/api/v1/auth/providers/{provider_id}",
+    "/api/v1/auth/providers/{provider_id}/status",
+    "/api/v1/auth/providers/{provider_id}/test",
+    "/api/v1/auth/ldap/login",
+    "/api/v1/auth/oauth/{provider}/login",
+    "/api/v1/auth/oauth/{provider}/callback",
 }
 
 # Seed permission points vs module-design §12 (stage-1 subset)
@@ -110,7 +128,7 @@ def test_login_refresh_public_and_rest_guarded(openapi_spec):
 
 def test_path_count_stable(openapi_spec):
     paths = openapi_spec["paths"]
-    assert len(paths) == 100
+    assert len(paths) == 107
 
 
 def test_stage4_terminal_paths_present(openapi_spec):
@@ -130,6 +148,13 @@ def test_stage1_scope_paths_present(openapi_spec):
     paths = openapi_spec["paths"]
     missing = STAGE1_PATHS - set(paths)
     assert not missing, f"stage-1 paths missing: {sorted(missing)}"
+
+
+def test_stage_p23_paths_present(openapi_spec):
+    """P2-3 identity integration paths must be present (add-only over baseline)."""
+    paths = openapi_spec["paths"]
+    missing = STAGE_P23_PATHS - set(paths)
+    assert not missing, f"P2-3 identity paths missing: {sorted(missing)}"
 
 
 def test_static_route_before_id(openapi_spec):

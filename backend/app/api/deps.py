@@ -108,3 +108,23 @@ def require_permission(code: str):
 
 
 UserDep = Annotated[CurrentUser, Depends(get_current_user)]
+
+
+def get_optional_user(
+    request: Request,
+    db: DbDep,
+    authorization: Annotated[str | None, Header()] = None,
+) -> CurrentUser | None:
+    """Resolve the bearer principal when present; never raises for anonymous.
+
+    Used by the dual-mode `GET /auth/providers` (public login-page brief list vs
+    authenticated management list)."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return None
+    try:
+        return get_current_user(request, db, authorization)
+    except UnauthorizedError:
+        return None
+
+
+OptionalUserDep = Annotated[CurrentUser | None, Depends(get_optional_user)]

@@ -49,6 +49,14 @@ class ConflictError(AppError):
     message = "conflict"
 
 
+class ValidationError(AppError):
+    """Semantic validation failure mapped to 422 (code 422)."""
+
+    code = 422
+    http_status = 422
+    message = "unprocessable entity"
+
+
 class RateLimitError(AppError):
     code = 429
     http_status = 429

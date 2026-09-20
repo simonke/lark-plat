@@ -18,12 +18,18 @@ MONITOR_CODES = {
     "monitor:rule:status", "monitor:rule:test",
 }
 
+P23_AUTH_CODES = {
+    "system:auth:provider",
+    "system:auth:provider:add", "system:auth:provider:edit",
+    "system:auth:provider:del", "system:auth:provider:test",
+}
+
 
 def test_seed_tree_permission_points():
     menus = [node[0] for node in PERMISSION_TREE]
     buttons = [child[0] for node in PERMISSION_TREE for child in node[5]]
-    assert len(menus) == 19
-    assert len(buttons) == 60
+    assert len(menus) == 20
+    assert len(buttons) == 64
     assert len(set(menus)) == len(menus)
     assert len(set(buttons)) == len(buttons)
 
@@ -61,6 +67,27 @@ def test_p2ma_monitor_permission_codes_covered_by_seed():
     }
     missing = MONITOR_CODES - seeded
     assert not missing, f"P2-MA monitor permission points missing from seed: {sorted(missing)}"
+
+
+def test_p23_auth_provider_codes_covered_by_seed():
+    """P2-3 identity-provider permission points must be seeded (add-only)."""
+    seeded = {node[0] for node in PERMISSION_TREE} | {
+        child[0] for node in PERMISSION_TREE for child in node[5]
+    }
+    missing = P23_AUTH_CODES - seeded
+    assert not missing, f"P2-3 auth provider permission points missing from seed: {sorted(missing)}"
+
+
+def test_p23_auth_provider_menu_route_frozen():
+    path_by_code = {node[0]: node[3] for node in PERMISSION_TREE}
+    assert path_by_code["system:auth:provider"] == "/system/auth-providers"
+
+
+def test_p23_auth_provider_admin_only():
+    """Provider management is admin-only (reuses the system:user management面)."""
+    assert P23_AUTH_CODES <= set(DEFAULT_ROLES["admin"]["permissions"])
+    assert not (P23_AUTH_CODES & set(DEFAULT_ROLES["operator"]["permissions"]))
+    assert not (P23_AUTH_CODES & set(DEFAULT_ROLES["viewer"]["permissions"]))
 
 
 def test_p2ma_monitor_menu_route_paths_frozen():

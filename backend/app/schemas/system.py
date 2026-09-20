@@ -140,3 +140,47 @@ class AuditLogOut(BaseModel):
     cost_ms: int
     trace_id: str
     created_at: datetime
+
+
+# ---------------------------------------------------------------- identity providers (P2-3)
+
+
+class AuthProviderCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    type: str = Field(min_length=1, max_length=16)  # ldap/oauth2
+    code: str | None = Field(default=None, max_length=64)  # routing key; slug(name) if omitted
+    config: dict = Field(default_factory=dict)
+    enabled: int = Field(default=1, ge=0, le=1)
+
+
+class AuthProviderUpdate(BaseModel):
+    name: str | None = Field(default=None, max_length=64)
+    config: dict | None = None  # omitted -> keep existing ciphertext
+    enabled: int | None = Field(default=None, ge=0, le=1)
+
+
+class AuthProviderStatusIn(BaseModel):
+    enabled: int = Field(ge=0, le=1)
+
+
+class AuthProviderOut(BaseModel):
+    id: int
+    code: str
+    name: str
+    type: str
+    enabled: int
+    config_mask: dict
+    created_at: datetime
+
+
+class AuthProviderBrief(BaseModel):
+    """Login-page provider list entry (incl. built-in `local`)."""
+
+    code: str
+    type: str
+    name: str
+
+
+class LdapLoginIn(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=256)

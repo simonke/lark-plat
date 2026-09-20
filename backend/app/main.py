@@ -52,8 +52,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Public operations exempt from bearer auth (api-design v2.1 §1).
-PUBLIC_OPS = {("/api/v1/auth/login", "post"), ("/api/v1/auth/refresh", "post")}
+# Public operations exempt from bearer auth (api-design v2.1 §1 + P2-3 §3).
+PUBLIC_OPS = {
+    ("/api/v1/auth/login", "post"),
+    ("/api/v1/auth/refresh", "post"),
+    # P2-3: login-page discovery + external-auth entry points are pre-auth.
+    ("/api/v1/auth/providers", "get"),
+    ("/api/v1/auth/ldap/login", "post"),
+    ("/api/v1/auth/oauth/{provider}/login", "get"),
+    ("/api/v1/auth/oauth/{provider}/callback", "get"),
+}
 _HTTP_METHODS = ("get", "post", "put", "delete", "patch")
 
 

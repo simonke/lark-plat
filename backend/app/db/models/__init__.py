@@ -7,6 +7,7 @@ from app.db.models.system import (
     UserRole,
 )
 from app.db.models.asset import AssetGroup, Host, HostCredential
+from app.db.models.auth_provider import AUTH_PROVIDER_TYPES, AUTH_SOURCES, AuthProvider
 from app.db.models.script import Script, ScriptVersion
 from app.db.models.exec import ExecLog, ExecTask, ExecTaskHost
 from app.db.models.schedule import ApprovalRecord, ApprovalRequest, ApprovalRule, ScheduleRun, ScheduleTask
@@ -53,6 +54,9 @@ __all__ = [
     "AssetGroup",
     "Host",
     "HostCredential",
+    "AuthProvider",
+    "AUTH_PROVIDER_TYPES",
+    "AUTH_SOURCES",
     "Script",
     "ScriptVersion",
     "ExecTask",

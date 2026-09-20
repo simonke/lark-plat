@@ -1,11 +1,12 @@
 """P2-3 identity integration service: LDAP / OAuth2 SSO + provider management.
 
 Add-only over phase-1 auth: external logins mint the same JWT pair and reuse the
-existing RBAC/data-permission model. Provider secrets live in
-`auth_provider.config_enc` (whole-config AES-GCM, same envelope as
-notify_channel.config_enc); reads mask them.
+existing RBAC/data-permission model. Provider config (incl. secrets) lives in
+`auth_provider.config_enc` as a JSON string with **per-value** AES-GCM `enc:`
+secrets (monitor-adapter style, architecture seq2090 v2.1); reads mask them.
 
-Contract: api-design-v3 §3 + architecture-phase23 §5 (frozen seq1843/1845/1760).
+Contract: api-design-v3 §3 note v2.1 + architecture-phase23 §5 (frozen
+seq1843/1845/1760/2090).
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from app.core.redis_helper import (
     record_login_failure,
     store_oauth_state,
 )
-from app.core.security import decrypt_secret, encrypt_secret, hash_password
+from app.core.security import decrypt_secret, encrypt_secret, hash_password, mask_secret
 from app.db.models import AuditLog, AuthProvider, ConfigRule, User, UserRole
 from app.repositories import (
     AuthProviderRepository,
@@ -45,13 +46,19 @@ logger = logging.getLogger(__name__)
 
 OAUTH_STATE_TTL = 300
 _CODE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
-_SECRET_KEYS = {"password", "bind_password", "client_secret", "secret", "token"}
+_SECRET_KEYS = {"password", "client_secret", "secret", "token"}
 # Privileged role codes: an SSO provider may grant them explicitly, but only with
 # an audit trail; the platform default must never apply them silently (seq2068 O1).
 _PRIVILEGED_ROLE_CODES = {"admin", "superadmin", "super_admin", "super"}
 _REQUIRED_CONFIG = {
-    "ldap": ("server_uri", "bind_dn_template", "base_dn"),
-    "oauth2": ("authorize_url", "token_url", "client_id"),
+    "ldap": ("server_uri", "bind_dn", "bind_dn_template", "base_dn", "password"),
+    "oauth2": (
+        "authorization_endpoint",
+        "token_endpoint",
+        "client_id",
+        "client_secret",
+        "redirect_uri",
+    ),
 }
 
 
@@ -71,42 +78,85 @@ def _config_rule(db: Session, key: str, default: Any) -> Any:
     return rule.rule_value.get("value", default) if isinstance(rule.rule_value, dict) else default
 
 
-# ---------------------------------------------------------------- config crypto
+# ---------------------------------------------------------------- config codec
+#
+# Per-value AES-GCM ("enc:" prefix), monitor-adapter style (seq2090 v2.1):
+# secret values are stored as "enc:"+ciphertext inside the config JSON, all other
+# values verbatim. `config_enc` holds that JSON string (D1 NOT NULL). `config_mask`
+# masks every "enc:" value; a PUT that omits a key or echoes a masked string keeps
+# the stored ciphertext.
+
+
+def _load_stored(provider: AuthProvider) -> dict[str, Any]:
+    try:
+        value = json.loads(provider.config_enc)
+    except Exception:  # noqa: BLE001 - malformed/legacy -> empty
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _dump_config(config: dict[str, Any]) -> str:
+    return json.dumps(config, ensure_ascii=False)
+
+
+def _decrypt_config_val(config: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key, value in config.items():
+        if isinstance(value, str) and value.startswith("enc:"):
+            try:
+                out[key] = decrypt_secret(value[4:])
+            except Exception:  # noqa: BLE001
+                out[key] = ""
+        elif isinstance(value, dict):
+            out[key] = _decrypt_config_val(value)
+        else:
+            out[key] = value
+    return out
 
 
 def _decrypt_config(provider: AuthProvider) -> dict[str, Any]:
-    try:
-        return json.loads(decrypt_secret(provider.config_enc))
-    except Exception:  # noqa: BLE001 - malformed/plaintext legacy -> empty
-        return {}
+    return _decrypt_config_val(_load_stored(provider))
 
 
-def _encrypt_config(config: dict[str, Any]) -> str:
-    return encrypt_secret(json.dumps(config, ensure_ascii=False))
+def _is_masked_secret(value: str) -> bool:
+    """Read-side masked secret ("ab******yz"/"****"); never re-encrypt over it."""
+    return "*" in value
 
 
-def _mask_value(key: str, value: Any) -> Any:
-    if isinstance(value, dict):
-        return {k: _mask_value(k, v) for k, v in value.items()}
-    if key in _SECRET_KEYS and isinstance(value, str) and value:
-        return "****" if len(value) <= 4 else value[:2] + "****"
-    return value
+def _encrypt_config_secrets(
+    config: dict[str, Any], existing: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Encrypt secret-key values with AES-GCM, recursing into nested dicts.
+
+    Missing/masked secrets are preserved from `existing` (seq2090 ③): a PUT that
+    echoes `config_mask` (e.g. "ab******yz") must not overwrite the ciphertext.
+    """
+    merged = dict(existing or {})
+    for key, value in config.items():
+        if key in _SECRET_KEYS and isinstance(value, str):
+            if value.startswith("enc:") or _is_masked_secret(value):
+                merged[key] = merged.get(key, value)
+            else:
+                merged[key] = "enc:" + encrypt_secret(value)
+        elif isinstance(value, dict):
+            nested = merged.get(key) if isinstance(merged.get(key), dict) else {}
+            merged[key] = _encrypt_config_secrets(value, nested)
+        else:
+            merged[key] = value
+    return merged
 
 
 def _mask_config(config: dict[str, Any]) -> dict[str, Any]:
-    return {k: _mask_value(k, v) for k, v in config.items()}
+    out: dict[str, Any] = {}
+    for key, value in config.items():
+        if isinstance(value, str) and value.startswith("enc:"):
+            out[key] = mask_secret(value[4:])
+        elif isinstance(value, dict):
+            out[key] = _mask_config(value)
+        else:
+            out[key] = value
+    return out
 
-
-def _resolve_config_incoming(incoming: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
-    """A PUT that echoes back a masked secret ("ab****") keeps the stored value."""
-    merged = dict(incoming)
-    for key, value in list(merged.items()):
-        if key in _SECRET_KEYS and isinstance(value, str) and "*" in value:
-            if key in existing:
-                merged[key] = existing[key]
-            else:
-                merged.pop(key, None)
-    return merged
 
 
 # ---------------------------------------------------------------- serializers
@@ -119,7 +169,7 @@ def _provider_out(provider: AuthProvider) -> dict:
         "name": provider.name,
         "type": provider.type,
         "enabled": provider.enabled,
-        "config_mask": _mask_config(_decrypt_config(provider)),
+        "config_mask": _mask_config(_load_stored(provider)),
         "created_at": provider.created_at.isoformat() if provider.created_at else None,
     }
 
@@ -214,7 +264,7 @@ def create_provider(db: Session, actor, data: sch.AuthProviderCreate) -> dict:
     if not _feature_enabled(db):
         raise BadRequestError("sso feature disabled")
     if data.type not in ("ldap", "oauth2"):
-        raise BadRequestError(f"invalid provider type: {data.type}")
+        raise ValidationError(f"invalid provider type: {data.type}")
     repo = AuthProviderRepository(db)
     code = _normalize_code(data.code, data.name)
     if repo.by_code(code) is not None:
@@ -224,7 +274,7 @@ def create_provider(db: Session, actor, data: sch.AuthProviderCreate) -> dict:
         code=code,
         name=data.name,
         type=data.type,
-        config_enc=_encrypt_config(data.config or {}),
+        config_enc=_dump_config(_encrypt_config_secrets(data.config or {}, None)),
         enabled=data.enabled,
     )
     repo.add(provider)
@@ -242,8 +292,8 @@ def update_provider(db: Session, actor, provider_id: int, data: sch.AuthProvider
         provider.enabled = data.enabled
     if data.config is not None:
         privileged = _validate_role_codes(db, data.config.get("default_role_codes"))
-        existing = _decrypt_config(provider)
-        provider.config_enc = _encrypt_config(_resolve_config_incoming(data.config, existing))
+        existing = _load_stored(provider)
+        provider.config_enc = _dump_config(_encrypt_config_secrets(data.config, existing))
         if privileged:
             _audit_privileged_grant(
                 db, actor, provider.code, privileged, "sso.provider.privileged_roles"
@@ -293,7 +343,7 @@ def _test_ldap(config: dict) -> dict:
     try:
         server = ldap3.Server(config["server_uri"], get_info=ldap3.NONE, connect_timeout=5)
         user = config.get("bind_dn")
-        password = config.get("bind_password")
+        password = config.get("password")
         conn = ldap3.Connection(server, user=user, password=password, receive_timeout=5)
         ok = bool(conn.bind())
         conn.unbind()
@@ -305,7 +355,7 @@ def _test_ldap(config: dict) -> dict:
 def _test_oauth2(config: dict) -> dict:
     started = time.perf_counter()
     try:
-        resp = httpx.get(config["token_url"], timeout=5)
+        resp = httpx.get(config["token_endpoint"], timeout=5)
         ok = resp.status_code < 500
         return _test_result(ok, started, None if ok else f"HTTP {resp.status_code}")
     except Exception as exc:  # noqa: BLE001
@@ -357,25 +407,42 @@ def _resolve_external_user(
     return user
 
 
+def _claim_roles(config: dict, attrs: dict) -> list[str] | None:
+    """Resolve role codes from the IdP response via the optional `roles_claim` key
+    (names the claim/attribute carrying role codes). IdP-supplied roles are runtime
+    input, so `_bind_default_roles` refuses privileged codes in them (seq2068 O1)."""
+    claim = config.get("roles_claim")
+    if not claim:
+        return None
+    raw = attrs.get(claim)
+    if raw is None:
+        return None
+    if isinstance(raw, (list, tuple, set)):
+        return [str(item) for item in raw]
+    return [str(raw)]
+
+
 def _bind_default_roles(db: Session, user: User, profile: dict) -> None:
     """Bind default roles to a newly provisioned external user.
 
     Provider-declared codes (explicit, already 422-validated + audited on the
-    provider write) are applied as-is. Platform `config_rule sso.default_role_codes`
-    must never apply admin/super silently -> privileged codes are refused and logged
-    (seq2068 O1)."""
+    provider write) are applied as-is. Runtime sources (IdP `roles_claim` or the
+    platform `config_rule sso.default_role_codes`) must never apply admin/super
+    silently -> privileged codes are refused and logged (seq2068 O1)."""
     explicit = profile.get("default_role_codes")
-    if explicit is None:
-        codes = _config_rule(db, "sso.default_role_codes", []) or []
+    if explicit is not None:
+        codes = explicit
+    else:
+        codes = profile.get("claim_roles")
+        if codes is None:
+            codes = _config_rule(db, "sso.default_role_codes", []) or []
         refused = [c for c in codes if _is_privileged(c)]
         if refused:
             logger.warning(
-                "sso: platform default_role_codes contains privileged %s; refused (not applied)",
+                "sso: runtime default_role_codes contains privileged %s; refused (not applied)",
                 refused,
             )
         codes = [c for c in codes if not _is_privileged(c)]
-    else:
-        codes = explicit
     role_repo = RoleRepository(db)
     for code in codes or []:
         role = role_repo.by_code(code)
@@ -451,6 +518,8 @@ def ldap_login(db: Session, username: str, password: str) -> dict:
             "external_id": attrs.get("uid") or attrs.get("sAMAccountName") or map_value,
             "auto_provision": config.get("auto_provision"),
             "default_role_codes": config.get("default_role_codes"),
+            "roles_claim": config.get("roles_claim"),
+            "claim_roles": _claim_roles(config, attrs),
         }
         user = _resolve_external_user(db, provider, map_value, profile)
         return _finish_external_login(db, username, user)
@@ -479,8 +548,8 @@ def oauth_authorize_url(db: Session, code: str, request_base: str) -> str:
     }
     if config.get("scope"):
         params["scope"] = config["scope"]
-    sep = "&" if "?" in config["authorize_url"] else "?"
-    return f"{config['authorize_url']}{sep}{urlencode(params)}"
+    sep = "&" if "?" in config["authorization_endpoint"] else "?"
+    return f"{config['authorization_endpoint']}{sep}{urlencode(params)}"
 
 
 def _oauth_exchange(config: dict, code: str, redirect_uri: str) -> str:
@@ -491,7 +560,7 @@ def _oauth_exchange(config: dict, code: str, redirect_uri: str) -> str:
         "client_id": config["client_id"],
         "client_secret": config.get("client_secret", ""),
     }
-    resp = httpx.post(config["token_url"], data=data, timeout=10)
+    resp = httpx.post(config["token_endpoint"], data=data, timeout=10)
     resp.raise_for_status()
     payload = resp.json()
     token = payload.get("access_token")
@@ -501,9 +570,9 @@ def _oauth_exchange(config: dict, code: str, redirect_uri: str) -> str:
 
 
 def _oauth_profile(config: dict, access_token: str) -> dict:
-    url = config.get("userinfo_url")
+    url = config.get("userinfo_endpoint")
     if not url:
-        raise BadRequestError("oauth2 provider missing userinfo_url")
+        raise BadRequestError("oauth2 provider missing userinfo_endpoint")
     resp = httpx.get(url, headers={"Authorization": f"Bearer {access_token}"}, timeout=10)
     resp.raise_for_status()
     return resp.json()
@@ -530,6 +599,8 @@ def oauth_callback(db: Session, code: str, auth_code: str, state: str) -> dict:
         "external_id": attrs.get("sub") or map_value,
         "auto_provision": config.get("auto_provision"),
         "default_role_codes": config.get("default_role_codes"),
+        "roles_claim": config.get("roles_claim"),
+        "claim_roles": _claim_roles(config, attrs),
     }
     user = _resolve_external_user(db, provider, map_value, profile)
     result = _finish_external_login(db, map_value or user.username, user)

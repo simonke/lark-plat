@@ -102,16 +102,19 @@ def test_login_methods_keeps_frozen_brief_keys(monkeypatch):
 
 
 def test_list_providers_masks_secret_values(monkeypatch):
-    provider = _provider(config_enc="enc(" + sso_service.json.dumps(
-        {"client_id": "abc", "client_secret": "supersecret", "token_url": "https://idp/token"}
-    ) + ")")
+    provider = _provider(config_enc=sso_service.json.dumps({
+        "client_id": "abc",
+        "client_secret": "enc:" + sso_service.encrypt_secret("supersecret"),
+        "token_endpoint": "https://idp/token",
+    }))
     repo = _FakeProviderRepo([provider])
     monkeypatch.setattr(sso_service, "AuthProviderRepository", lambda db: repo)
     out = sso_service.list_providers(_db())[0]
     assert set(out) == {"id", "code", "name", "type", "enabled", "config_mask", "created_at"}
     assert out["config_mask"]["client_id"] == "abc"
+    assert out["config_mask"]["token_endpoint"] == "https://idp/token"
     assert "supersecret" not in str(out["config_mask"])
-    assert out["config_mask"]["client_secret"].endswith("****")
+    assert "*" in out["config_mask"]["client_secret"]
 
 
 # ---------------------------------------------------------------- slug / create / delete
@@ -140,7 +143,7 @@ def test_create_provider_slugs_name_and_rejects_duplicate(monkeypatch):
 
 def test_create_provider_rejects_unknown_type(monkeypatch):
     monkeypatch.setattr(sso_service, "AuthProviderRepository", lambda db: _FakeProviderRepo())
-    with pytest.raises(BadRequestError):
+    with pytest.raises(ValidationError):
         sso_service.create_provider(
             _db(), _actor(), SimpleNamespace(name="x", type="saml", code="x", config={}, enabled=1)
         )
@@ -156,16 +159,19 @@ def test_update_provider_keeps_ciphertext_when_secret_masked(monkeypatch):
     provider = _provider(
         code="corp-ldap",
         type="ldap",
-        config_enc="enc(" + sso_service.json.dumps({"bind_password": "realpw", "base_dn": "dc=x"}) + ")",
+        config_enc=sso_service.json.dumps({
+            "password": "enc:" + sso_service.encrypt_secret("realpw"),
+            "base_dn": "dc=x",
+        }),
     )
     repo = _FakeProviderRepo([provider])
     monkeypatch.setattr(sso_service, "AuthProviderRepository", lambda db: repo)
     sso_service.update_provider(
         _db(), _actor(), 1,
-        SimpleNamespace(name=None, enabled=None, config={"bind_password": "re****", "base_dn": "dc=y"}),
+        SimpleNamespace(name=None, enabled=None, config={"password": "re****", "base_dn": "dc=y"}),
     )
     stored = sso_service._decrypt_config(provider)
-    assert stored["bind_password"] == "realpw"  # masked echo must not overwrite
+    assert stored["password"] == "realpw"  # masked echo must not overwrite
     assert stored["base_dn"] == "dc=y"
 
 
@@ -294,7 +300,7 @@ def test_oauth_authorize_url_embeds_state_and_client(monkeypatch):
     monkeypatch.setattr(sso_service, "AuthProviderRepository", lambda db: _FakeProviderRepo([provider]))
     monkeypatch.setattr(
         sso_service, "_decrypt_config",
-        lambda p: {"authorize_url": "https://idp/auth", "client_id": "cid", "scope": "openid"},
+        lambda p: {"authorization_endpoint": "https://idp/auth", "client_id": "cid", "scope": "openid"},
     )
     stored = {}
     monkeypatch.setattr(sso_service, "store_oauth_state", lambda s, payload, ttl: stored.update(state=s, ttl=ttl, payload=payload))
@@ -319,7 +325,7 @@ def test_oauth_callback_maps_user_and_issues_tokens(monkeypatch):
     monkeypatch.setattr(sso_service, "consume_oauth_state", lambda s: {"code": "okta", "redirect_uri": "http://cb"})
     monkeypatch.setattr(
         sso_service, "_decrypt_config",
-        lambda p: {"map_key": "email", "userinfo_url": "https://idp/me", "auto_provision": True},
+        lambda p: {"map_key": "email", "userinfo_endpoint": "https://idp/me", "auto_provision": True},
     )
     monkeypatch.setattr(sso_service, "_oauth_exchange", lambda cfg, code, ruri: "tok")
     monkeypatch.setattr(sso_service, "_oauth_profile", lambda cfg, tok: {"email": "a@x", "name": "Alice", "sub": "s1"})
@@ -358,7 +364,13 @@ def test_test_provider_oauth2_reachable_is_ok(monkeypatch):
     monkeypatch.setattr(sso_service, "AuthProviderRepository", lambda db: _FakeProviderRepo([provider]))
     monkeypatch.setattr(
         sso_service, "_decrypt_config",
-        lambda p: {"authorize_url": "a", "token_url": "t", "client_id": "c"},
+        lambda p: {
+            "authorization_endpoint": "a",
+            "token_endpoint": "t",
+            "client_id": "c",
+            "client_secret": "s",
+            "redirect_uri": "http://cb",
+        },
     )
     monkeypatch.setattr(
         sso_service, "httpx", SimpleNamespace(get=lambda *a, **k: SimpleNamespace(status_code=401))

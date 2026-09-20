@@ -11394,7 +11394,9 @@
                 "type": "null"
               }
             ],
-            "title": "Escalation Severity"
+            "title": "Escalation Severity",
+            "description": "Deprecated: superseded by escalate_levels; accepted/echoed for backward compatibility only.",
+            "deprecated": true
           },
           "escalate_levels": {
             "anyOf": [
@@ -11639,7 +11641,9 @@
                 "type": "null"
               }
             ],
-            "title": "Escalation Severity"
+            "title": "Escalation Severity",
+            "description": "Deprecated: superseded by escalate_levels; accepted/echoed for backward compatibility only.",
+            "deprecated": true
           },
           "escalate_levels": {
             "anyOf": [

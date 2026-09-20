@@ -130,9 +130,10 @@ Agent 收到 → 落盘 temp + 累进写 offset 回传 → 完成 → file_verif
 - 外部认证成功后统一发一期 JWT；本地密码用户与外部用户并存（`auth_source` 区分，互不干扰）；登出/刷新/权限/数据权限全复用。
 
 ### 5.2 数据模型（对 users 做 add-only 扩展）
-- 新增独立表 `auth_provider`（type=ldap|oauth2, name, config(JSONB 密文部分), enabled）。
+- 新增独立表 `auth_provider`（type=ldap|oauth2, name, config_enc(JSON 串，密钥值逐值 `"enc:"` 密文), enabled）。
 - `users` 新增可空列：`auth_source`（default 'local'）、`external_id`、`last_external_login_at`——mvp 已冻结，采用 **additive migration**（nullable 列 + default）。
 - `config_rule` 扩展命名空间 `sso.auto_provision`, `sso.default_role_codes`（JSONB 配置，不新增表）。
+- `auth_provider.config` 可选键 **`roles_claim`**（add-only，P2-ID §3-v2.1 裁定 seq2090/2092）：声明 IdP 角色断言字段名，外部登录据此取角色；不自动授予 admin/超管（O1）。读取密钥类键不回显明文，`config_mask` 逐值掩码（`ab******yz`/`****`）。
 
 ### 5.3 认证流程（OAuth2 示例）
 ```

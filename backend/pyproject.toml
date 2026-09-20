@@ -44,6 +44,10 @@ select = ["E9", "F63", "F7", "F82"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Unit gate must stay offline/deterministic: a bare `pytest` (CI, backend unit
+# gate) must NOT collect the live/seed integration harness. Run it explicitly:
+#   pytest tests/integration/stage1            # or `-m openapi` for offline only
+norecursedirs = ["tests/integration", ".*", "build", "dist", "node_modules", "venv"]
 addopts = "-q"
 
 [tool.coverage.run]

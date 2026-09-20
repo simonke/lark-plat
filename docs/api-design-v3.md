@@ -150,13 +150,31 @@ C→S:
 | GET | /auth/oauth/{provider}/callback | IdP 回调 → 映射/建档 → 签发 JWT 对（302 回前端带 token） |
 | POST | /auth/ldap/login | {username,password} LDAP bind 登录 → JWT 对（与本地登录同响应） |
 
+> `GET /auth/providers`（R1 角色变体，add-only 注记）：**匿名 200 canonical＝恰 `{code,type,name}`**（不得含 `id/enabled/config_mask/created_at/config_enc`）；**持 `system:auth:provider` 时＝管理超集 ⊇ `{id,code,type,name,enabled,config_mask,created_at}`**（同 path 角色变体、键集断言；禁明文 `config`/`config_enc`/`login_path`）。
+
 OAuth2 回调成功响应（JSON 模式可选）：`{access_token,refresh_token,user{id,username,real_name,roles}}`（与 POST /auth/login 同构）。
 
-LDAP provider config（示例，密钥类密文）：
+> 变更注记（add-only，P2-ID §3-v2.1 裁定 seq2090/2092）：
+> - **LDAP 必填**＝`server_uri, bind_dn, bind_dn_template, base_dn, password(密钥)`；**可选**＝`filter, map_key, auto_provision, default_role_codes, roles_claim`。`/test`＝`bind_dn`+`password` 真实服务账号 bind；登录＝`bind_dn_template.format(username)`＋用户密码。**旧键 `bind_password` 已删除**。
+> - **OAuth2 必填**＝`authorization_endpoint, token_endpoint, client_id, client_secret(密钥), redirect_uri`；**可选**＝`userinfo_endpoint, scope, map_key, roles_claim, auto_provision, default_role_codes`。**旧键 `authorize_url/token_url/userinfo_url` 已替换**。
+> - **存储/掩码**：密钥值 `"enc:"+encrypt_secret(v)` 存入 `config_enc`（列存 JSON）、非密钥原样；`config_mask` 仅掩码密钥值（`ab******yz`/`****`），非密钥可见、密钥不回显明文；`PUT` 未传键＝保留、传含 `*` 掩码串＝保原密文。
+> - **错误码**：校验类（必填缺失/非法 `type`/未知角色码）＝**422**；业务冲突（`code` 重复、`sso` 未启用、`state` 失效/重放）＝**400**。
+> - `GET /auth/oauth/{provider}/login` 默认 **302**、`?mode=json` 返回 JSON；`POST /auth/providers/{id}/test` → `{ok,latency_ms,error_message}`。
+
+LDAP config 示例：
 ```json
-{ "server_uri": "ldaps://ldap.example.com:636", "bind_dn_template": "uid={username},ou=people,dc=example,dc=com",
+{ "server_uri": "ldaps://ldap.example.com:636", "bind_dn": "cn=svc,ou=services,dc=example,dc=com",
+  "bind_dn_template": "uid={username},ou=people,dc=example,dc=com",
   "base_dn": "ou=people,dc=example,dc=com", "filter": "(objectClass=person)", "map_key": "email",
-  "password": "enc:..." , "auto_provision": true, "default_role_codes": ["ops"] }
+  "password": "enc:...", "auto_provision": true, "default_role_codes": ["ops"], "roles_claim": "groups" }
+```
+
+OAuth2 config 示例：
+```json
+{ "authorization_endpoint": "https://idp.example.com/oauth2/authorize", "token_endpoint": "https://idp.example.com/oauth2/token",
+  "userinfo_endpoint": "https://idp.example.com/oauth2/userinfo", "client_id": "...", "client_secret": "enc:...",
+  "redirect_uri": "{backend_base}/api/v1/auth/oauth/{code}/callback", "scope": "openid profile email",
+  "map_key": "sub", "roles_claim": "groups", "auto_provision": true, "default_role_codes": ["ops"] }
 ```
 
 权限点：system:auth:provider 系列（复用 system:user 管理面）

@@ -340,6 +340,35 @@ def test_frontend_callback_url_precedence(monkeypatch):
     assert sso_service.frontend_callback_url(_db(), {"redirect_after": "https://p/cb"}) == "https://p/cb"
 
 
+# ---------------------------------------------------------------- provider test probe
+
+
+def test_test_provider_missing_config_shape(monkeypatch):
+    provider = _provider(id=1, code="corp-ldap", type="ldap")
+    monkeypatch.setattr(sso_service, "AuthProviderRepository", lambda db: _FakeProviderRepo([provider]))
+    monkeypatch.setattr(sso_service, "_decrypt_config", lambda p: {})
+    out = sso_service.test_provider(_db(), 1)
+    assert set(out) == {"ok", "latency_ms", "error_message"}
+    assert out["ok"] is False
+    assert "missing config" in out["error_message"]
+
+
+def test_test_provider_oauth2_reachable_is_ok(monkeypatch):
+    provider = _provider(id=1, code="okta", type="oauth2")
+    monkeypatch.setattr(sso_service, "AuthProviderRepository", lambda db: _FakeProviderRepo([provider]))
+    monkeypatch.setattr(
+        sso_service, "_decrypt_config",
+        lambda p: {"authorize_url": "a", "token_url": "t", "client_id": "c"},
+    )
+    monkeypatch.setattr(
+        sso_service, "httpx", SimpleNamespace(get=lambda *a, **k: SimpleNamespace(status_code=401))
+    )
+    out = sso_service.test_provider(_db(), 1)
+    assert out["ok"] is True and out["error_message"] is None
+    assert set(out) == {"ok", "latency_ms", "error_message"}
+    assert isinstance(out["latency_ms"], int)
+
+
 # ---------------------------------------------------------------- contract guards
 
 

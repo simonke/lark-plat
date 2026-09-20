@@ -14,6 +14,7 @@ import json
 import logging
 import re
 import secrets
+import time
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlencode
@@ -277,17 +278,18 @@ def test_provider(db: Session, provider_id: int) -> dict:
     config = _decrypt_config(provider)
     missing = _config_required_present(provider, config)
     if missing:
-        return {"ok": False, "type": provider.type, "error_message": f"missing config: {missing}"}
+        return {"ok": False, "latency_ms": None, "error_message": f"missing config: {missing}"}
     if provider.type == "ldap":
         return _test_ldap(config)
     return _test_oauth2(config)
 
 
 def _test_ldap(config: dict) -> dict:
+    started = time.perf_counter()
     try:
         import ldap3
     except ImportError:  # pragma: no cover - dependency declared in pyproject
-        return {"ok": False, "type": "ldap", "error_message": "ldap3 not installed"}
+        return {"ok": False, "latency_ms": None, "error_message": "ldap3 not installed"}
     try:
         server = ldap3.Server(config["server_uri"], get_info=ldap3.NONE, connect_timeout=5)
         user = config.get("bind_dn")
@@ -295,18 +297,23 @@ def _test_ldap(config: dict) -> dict:
         conn = ldap3.Connection(server, user=user, password=password, receive_timeout=5)
         ok = bool(conn.bind())
         conn.unbind()
-        return {"ok": ok, "type": "ldap", "error_message": None if ok else "bind failed"}
+        return _test_result(ok, started, None if ok else "bind failed")
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "type": "ldap", "error_message": str(exc)[:512]}
+        return _test_result(False, started, str(exc)[:512])
 
 
 def _test_oauth2(config: dict) -> dict:
+    started = time.perf_counter()
     try:
         resp = httpx.get(config["token_url"], timeout=5)
         ok = resp.status_code < 500
-        return {"ok": ok, "type": "oauth2", "error_message": None if ok else f"HTTP {resp.status_code}"}
+        return _test_result(ok, started, None if ok else f"HTTP {resp.status_code}")
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "type": "oauth2", "error_message": str(exc)[:512]}
+        return _test_result(False, started, str(exc)[:512])
+
+
+def _test_result(ok: bool, started: float, error_message: str | None) -> dict:
+    return {"ok": ok, "latency_ms": int((time.perf_counter() - started) * 1000), "error_message": error_message}
 
 
 # ---------------------------------------------------------------- identity map/provision

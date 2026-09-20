@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import ElementPlus from 'element-plus'
 import { vPerm } from '../src/directives/perm'
@@ -49,7 +49,11 @@ function setPerms(perms: string[]) {
 
 function mountView() {
   return mount(AuthProvidersView, {
-    global: { plugins: [ElementPlus], directives: { perm: vPerm } },
+    global: {
+      plugins: [ElementPlus],
+      directives: { perm: vPerm },
+      stubs: { teleport: true, ElSelect: true, ElOption: true },
+    },
   })
 }
 
@@ -118,6 +122,39 @@ describe('AuthProvidersView (P2-3 identity providers)', () => {
     expect(labels.some((t) => t.includes('试测'))).toBe(false)
     expect(labels.some((t) => t.includes('删除'))).toBe(false)
     expect(wrapper.text()).toContain('企业 LDAP')
+    wrapper.unmount()
+  })
+
+  it('LDAP form exposes service-account bind_dn and submits it in config (v2.1)', async () => {
+    vi.mocked(providersApi.listAuthProviders).mockResolvedValue([])
+    vi.mocked(providersApi.createAuthProvider).mockResolvedValue({ id: 1 } as never)
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    const addBtn = wrapper.findAll('button').find((b) => b.text().includes('新增身份源'))
+    expect(addBtn).toBeTruthy()
+    await addBtn!.trigger('click')
+    await flushPromises()
+
+    const nameLabel = wrapper.findAll('.el-form-item__label').find((l) => l.text().trim() === '名称')
+    const nameInput = new DOMWrapper(nameLabel!.element.parentElement!.querySelector('input') as HTMLElement)
+    await nameInput.setValue('企业 LDAP')
+
+    const bindDnInput = wrapper.find('input[placeholder="cn=svc-readonly,ou=service,dc=example,dc=com"]')
+    expect(bindDnInput.exists()).toBe(true)
+    await bindDnInput.setValue('cn=svc,ou=service,dc=example,dc=com')
+
+    await wrapper.findAll('button').find((b) => b.text().includes('保存'))!.trigger('click')
+    await flushPromises()
+
+    expect(providersApi.createAuthProvider).toHaveBeenCalledTimes(1)
+    const arg = vi.mocked(providersApi.createAuthProvider).mock.calls[0][0] as {
+      type: string
+      config: Record<string, unknown>
+    }
+    expect(arg.type).toBe('ldap')
+    expect(arg.config.bind_dn).toBe('cn=svc,ou=service,dc=example,dc=com')
     wrapper.unmount()
   })
 })

@@ -68,6 +68,10 @@
           <el-form-item label="server_uri">
             <el-input v-model="ldap.server_uri" placeholder="ldaps://ldap.example.com:636" />
           </el-form-item>
+          <el-form-item label="bind_dn">
+            <el-input v-model="ldap.bind_dn" placeholder="cn=svc-readonly,ou=service,dc=example,dc=com" />
+            <div class="hint">服务账号 DN（非密钥），仅用于「试测」连通性校验；其密码填下方 `password`。</div>
+          </el-form-item>
           <el-form-item label="bind_dn_template">
             <el-input v-model="ldap.bind_dn_template" placeholder="uid={username},ou=people,dc=example,dc=com" />
           </el-form-item>
@@ -197,6 +201,7 @@ const secretPlaceholder = computed(() => (editingId.value ? '留空＝保留原�
 
 const ldap = reactive({
   server_uri: '',
+  bind_dn: '',
   bind_dn_template: '',
   base_dn: '',
   filter: '',
@@ -244,7 +249,7 @@ watch(derivedRedirectUri, (value) => {
 })
 
 function resetConfig() {
-  Object.assign(ldap, { server_uri: '', bind_dn_template: '', base_dn: '', filter: '', map_key: 'email', password: '' })
+  Object.assign(ldap, { server_uri: '', bind_dn: '', bind_dn_template: '', base_dn: '', filter: '', map_key: 'email', password: '' })
   Object.assign(oauth, {
     authorization_endpoint: '',
     token_endpoint: '',
@@ -290,7 +295,7 @@ function openEdit(row: AuthProviderOut) {
   resetConfig()
   const mask = (row.config_mask || {}) as Record<string, unknown>
   if (row.type === 'ldap') {
-    for (const k of ['server_uri', 'bind_dn_template', 'base_dn', 'filter', 'map_key'] as const) {
+    for (const k of ['server_uri', 'bind_dn', 'bind_dn_template', 'base_dn', 'filter', 'map_key'] as const) {
       if (typeof mask[k] === 'string') (ldap as Record<string, unknown>)[k] = mask[k]
     }
   } else {
@@ -323,6 +328,7 @@ function buildConfig(): Record<string, unknown> {
     const cfg: Record<string, unknown> = {
       ...base,
       server_uri: ldap.server_uri,
+      bind_dn: ldap.bind_dn,
       bind_dn_template: ldap.bind_dn_template,
       base_dn: ldap.base_dn,
       filter: ldap.filter,

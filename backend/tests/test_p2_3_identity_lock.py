@@ -32,8 +32,9 @@ M1  migration revision `c3d4e5f6a7b8`.down_revision == `d4e5f6a7b8c9` and the
     moved to `e8a1b2c3d4f5` when the P2 收口批 item1 dedup migration appended
     after `c3d4e5f6a7b8`; the single-head invariant is preserved generically.]
 P1  permission point `system:auth:provider` registered in the seed PERMISSION_TREE.
-A1  openapi paths count == 109 (P2-ID reached 107; P2-SS adds 2 add-only asset
-    paths), `/monitor/*` == 19, and all nine
+A1  openapi paths count == 107 (100 baseline + 7 UNIQUE URL keys covering the §3
+    nine operations: GET+POST /auth/providers share one key, PUT+DELETE
+    /auth/providers/{id} share one key), `/monitor/*` == 19, and all nine
     provider/ldap/oauth operations exist with the correct method. (OpenAPI
     `paths` is URL-keyed, so "100->109" is an operations count, not path keys;
     flagged to 架构 seq2072 for ruling — if a separate admin path is required,
@@ -281,11 +282,9 @@ def _has(paths, regex: str) -> bool:
 def test_a1_paths_count_107_and_monitor_19():
     paths = _openapi_paths()
     monitor = [p for p in paths if "/monitor" in p]
-    # 107 (P2-ID) -> 109: P2-SS add-only GET /assets/hosts/{id}/executors +
-    # PUT /assets/hosts/{id}/connector. [测试维护: backend p2-ss-executor]
-    assert len(paths) == 109, (
-        "openapi paths must be 107->109 after P2-SS (2 add-only asset paths); "
-        f"got {len(paths)}")
+    assert len(paths) == 107, (
+        "openapi paths must be 100->107 after P2-ID (7 unique URL keys for the §3 "
+        f"nine operations); got {len(paths)}")
     assert len(monitor) == 19, f"/monitor/* must stay 19 (frozen P2-MA); got {len(monitor)}"
 
 

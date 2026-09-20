@@ -49,8 +49,8 @@
       </el-table>
     </el-card>
 
-    <el-dialog v-model="editorVisible" :title="editingId ? '编辑身份源' : '新增身份源'" width="560px">
-      <el-form :model="form" label-width="120px">
+    <el-dialog v-model="editorVisible" :title="editingId ? '编辑身份源' : '新增身份源'" width="620px">
+      <el-form :model="form" label-width="140px">
         <el-form-item label="名称">
           <el-input v-model="form.name" :maxlength="64" />
         </el-form-item>
@@ -63,15 +63,79 @@
             <el-option label="OAuth2" value="oauth2" />
           </el-select>
         </el-form-item>
-        <el-form-item label="配置(JSON)">
-          <el-input
-            v-model="configText"
-            type="textarea"
-            :rows="8"
-            :placeholder="configPlaceholder"
-          />
-          <div class="hint">{{ configHint }}</div>
+
+        <template v-if="form.type === 'ldap'">
+          <el-form-item label="server_uri">
+            <el-input v-model="ldap.server_uri" placeholder="ldaps://ldap.example.com:636" />
+          </el-form-item>
+          <el-form-item label="bind_dn_template">
+            <el-input v-model="ldap.bind_dn_template" placeholder="uid={username},ou=people,dc=example,dc=com" />
+          </el-form-item>
+          <el-form-item label="base_dn">
+            <el-input v-model="ldap.base_dn" placeholder="ou=people,dc=example,dc=com" />
+          </el-form-item>
+          <el-form-item label="filter">
+            <el-input v-model="ldap.filter" placeholder="(objectClass=person)" />
+          </el-form-item>
+          <el-form-item label="map_key">
+            <el-select v-model="ldap.map_key" style="width: 100%">
+              <el-option v-for="k in ldapMapKeys" :key="k" :label="k" :value="k" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="password">
+            <el-input v-model="ldap.password" type="password" show-password :placeholder="secretPlaceholder" />
+          </el-form-item>
+        </template>
+
+        <template v-else>
+          <el-form-item label="authorization_endpoint">
+            <el-input v-model="oauth.authorization_endpoint" placeholder="https://idp.example.com/oauth/authorize" />
+          </el-form-item>
+          <el-form-item label="token_endpoint">
+            <el-input v-model="oauth.token_endpoint" placeholder="https://idp.example.com/oauth/token" />
+          </el-form-item>
+          <el-form-item label="client_id">
+            <el-input v-model="oauth.client_id" />
+          </el-form-item>
+          <el-form-item label="client_secret">
+            <el-input v-model="oauth.client_secret" type="password" show-password :placeholder="secretPlaceholder" />
+          </el-form-item>
+          <el-form-item label="redirect_uri">
+            <el-input v-model="oauth.redirect_uri" placeholder="https://<backend>/api/v1/auth/oauth/<code>/callback" />
+          </el-form-item>
+          <el-form-item label="scope">
+            <el-input v-model="oauth.scope" placeholder="openid profile email" />
+          </el-form-item>
+          <el-form-item label="userinfo_endpoint">
+            <el-input v-model="oauth.userinfo_endpoint" placeholder="https://idp.example.com/oauth/userinfo" />
+          </el-form-item>
+          <el-form-item label="map_key">
+            <el-select v-model="oauth.map_key" style="width: 100%">
+              <el-option v-for="k in oauthMapKeys" :key="k" :label="k" :value="k" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="roles_claim">
+            <el-input v-model="oauth.roles_claim" placeholder="roles" />
+          </el-form-item>
+        </template>
+
+        <el-form-item label="auto_provision">
+          <el-switch v-model="configBool.auto_provision" :active-value="true" :inactive-value="false" />
         </el-form-item>
+        <el-form-item label="default_role_codes">
+          <el-select
+            v-model="configBool.default_role_codes"
+            multiple
+            filterable
+            allow-create
+            default-first-option
+            style="width: 100%"
+            placeholder="选择/输入角色码（不得含 admin）"
+          >
+            <el-option v-for="r in roles" :key="r.code" :label="`${r.name} (${r.code})`" :value="r.code" />
+          </el-select>
+        </el-form-item>
+
         <el-form-item label="状态">
           <el-radio-group v-model="form.enabled">
             <el-radio :value="1">启用</el-radio>
@@ -88,7 +152,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   createAuthProvider,
@@ -98,17 +162,49 @@ import {
   testAuthProvider,
   updateAuthProvider,
 } from '../../api/authProviders'
-import type { AuthProviderOut, AuthProviderType } from '../../api/types'
+import { listRoles } from '../../api/system'
+import type { AuthProviderOut, AuthProviderType, RoleOut } from '../../api/types'
 import { extractError } from '../../api/http'
 
 const loading = ref(false)
 const saving = ref(false)
 const testingId = ref<number | null>(null)
 const rows = ref<AuthProviderOut[]>([])
+const roles = ref<RoleOut[]>([])
+
+const ldapMapKeys = ['username', 'email', 'uid']
+const oauthMapKeys = ['sub', 'preferred_username', 'email', 'username', 'uid']
 
 const editorVisible = ref(false)
 const editingId = ref<number | null>(null)
-const configText = ref('')
+const secretPlaceholder = computed(() => (editingId.value ? '留空＝保留原密钥' : ''))
+
+const ldap = reactive({
+  server_uri: '',
+  bind_dn_template: '',
+  base_dn: '',
+  filter: '',
+  map_key: 'email',
+  password: '',
+})
+
+const oauth = reactive({
+  authorization_endpoint: '',
+  token_endpoint: '',
+  client_id: '',
+  client_secret: '',
+  redirect_uri: '',
+  scope: '',
+  userinfo_endpoint: '',
+  map_key: 'email',
+  roles_claim: '',
+})
+
+const configBool = reactive({
+  auto_provision: false,
+  default_role_codes: [] as string[],
+})
+
 const form = reactive({
   name: '',
   code: '',
@@ -116,26 +212,22 @@ const form = reactive({
   enabled: 1,
 })
 
-const configPlaceholders: Record<AuthProviderType, string> = {
-  ldap: '{\n  "server_uri": "ldaps://ldap.example.com:636",\n  "bind_dn_template": "uid={username},ou=people,dc=example,dc=com",\n  "base_dn": "ou=people,dc=example,dc=com",\n  "map_key": "email",\n  "password": "",\n  "auto_provision": true,\n  "default_role_codes": ["ops"]\n}',
-  oauth2: '{\n  "authorization_endpoint": "https://idp.example.com/oauth/authorize",\n  "token_endpoint": "https://idp.example.com/oauth/token",\n  "client_id": "",\n  "client_secret": "",\n  "redirect_uri": "",\n  "scope": "openid profile email",\n  "map_key": "email",\n  "auto_provision": true,\n  "default_role_codes": ["ops"]\n}',
+function resetConfig() {
+  Object.assign(ldap, { server_uri: '', bind_dn_template: '', base_dn: '', filter: '', map_key: 'email', password: '' })
+  Object.assign(oauth, {
+    authorization_endpoint: '',
+    token_endpoint: '',
+    client_id: '',
+    client_secret: '',
+    redirect_uri: '',
+    scope: '',
+    userinfo_endpoint: '',
+    map_key: 'email',
+    roles_claim: '',
+  })
+  configBool.auto_provision = false
+  configBool.default_role_codes = []
 }
-
-const configPlaceholder = computed(() => configPlaceholders[form.type])
-const configHint = computed(() =>
-  editingId.value
-    ? '密文留空＝保留原配置；如需变更，填写完整 JSON。'
-    : '填写该身份源的完整 JSON 配置，密钥字段将以密文存储。',
-)
-
-watch(
-  () => form.type,
-  (t) => {
-    if (!editingId.value && !configText.value) {
-      configText.value = configPlaceholders[t]
-    }
-  },
-)
 
 async function load() {
   loading.value = true
@@ -156,25 +248,61 @@ function maskText(mask: Record<string, unknown> | undefined): string {
 function openCreate() {
   editingId.value = null
   Object.assign(form, { name: '', code: '', type: 'ldap', enabled: 1 })
-  configText.value = configPlaceholders.ldap
+  resetConfig()
   editorVisible.value = true
 }
 
 function openEdit(row: AuthProviderOut) {
   editingId.value = row.id
   Object.assign(form, { name: row.name, code: row.code, type: row.type, enabled: row.enabled })
-  configText.value = ''
+  resetConfig()
+  const mask = (row.config_mask || {}) as Record<string, unknown>
+  if (row.type === 'ldap') {
+    for (const k of ['server_uri', 'bind_dn_template', 'base_dn', 'filter', 'map_key'] as const) {
+      if (typeof mask[k] === 'string') (ldap as Record<string, unknown>)[k] = mask[k]
+    }
+  } else {
+    for (const k of ['authorization_endpoint', 'token_endpoint', 'client_id', 'redirect_uri', 'scope', 'userinfo_endpoint', 'map_key', 'roles_claim'] as const) {
+      if (typeof mask[k] === 'string') (oauth as Record<string, unknown>)[k] = mask[k]
+    }
+  }
+  if (typeof mask.auto_provision === 'boolean') configBool.auto_provision = mask.auto_provision
+  if (Array.isArray(mask.default_role_codes)) {
+    configBool.default_role_codes = (mask.default_role_codes as string[]).slice()
+  }
   editorVisible.value = true
 }
 
-function parseConfig(): Record<string, unknown> | undefined {
-  const text = configText.value.trim()
-  if (!text) return undefined
-  const parsed = JSON.parse(text)
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new Error('配置须为 JSON 对象')
+function buildConfig(): Record<string, unknown> {
+  const base: Record<string, unknown> = {
+    auto_provision: configBool.auto_provision,
+    default_role_codes: configBool.default_role_codes,
   }
-  return parsed as Record<string, unknown>
+  if (form.type === 'ldap') {
+    const cfg: Record<string, unknown> = {
+      ...base,
+      server_uri: ldap.server_uri,
+      bind_dn_template: ldap.bind_dn_template,
+      base_dn: ldap.base_dn,
+      filter: ldap.filter,
+      map_key: ldap.map_key,
+    }
+    if (ldap.password) cfg.password = ldap.password
+    return cfg
+  }
+  const cfg: Record<string, unknown> = {
+    ...base,
+    authorization_endpoint: oauth.authorization_endpoint,
+    token_endpoint: oauth.token_endpoint,
+    client_id: oauth.client_id,
+    redirect_uri: oauth.redirect_uri,
+    scope: oauth.scope,
+    userinfo_endpoint: oauth.userinfo_endpoint,
+    map_key: oauth.map_key,
+    roles_claim: oauth.roles_claim,
+  }
+  if (oauth.client_secret) cfg.client_secret = oauth.client_secret
+  return cfg
 }
 
 async function onSave() {
@@ -182,26 +310,12 @@ async function onSave() {
     ElMessage.warning('请填写名称')
     return
   }
-  let config: Record<string, unknown> | undefined
-  try {
-    config = parseConfig()
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '配置 JSON 解析失败')
-    return
-  }
+  const config = buildConfig()
   saving.value = true
   try {
     if (editingId.value) {
-      await updateAuthProvider(editingId.value, {
-        name: form.name,
-        enabled: form.enabled,
-        ...(config ? { config } : {}),
-      })
+      await updateAuthProvider(editingId.value, { name: form.name, enabled: form.enabled, config })
     } else {
-      if (!config) {
-        ElMessage.warning('请填写配置 JSON')
-        return
-      }
       await createAuthProvider({
         name: form.name,
         type: form.type,
@@ -261,7 +375,10 @@ async function onDelete(row: AuthProviderOut) {
   }
 }
 
-onMounted(load)
+onMounted(async () => {
+  roles.value = await listRoles().catch(() => [])
+  load()
+})
 </script>
 
 <style scoped>
@@ -276,10 +393,5 @@ onMounted(load)
 .mask {
   color: var(--el-text-color-secondary);
   font-family: monospace;
-}
-.hint {
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
 }
 </style>

@@ -5,6 +5,8 @@ import ElementPlus from 'element-plus'
 import { vPerm } from '../src/directives/perm'
 import { useAuthStore } from '../src/stores/auth'
 
+vi.mock('../src/api/system', () => ({ listRoles: vi.fn(async () => []) }))
+
 vi.mock('../src/api/authProviders', () => ({
   listAuthProviders: vi.fn(),
   createAuthProvider: vi.fn(),

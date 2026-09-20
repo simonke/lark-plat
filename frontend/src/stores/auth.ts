@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { login as apiLogin, getMe, logout as apiLogout, refresh } from '../api/auth'
+import { login as apiLogin, ldapLogin as apiLdapLogin, getMe, logout as apiLogout, refresh } from '../api/auth'
 import { getTokens, setTokens, clearTokens, hasToken } from '../api/tokens'
 import type { LoginIn, UserMe } from '../api/types'
 
@@ -20,6 +20,22 @@ export const useAuthStore = defineStore('auth', () => {
   async function login(data: LoginIn): Promise<void> {
     const result = await apiLogin(data)
     setTokens(result.access_token, result.refresh_token)
+    user.value = null
+    loaded.value = false
+    await fetchMe()
+  }
+
+  async function ldapLogin(data: LoginIn): Promise<void> {
+    const result = await apiLdapLogin(data)
+    setTokens(result.access_token, result.refresh_token)
+    user.value = null
+    loaded.value = false
+    await fetchMe()
+  }
+
+  /** Adopt an existing token pair (e.g. OAuth2 callback redirect) and load the user. */
+  async function loginWithTokens(accessToken: string, refreshToken: string): Promise<void> {
+    setTokens(accessToken, refreshToken)
     user.value = null
     loaded.value = false
     await fetchMe()
@@ -65,5 +81,18 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = null
   }
 
-  return { user, loaded, isLoggedIn, isAdmin, permissions, hasPerm, login, fetchMe, tryRefresh, logout }
+  return {
+    user,
+    loaded,
+    isLoggedIn,
+    isAdmin,
+    permissions,
+    hasPerm,
+    login,
+    ldapLogin,
+    loginWithTokens,
+    fetchMe,
+    tryRefresh,
+    logout,
+  }
 })

@@ -26,7 +26,14 @@ function refreshAccess(): Promise<string> {
 }
 
 function isAuthPath(url?: string): boolean {
-  return !url || url.includes('/auth/login') || url.includes('/auth/refresh')
+  return (
+    !url ||
+    url.includes('/auth/login') ||
+    url.includes('/auth/refresh') ||
+    url.includes('/auth/providers') ||
+    url.includes('/auth/ldap/login') ||
+    url.includes('/auth/oauth/')
+  )
 }
 
 const http: AxiosInstance = axios.create({

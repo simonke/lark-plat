@@ -11,6 +11,7 @@ Pins contract (2026-09-09):
 from __future__ import annotations
 
 import contextlib
+import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -568,6 +569,45 @@ def test_resolve_missing_alert_raises_notfound(monkeypatch):
                         lambda self, i: None)
     with pytest.raises(NotFoundError):
         monitor_service.resolve_alert(db, _user(), 999, "x")
+
+
+def test_alert_events_returns_json_serializable_rows(monkeypatch):
+    """GET /monitor/alerts/{id}/events 锁：timeline 必须转 dict，禁回传 ORM
+    (回归 oracle: PydanticSerializationError: MonAlertEventLog)。"""
+    db = _Db()
+    alert = _alert(status="firing")
+    row = SimpleNamespace(id=7, action="fire", from_status=None, to_status="pending",
+                          severity="warning", detail={"reason": "first"},
+                          operator_id=None, at=NOW)
+    monkeypatch.setattr(monitor_service.MonAlertRepository, "get", lambda self, i: alert)
+    monkeypatch.setattr(monitor_service.MonAlertEventLogRepository, "timeline",
+                        lambda self, aid: [row])
+    out = monitor_service.alert_events(db, _user(), 1)
+    assert out == {"list": [{
+        "id": 7, "action": "fire", "from_status": None, "to_status": "pending",
+        "severity": "warning", "detail": {"reason": "first"}, "operator_id": None,
+        "at": NOW.isoformat(),
+    }]}
+    json.dumps(out)
+
+
+def test_get_alert_events_share_serializer(monkeypatch):
+    """GET /monitor/alerts/{id} 的 events 与新 /events 端点同形（同一序列化 Seam）。"""
+    db = _Db()
+    alert = _alert(status="firing")
+    row = SimpleNamespace(id=9, action="resolve", from_status="firing",
+                          to_status="resolved", severity="warning", detail=None,
+                          operator_id=3, at=NOW)
+    monkeypatch.setattr(monitor_service.MonAlertRepository, "get", lambda self, i: alert)
+    monkeypatch.setattr(monitor_service.MonAlertEventLogRepository, "timeline",
+                        lambda self, aid: [row])
+    detail = monitor_service.get_alert(db, _user(), 1)
+    listed = monitor_service.alert_events(db, _user(), 1)
+    assert detail["events"] == listed["list"] == [{
+        "id": 9, "action": "resolve", "from_status": "firing", "to_status": "resolved",
+        "severity": "warning", "detail": None, "operator_id": 3, "at": NOW.isoformat(),
+    }]
+    json.dumps(detail)
 
 
 # ── feature flag ──────────────────────────────────────────────────────────────

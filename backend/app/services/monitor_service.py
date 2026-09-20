@@ -40,6 +40,7 @@ from app.db.models import (
     Host,
     MonAdapter,
     MonAlert,
+    MonAlertEventLog,
     MonEventInbox,
     MonRule,
 )
@@ -838,6 +839,14 @@ def _alert_out(a: MonAlert, ts: str | None = None) -> dict:
     }
 
 
+def _alert_event_out(e: MonAlertEventLog) -> dict:
+    return {
+        "id": e.id, "action": e.action, "from_status": e.from_status, "to_status": e.to_status,
+        "severity": e.severity, "detail": e.detail,
+        "operator_id": e.operator_id, "at": e.at.isoformat() if e.at else None,
+    }
+
+
 def list_alerts(db: Session, user, filters: dict, page: int, size: int) -> dict:
     user.require_perm("monitor:alert:list")
     filters = dict(filters)
@@ -858,10 +867,7 @@ def get_alert(db: Session, user, alert_id: int) -> dict:
         raise NotFoundError("alert not found")
     data = _alert_out(alert)
     data["events"] = [
-        {"id": e.id, "action": e.action, "from_status": e.from_status, "to_status": e.to_status,
-         "severity": e.severity, "detail": e.detail,
-         "operator_id": e.operator_id, "at": e.at.isoformat() if e.at else None}
-        for e in MonAlertEventLogRepository(db).timeline(alert_id)
+        _alert_event_out(e) for e in MonAlertEventLogRepository(db).timeline(alert_id)
     ]
     return data
 
@@ -871,7 +877,9 @@ def alert_events(db: Session, user, alert_id: int) -> dict:
     alert = MonAlertRepository(db).get(alert_id)
     if alert is None or not _entity_in_scope(_visible_entity_ids(db, user), alert.entity):
         raise NotFoundError("alert not found")
-    return {"list": MonAlertEventLogRepository(db).timeline(alert_id)}
+    return {"list": [
+        _alert_event_out(e) for e in MonAlertEventLogRepository(db).timeline(alert_id)
+    ]}
 
 
 def acknowledge_alert(db: Session, user, alert_id: int, remark: str) -> dict:

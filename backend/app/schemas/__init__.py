@@ -387,7 +387,11 @@ class MonRuleCreate(BaseModel):
     converge_sec: int = Field(default=0, ge=0)  # convergence dedup window
     escalation_enabled: int = 0
     escalation_after_seconds: int | None = Field(default=None, ge=0)
-    escalation_severity: str | None = None
+    escalation_severity: str | None = Field(
+        default=None,
+        json_schema_extra={"deprecated": True},
+        description="Deprecated: superseded by escalate_levels; accepted/echoed for backward compatibility only.",
+    )
     escalate_levels: list[str] | None = None  # escalation severity path
     notify_scene: str = "alert"
     notify_channel_ids: list[int] = []
@@ -410,7 +414,11 @@ class MonRuleUpdate(BaseModel):
     converge_sec: int | None = Field(default=None, ge=0)
     escalation_enabled: int | None = None
     escalation_after_seconds: int | None = Field(default=None, ge=0)
-    escalation_severity: str | None = None
+    escalation_severity: str | None = Field(
+        default=None,
+        json_schema_extra={"deprecated": True},
+        description="Deprecated: superseded by escalate_levels; accepted/echoed for backward compatibility only.",
+    )
     escalate_levels: list[str] | None = None
     notify_scene: str | None = None
     notify_channel_ids: list[int] | None = None

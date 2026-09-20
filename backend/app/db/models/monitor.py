@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from sqlalchemy import BigInteger, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -163,6 +163,8 @@ class MonRule(Base, TimestampMixin, SoftDeleteMixin):
     # Escalation
     escalation_enabled: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     escalation_after_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Deprecated: dead field kept for backward compatibility; escalation targets
+    # come from escalate_levels (see _maybe_escalate). Not dropped (frozen face).
     escalation_severity: Mapped[str | None] = mapped_column(String(16), nullable=True)
     escalate_levels: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # {ids: ["warning","critical"]}
 
@@ -211,6 +213,21 @@ class MonAlert(Base, TimestampMixin):
 
     # Snapshot of the triggering event (for display / audit)
     event_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+
+# P2 close-out: DB-level guard so a (rule, entity) pair has at most one active
+# alert (mirrors MonAlertRepository.active_by_rule_entity). Adds a partial unique
+# index; see alembic e8a1b2c3d4f5. Additive - no column change.
+Index(
+    "uq_mon_alert_active_rule_entity",
+    MonAlert.__table__.c.rule_id,
+    text("(entity ->> 'entity_id')"),
+    unique=True,
+    postgresql_where=(
+        MonAlert.__table__.c.status.in_(("pending", "firing", "acknowledged"))
+        & MonAlert.__table__.c.rule_id.isnot(None)
+    ),
+)
 
 
 # ---------------------------------------------------------------------------

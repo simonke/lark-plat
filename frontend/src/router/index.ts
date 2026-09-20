@@ -6,6 +6,11 @@ import { hasToken } from '../api/tokens'
 const routes: RouteRecordRaw[] = [
   { path: '/login', name: 'login', component: () => import('../views/LoginView.vue') },
   {
+    path: '/auth/callback',
+    name: 'auth-callback',
+    component: () => import('../views/AuthCallbackView.vue'),
+  },
+  {
     path: '/',
     component: MainLayout,
     redirect: '/dashboard',
@@ -29,6 +34,11 @@ const routes: RouteRecordRaw[] = [
         path: 'system/audit-logs',
         name: 'system-audit-logs',
         component: () => import('../views/audit/AuditLogsView.vue'),
+      },
+      {
+        path: 'system/auth-providers',
+        name: 'system-auth-providers',
+        component: () => import('../views/system/AuthProvidersView.vue'),
       },
       {
         path: 'assets/hosts',
@@ -116,6 +126,9 @@ const router = createRouter({
 })
 
 router.beforeEach((to) => {
+  if (to.name === 'auth-callback') {
+    return true
+  }
   if (!hasToken() && to.name !== 'login') {
     return { name: 'login' }
   }

@@ -55,6 +55,48 @@ export interface ChangePasswordIn {
   new_password: string
 }
 
+export type AuthProviderType = 'ldap' | 'oauth2'
+
+export interface AuthProviderBrief {
+  code: string
+  type: string
+  name: string
+}
+
+export interface AuthProviderOut {
+  id: number
+  code: string
+  name: string
+  type: AuthProviderType
+  enabled: number
+  config_mask: Record<string, unknown>
+  created_at: string
+}
+
+export interface AuthProviderCreate {
+  name: string
+  type: AuthProviderType
+  code?: string
+  config: Record<string, unknown>
+  enabled?: number
+}
+
+export interface AuthProviderUpdate {
+  name?: string
+  config?: Record<string, unknown>
+  enabled?: number
+}
+
+export interface AuthProviderStatusIn {
+  enabled: number
+}
+
+export interface AuthProviderTestResult {
+  ok: boolean
+  latency_ms?: number
+  error_message?: string | null
+}
+
 export interface UserOut {
   id: number
   username: string

@@ -15,6 +15,7 @@
           <el-menu-item index="/system/users" v-if="auth.hasPerm('system:user:list')">用户管理</el-menu-item>
           <el-menu-item index="/system/roles" v-if="auth.hasPerm('system:role:list')">角色与权限</el-menu-item>
           <el-menu-item index="/system/audit-logs" v-if="auth.hasPerm('system:audit:list')">审计日志</el-menu-item>
+          <el-menu-item index="/system/auth-providers" v-if="auth.hasPerm('system:auth:provider')">身份源</el-menu-item>
         </el-sub-menu>
         <el-sub-menu index="assets">
           <template #title>

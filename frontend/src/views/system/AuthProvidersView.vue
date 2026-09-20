@@ -1,0 +1,447 @@
+<template>
+  <div class="page">
+    <el-card>
+      <template #header>
+        <div class="toolbar">
+          <span class="title">身份源</span>
+          <el-button type="primary" v-perm="'system:auth:provider:add'" @click="openCreate">新增身份源</el-button>
+        </div>
+      </template>
+
+      <el-table :data="rows" v-loading="loading" border>
+        <el-table-column prop="id" label="ID" width="60" />
+        <el-table-column prop="code" label="编码" min-width="120" />
+        <el-table-column prop="name" label="名称" min-width="140" />
+        <el-table-column label="类型" width="110">
+          <template #default="{ row }">
+            <el-tag size="small">{{ row.type }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">
+            <el-tag :type="row.enabled === 1 ? 'success' : 'danger'">
+              {{ row.enabled === 1 ? '启用' : '禁用' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="配置(脱敏)" min-width="200">
+          <template #default="{ row }">
+            <span class="mask">{{ maskText(row.config_mask) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="创建时间" width="170">
+          <template #default="{ row }">
+            {{ row.created_at ? new Date(row.created_at).toLocaleString() : '-' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="320" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" v-perm="'system:auth:provider:edit'" @click="openEdit(row)">编辑</el-button>
+            <el-button size="small" v-perm="'system:auth:provider:test'" :loading="testingId === row.id" @click="onTest(row)">
+              试测
+            </el-button>
+            <el-button size="small" v-perm="'system:auth:provider:edit'" @click="onToggle(row)">
+              {{ row.enabled === 1 ? '禁用' : '启用' }}
+            </el-button>
+            <el-button size="small" type="danger" v-perm="'system:auth:provider:del'" @click="onDelete(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <el-dialog v-model="editorVisible" :title="editingId ? '编辑身份源' : '新增身份源'" width="620px">
+      <el-form :model="form" label-width="140px">
+        <el-form-item label="名称">
+          <el-input v-model="form.name" :maxlength="64" />
+        </el-form-item>
+        <el-form-item label="编码" v-if="!editingId">
+          <el-input v-model="form.code" :maxlength="64" placeholder="留空则由名称生成" />
+        </el-form-item>
+        <el-form-item label="类型" v-if="!editingId">
+          <el-select v-model="form.type" style="width: 100%">
+            <el-option label="LDAP" value="ldap" />
+            <el-option label="OAuth2" value="oauth2" />
+          </el-select>
+        </el-form-item>
+
+        <template v-if="form.type === 'ldap'">
+          <el-form-item label="server_uri">
+            <el-input v-model="ldap.server_uri" placeholder="ldaps://ldap.example.com:636" />
+          </el-form-item>
+          <el-form-item label="bind_dn">
+            <el-input v-model="ldap.bind_dn" placeholder="cn=svc-readonly,ou=service,dc=example,dc=com" />
+            <div class="hint">服务账号 DN（非密钥），仅用于「试测」连通性校验；其密码填下方 `password`。</div>
+          </el-form-item>
+          <el-form-item label="bind_dn_template">
+            <el-input v-model="ldap.bind_dn_template" placeholder="uid={username},ou=people,dc=example,dc=com" />
+          </el-form-item>
+          <el-form-item label="base_dn">
+            <el-input v-model="ldap.base_dn" placeholder="ou=people,dc=example,dc=com" />
+          </el-form-item>
+          <el-form-item label="filter">
+            <el-input v-model="ldap.filter" placeholder="(objectClass=person)" />
+          </el-form-item>
+          <el-form-item label="map_key">
+            <el-select v-model="ldap.map_key" style="width: 100%">
+              <el-option v-for="k in ldapMapKeys" :key="k" :label="k" :value="k" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="password">
+            <el-input v-model="ldap.password" type="password" show-password :placeholder="secretPlaceholder" />
+          </el-form-item>
+        </template>
+
+        <template v-else>
+          <el-form-item label="authorization_endpoint">
+            <el-input v-model="oauth.authorization_endpoint" placeholder="https://idp.example.com/oauth/authorize" />
+          </el-form-item>
+          <el-form-item label="token_endpoint">
+            <el-input v-model="oauth.token_endpoint" placeholder="https://idp.example.com/oauth/token" />
+          </el-form-item>
+          <el-form-item label="client_id">
+            <el-input v-model="oauth.client_id" />
+          </el-form-item>
+          <el-form-item label="client_secret">
+            <el-input v-model="oauth.client_secret" type="password" show-password :placeholder="secretPlaceholder" />
+          </el-form-item>
+          <el-form-item label="redirect_uri">
+            <el-input
+              v-model="oauth.redirect_uri"
+              :disabled="!form.code"
+              placeholder="https://<backend>/api/v1/auth/oauth/<code>/callback"
+              @input="redirectTouched = true"
+            />
+            <div class="hint">
+              该值发往 IdP、须在 IdP 注册；<b>勿填前端地址</b>。登录成功落点仅由服务端 `config_rule`（sso.frontend_callback_url）决定，与本字段无关。
+            </div>
+          </el-form-item>
+          <el-form-item label="scope">
+            <el-input v-model="oauth.scope" placeholder="openid profile email" />
+          </el-form-item>
+          <el-form-item label="userinfo_endpoint">
+            <el-input v-model="oauth.userinfo_endpoint" placeholder="https://idp.example.com/oauth/userinfo" />
+          </el-form-item>
+          <el-form-item label="map_key">
+            <el-select v-model="oauth.map_key" style="width: 100%">
+              <el-option v-for="k in oauthMapKeys" :key="k" :label="k" :value="k" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="roles_claim">
+            <el-input v-model="oauth.roles_claim" placeholder="roles" />
+          </el-form-item>
+        </template>
+
+        <el-form-item label="auto_provision">
+          <el-switch v-model="configBool.auto_provision" :active-value="true" :inactive-value="false" />
+        </el-form-item>
+        <el-form-item label="default_role_codes">
+          <el-select
+            v-model="configBool.default_role_codes"
+            multiple
+            filterable
+            allow-create
+            default-first-option
+            style="width: 100%"
+            placeholder="选择/输入角色码（不预置 admin）"
+          >
+            <el-option v-for="r in roles" :key="r.code" :label="`${r.name} (${r.code})`" :value="r.code" />
+          </el-select>
+          <el-alert
+            v-if="hasPrivilegedDefault"
+            class="role-warn"
+            type="warning"
+            :closable="false"
+            show-icon
+            title="默认角色含 admin/超管：将显式提交并留痕（审计），请确认符合最小权限原则"
+          />
+        </el-form-item>
+
+        <el-form-item label="状态">
+          <el-radio-group v-model="form.enabled">
+            <el-radio :value="1">启用</el-radio>
+            <el-radio :value="0">禁用</el-radio>
+          </el-radio-group>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editorVisible = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="onSave">保存</el-button>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+  createAuthProvider,
+  deleteAuthProvider,
+  listAuthProviders,
+  setAuthProviderStatus,
+  testAuthProvider,
+  updateAuthProvider,
+} from '../../api/authProviders'
+import { listRoles } from '../../api/system'
+import type { AuthProviderOut, AuthProviderType, RoleOut } from '../../api/types'
+import { extractError } from '../../api/http'
+
+const loading = ref(false)
+const saving = ref(false)
+const testingId = ref<number | null>(null)
+const rows = ref<AuthProviderOut[]>([])
+const roles = ref<RoleOut[]>([])
+
+const ldapMapKeys = ['username', 'email', 'uid']
+const oauthMapKeys = ['sub', 'preferred_username', 'email', 'username', 'uid']
+
+const editorVisible = ref(false)
+const editingId = ref<number | null>(null)
+const secretPlaceholder = computed(() => (editingId.value ? '留空＝保留原密钥' : ''))
+
+const ldap = reactive({
+  server_uri: '',
+  bind_dn: '',
+  bind_dn_template: '',
+  base_dn: '',
+  filter: '',
+  map_key: 'email',
+  password: '',
+})
+
+const oauth = reactive({
+  authorization_endpoint: '',
+  token_endpoint: '',
+  client_id: '',
+  client_secret: '',
+  redirect_uri: '',
+  scope: '',
+  userinfo_endpoint: '',
+  map_key: 'email',
+  roles_claim: '',
+})
+
+const configBool = reactive({
+  auto_provision: false,
+  default_role_codes: [] as string[],
+})
+
+const hasPrivilegedDefault = computed(() =>
+  configBool.default_role_codes.some((code) => /admin|super/i.test(code)),
+)
+
+const form = reactive({
+  name: '',
+  code: '',
+  type: 'ldap' as AuthProviderType,
+  enabled: 1,
+})
+
+const redirectTouched = ref(false)
+const derivedRedirectUri = computed(() =>
+  form.code ? `${window.location.origin}/api/v1/auth/oauth/${form.code}/callback` : '',
+)
+
+watch(derivedRedirectUri, (value) => {
+  if (!redirectTouched.value) {
+    oauth.redirect_uri = value
+  }
+})
+
+function resetConfig() {
+  Object.assign(ldap, { server_uri: '', bind_dn: '', bind_dn_template: '', base_dn: '', filter: '', map_key: 'email', password: '' })
+  Object.assign(oauth, {
+    authorization_endpoint: '',
+    token_endpoint: '',
+    client_id: '',
+    client_secret: '',
+    redirect_uri: '',
+    scope: '',
+    userinfo_endpoint: '',
+    map_key: 'email',
+    roles_claim: '',
+  })
+  configBool.auto_provision = false
+  configBool.default_role_codes = []
+}
+
+async function load() {
+  loading.value = true
+  try {
+    rows.value = await listAuthProviders()
+  } catch (e) {
+    ElMessage.error(extractError(e))
+  } finally {
+    loading.value = false
+  }
+}
+
+function maskText(mask: Record<string, unknown> | undefined): string {
+  if (!mask || Object.keys(mask).length === 0) return '-'
+  return Object.keys(mask).join(', ')
+}
+
+function openCreate() {
+  editingId.value = null
+  Object.assign(form, { name: '', code: '', type: 'ldap', enabled: 1 })
+  resetConfig()
+  redirectTouched.value = false
+  editorVisible.value = true
+}
+
+function openEdit(row: AuthProviderOut) {
+  editingId.value = row.id
+  Object.assign(form, { name: row.name, code: row.code, type: row.type, enabled: row.enabled })
+  resetConfig()
+  const mask = (row.config_mask || {}) as Record<string, unknown>
+  if (row.type === 'ldap') {
+    for (const k of ['server_uri', 'bind_dn', 'bind_dn_template', 'base_dn', 'filter', 'map_key'] as const) {
+      if (typeof mask[k] === 'string') (ldap as Record<string, unknown>)[k] = mask[k]
+    }
+  } else {
+    for (const k of ['authorization_endpoint', 'token_endpoint', 'client_id', 'redirect_uri', 'scope', 'userinfo_endpoint', 'map_key', 'roles_claim'] as const) {
+      if (typeof mask[k] === 'string') (oauth as Record<string, unknown>)[k] = mask[k]
+    }
+  }
+  if (typeof mask.auto_provision === 'boolean') configBool.auto_provision = mask.auto_provision
+  if (Array.isArray(mask.default_role_codes)) {
+    configBool.default_role_codes = (mask.default_role_codes as string[]).slice()
+  }
+  if (row.type === 'oauth2') {
+    if (typeof mask.redirect_uri === 'string' && mask.redirect_uri) {
+      oauth.redirect_uri = mask.redirect_uri
+      redirectTouched.value = true
+    } else {
+      redirectTouched.value = false
+      oauth.redirect_uri = derivedRedirectUri.value
+    }
+  }
+  editorVisible.value = true
+}
+
+function buildConfig(): Record<string, unknown> {
+  const base: Record<string, unknown> = {
+    auto_provision: configBool.auto_provision,
+    default_role_codes: configBool.default_role_codes,
+  }
+  if (form.type === 'ldap') {
+    const cfg: Record<string, unknown> = {
+      ...base,
+      server_uri: ldap.server_uri,
+      bind_dn: ldap.bind_dn,
+      bind_dn_template: ldap.bind_dn_template,
+      base_dn: ldap.base_dn,
+      filter: ldap.filter,
+      map_key: ldap.map_key,
+    }
+    if (ldap.password) cfg.password = ldap.password
+    return cfg
+  }
+  const cfg: Record<string, unknown> = {
+    ...base,
+    authorization_endpoint: oauth.authorization_endpoint,
+    token_endpoint: oauth.token_endpoint,
+    client_id: oauth.client_id,
+    redirect_uri: oauth.redirect_uri,
+    scope: oauth.scope,
+    userinfo_endpoint: oauth.userinfo_endpoint,
+    map_key: oauth.map_key,
+    roles_claim: oauth.roles_claim,
+  }
+  if (oauth.client_secret) cfg.client_secret = oauth.client_secret
+  return cfg
+}
+
+async function onSave() {
+  if (!form.name.trim()) {
+    ElMessage.warning('请填写名称')
+    return
+  }
+  const config = buildConfig()
+  saving.value = true
+  try {
+    if (editingId.value) {
+      await updateAuthProvider(editingId.value, { name: form.name, enabled: form.enabled, config })
+    } else {
+      await createAuthProvider({
+        name: form.name,
+        type: form.type,
+        ...(form.code ? { code: form.code } : {}),
+        config,
+        enabled: form.enabled,
+      })
+    }
+    ElMessage.success('保存成功')
+    editorVisible.value = false
+    load()
+  } catch (e) {
+    ElMessage.error(extractError(e))
+  } finally {
+    saving.value = false
+  }
+}
+
+async function onTest(row: AuthProviderOut) {
+  testingId.value = row.id
+  try {
+    const result = await testAuthProvider(row.id)
+    if (result.ok) {
+      ElMessage.success(`试测通过${result.latency_ms != null ? `（${result.latency_ms}ms）` : ''}`)
+    } else {
+      ElMessage.error(result.error_message || '试测失败')
+    }
+  } catch (e) {
+    ElMessage.error(extractError(e))
+  } finally {
+    testingId.value = null
+  }
+}
+
+async function onToggle(row: AuthProviderOut) {
+  try {
+    await setAuthProviderStatus(row.id, { enabled: row.enabled === 1 ? 0 : 1 })
+    ElMessage.success('状态已更新')
+    load()
+  } catch (e) {
+    ElMessage.error(extractError(e))
+  }
+}
+
+async function onDelete(row: AuthProviderOut) {
+  try {
+    await ElMessageBox.confirm(`确定删除身份源「${row.name}」吗？`, '提示', { type: 'warning' })
+  } catch {
+    return
+  }
+  try {
+    await deleteAuthProvider(row.id)
+    ElMessage.success('已删除')
+    load()
+  } catch (e) {
+    ElMessage.error(extractError(e))
+  }
+}
+
+onMounted(async () => {
+  roles.value = await listRoles().catch(() => [])
+  load()
+})
+</script>
+
+<style scoped>
+.toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.title {
+  font-weight: 600;
+}
+.mask {
+  color: var(--el-text-color-secondary);
+  font-family: monospace;
+}
+.role-warn {
+  margin-top: 6px;
+}
+</style>

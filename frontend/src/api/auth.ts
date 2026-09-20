@@ -3,6 +3,9 @@ import type { ChangePasswordIn, LoginIn, TokenOut, UserMe } from './types'
 
 export const login = (data: LoginIn): Promise<TokenOut> => request({ url: '/auth/login', method: 'post', data })
 
+export const ldapLogin = (data: LoginIn): Promise<TokenOut> =>
+  request({ url: '/auth/ldap/login', method: 'post', data })
+
 export const refresh = (refresh_token: string): Promise<TokenOut> =>
   request({ url: '/auth/refresh', method: 'post', data: { refresh_token } })
 

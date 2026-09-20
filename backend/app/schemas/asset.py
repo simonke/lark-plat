@@ -112,6 +112,12 @@ class ConnResult(BaseModel):
     detail: str
 
 
+class ConnectorUpdate(BaseModel):
+    """P2-SS: manual connector switch (only agent|ssh; anything else -> 422)."""
+
+    connector: Literal["agent", "ssh"]
+
+
 class CredentialCreate(BaseModel):
     host_id: int
     type: str = "password"

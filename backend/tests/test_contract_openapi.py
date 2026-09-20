@@ -128,7 +128,9 @@ def test_login_refresh_public_and_rest_guarded(openapi_spec):
 
 def test_path_count_stable(openapi_spec):
     paths = openapi_spec["paths"]
-    assert len(paths) == 107
+    # 107 (P2-ID) -> 109: P2-SS adds GET /assets/hosts/{id}/executors and
+    # PUT /assets/hosts/{id}/connector (add-only).
+    assert len(paths) == 109
 
 
 def test_stage4_terminal_paths_present(openapi_spec):

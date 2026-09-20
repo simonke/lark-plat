@@ -225,6 +225,7 @@ DEFAULT_PERMISSIONS: list[tuple[str, str, str, str | None]] = [
     ("asset:host:import", "导入主机", "action", "asset:host:list"),
     ("asset:host:export", "导出主机", "action", "asset:host:list"),
     ("asset:host:conn", "连通性检测", "action", "asset:host:list"),
+    ("asset:host:executor", "执行器管理", "action", "asset:host:list"),
     ("asset:group:list", "分组列表", "action", None),
     ("asset:group:add", "新增分组", "action", "asset:group:list"),
     ("asset:group:edit", "编辑分组", "action", "asset:group:list"),

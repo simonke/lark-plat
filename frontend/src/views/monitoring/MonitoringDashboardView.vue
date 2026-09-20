@@ -11,7 +11,7 @@
             </div>
             <div class="stat-info">
               <div class="stat-value">{{ alertStats.firing }}</div>
-              <div class="stat-label">触发中告警</div>
+              <div class="stat-label">触发中告警（最近）</div>
             </div>
           </div>
         </el-card>
@@ -24,7 +24,7 @@
             </div>
             <div class="stat-info">
               <div class="stat-value">{{ alertStats.critical }}</div>
-              <div class="stat-label">严重</div>
+              <div class="stat-label">严重（最近）</div>
             </div>
           </div>
         </el-card>
@@ -37,7 +37,7 @@
             </div>
             <div class="stat-info">
               <div class="stat-value">{{ alertStats.warning }}</div>
-              <div class="stat-label">警告</div>
+              <div class="stat-label">警告（最近）</div>
             </div>
           </div>
         </el-card>

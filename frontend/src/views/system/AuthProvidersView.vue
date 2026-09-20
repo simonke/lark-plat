@@ -226,10 +226,10 @@ const configBool = reactive({
   default_role_codes: [] as string[],
 })
 
-const PRIVILEGED_ROLE_CODES = ['admin', 'superadmin', 'super_admin']
+const PRIVILEGED_ROLE_CODES = ['admin', 'superadmin', 'super_admin', 'super']
 
 const hasPrivilegedDefault = computed(() =>
-  configBool.default_role_codes.some((code) => PRIVILEGED_ROLE_CODES.includes(code)),
+  configBool.default_role_codes.some((code) => PRIVILEGED_ROLE_CODES.includes(code.trim().toLowerCase())),
 )
 
 const form = reactive({

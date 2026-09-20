@@ -70,7 +70,7 @@
           </el-form-item>
           <el-form-item label="bind_dn">
             <el-input v-model="ldap.bind_dn" placeholder="cn=svc-readonly,ou=service,dc=example,dc=com" />
-            <div class="hint">服务账号 DN（非密钥），仅用于「试测」连通性校验；其密码填下方 `password`。</div>
+            <div class="hint">服务账号 DN（非密钥），仅用于「试测」连通性校验；其密码填下方「password」。</div>
           </el-form-item>
           <el-form-item label="bind_dn_template">
             <el-input v-model="ldap.bind_dn_template" placeholder="uid={username},ou=people,dc=example,dc=com" />
@@ -112,7 +112,7 @@
               @input="redirectTouched = true"
             />
             <div class="hint">
-              该值发往 IdP、须在 IdP 注册；<b>勿填前端地址</b>。登录成功落点仅由服务端 `config_rule`（sso.frontend_callback_url）决定，与本字段无关。
+              该值发往 IdP、须在 IdP 注册；<b>勿填前端地址</b>。登录成功落点仅由服务端「config_rule」（sso.frontend_callback_url）决定，与本字段无关。
             </div>
           </el-form-item>
           <el-form-item label="scope">
@@ -226,8 +226,10 @@ const configBool = reactive({
   default_role_codes: [] as string[],
 })
 
+const PRIVILEGED_ROLE_CODES = ['admin', 'superadmin', 'super_admin', 'super']
+
 const hasPrivilegedDefault = computed(() =>
-  configBool.default_role_codes.some((code) => /admin|super/i.test(code)),
+  configBool.default_role_codes.some((code) => PRIVILEGED_ROLE_CODES.includes(code.trim().toLowerCase())),
 )
 
 const form = reactive({

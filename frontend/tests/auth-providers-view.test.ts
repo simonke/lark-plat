@@ -47,12 +47,12 @@ function setPerms(perms: string[]) {
   store.loaded = true
 }
 
-function mountView() {
+function mountView(global: Record<string, unknown> = {}) {
   return mount(AuthProvidersView, {
     global: {
       plugins: [ElementPlus],
       directives: { perm: vPerm },
-      stubs: { teleport: true, ElSelect: true, ElOption: true },
+      ...global,
     },
   })
 }
@@ -129,7 +129,9 @@ describe('AuthProvidersView (P2-3 identity providers)', () => {
     vi.mocked(providersApi.listAuthProviders).mockResolvedValue([])
     vi.mocked(providersApi.createAuthProvider).mockResolvedValue({ id: 1 } as never)
 
-    const wrapper = mountView()
+    const wrapper = mountView({
+      stubs: { teleport: true, ElSelect: true, ElOption: true },
+    })
     await flushPromises()
 
     const addBtn = wrapper.findAll('button').find((b) => b.text().includes('新增身份源'))

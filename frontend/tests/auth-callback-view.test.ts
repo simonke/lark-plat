@@ -22,6 +22,7 @@ describe('AuthCallbackView (P2-3 oauth callback)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     loginWithTokensMock.mockResolvedValue(undefined)
+    localStorage.clear()
     window.history.replaceState(null, '', '/')
   })
 
@@ -55,6 +56,21 @@ describe('AuthCallbackView (P2-3 oauth callback)', () => {
     await flushPromises()
 
     expect(loginWithTokensMock).toHaveBeenCalledWith('acc-2', '')
+    wrapper.unmount()
+  })
+
+  it('clears residual tokens when adopting the callback pair fails (O3)', async () => {
+    window.history.replaceState(null, '', '/auth/callback#access_token=bad&refresh_token=bad2')
+    localStorage.setItem('lark_access_token', 'stale')
+    localStorage.setItem('lark_refresh_token', 'stale-r')
+    loginWithTokensMock.mockRejectedValue(new Error('boom'))
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(localStorage.getItem('lark_access_token')).toBeNull()
+    expect(localStorage.getItem('lark_refresh_token')).toBeNull()
+    expect(replaceMock).toHaveBeenCalledWith('/login')
     wrapper.unmount()
   })
 })

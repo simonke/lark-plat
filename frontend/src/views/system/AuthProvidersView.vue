@@ -101,7 +101,15 @@
             <el-input v-model="oauth.client_secret" type="password" show-password :placeholder="secretPlaceholder" />
           </el-form-item>
           <el-form-item label="redirect_uri">
-            <el-input v-model="oauth.redirect_uri" placeholder="https://<backend>/api/v1/auth/oauth/<code>/callback" />
+            <el-input
+              v-model="oauth.redirect_uri"
+              :disabled="!form.code"
+              placeholder="https://<backend>/api/v1/auth/oauth/<code>/callback"
+              @input="redirectTouched = true"
+            />
+            <div class="hint">
+              该值发往 IdP、须在 IdP 注册；<b>勿填前端地址</b>。登录成功落点仅由服务端 `config_rule`（sso.frontend_callback_url）决定，与本字段无关。
+            </div>
           </el-form-item>
           <el-form-item label="scope">
             <el-input v-model="oauth.scope" placeholder="openid profile email" />
@@ -160,7 +168,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   createAuthProvider,
@@ -224,6 +232,17 @@ const form = reactive({
   enabled: 1,
 })
 
+const redirectTouched = ref(false)
+const derivedRedirectUri = computed(() =>
+  form.code ? `${window.location.origin}/api/v1/auth/oauth/${form.code}/callback` : '',
+)
+
+watch(derivedRedirectUri, (value) => {
+  if (!redirectTouched.value) {
+    oauth.redirect_uri = value
+  }
+})
+
 function resetConfig() {
   Object.assign(ldap, { server_uri: '', bind_dn_template: '', base_dn: '', filter: '', map_key: 'email', password: '' })
   Object.assign(oauth, {
@@ -261,6 +280,7 @@ function openCreate() {
   editingId.value = null
   Object.assign(form, { name: '', code: '', type: 'ldap', enabled: 1 })
   resetConfig()
+  redirectTouched.value = false
   editorVisible.value = true
 }
 
@@ -281,6 +301,15 @@ function openEdit(row: AuthProviderOut) {
   if (typeof mask.auto_provision === 'boolean') configBool.auto_provision = mask.auto_provision
   if (Array.isArray(mask.default_role_codes)) {
     configBool.default_role_codes = (mask.default_role_codes as string[]).slice()
+  }
+  if (row.type === 'oauth2') {
+    if (typeof mask.redirect_uri === 'string' && mask.redirect_uri) {
+      oauth.redirect_uri = mask.redirect_uri
+      redirectTouched.value = true
+    } else {
+      redirectTouched.value = false
+      oauth.redirect_uri = derivedRedirectUri.value
+    }
   }
   editorVisible.value = true
 }

@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.core.exceptions import BadRequestError, NotFoundError, UnauthorizedError
+from app.core.exceptions import BadRequestError, NotFoundError, UnauthorizedError, ValidationError
 from app.services import auth_service, sso_service
 
 FAKE_ENC = "v1:ZmFrZQ=="
@@ -60,6 +60,10 @@ class _FakeProviderRepo:
 
 def _db():
     return SimpleNamespace(commit=lambda: None, flush=lambda: None, delete=lambda o: None, add=lambda o: None)
+
+
+def _actor():
+    return SimpleNamespace(id=99, username="admin", is_admin=True)
 
 
 @pytest.fixture(autouse=True)
@@ -122,7 +126,7 @@ def test_create_provider_slugs_name_and_rejects_duplicate(monkeypatch):
     repo = _FakeProviderRepo(by_code=None)
     monkeypatch.setattr(sso_service, "AuthProviderRepository", lambda db: repo)
     out = sso_service.create_provider(
-        _db(), SimpleNamespace(name="Corp LDAP", type="ldap", code=None, config={}, enabled=1)
+        _db(), _actor(), SimpleNamespace(name="Corp LDAP", type="ldap", code=None, config={}, enabled=1)
     )
     assert out["code"] == "corp-ldap"
     assert out["type"] == "ldap"
@@ -130,7 +134,7 @@ def test_create_provider_slugs_name_and_rejects_duplicate(monkeypatch):
     repo._by_code = _provider(code="corp-ldap")
     with pytest.raises(BadRequestError):
         sso_service.create_provider(
-            _db(), SimpleNamespace(name="dup", type="ldap", code="corp-ldap", config={}, enabled=1)
+            _db(), _actor(), SimpleNamespace(name="dup", type="ldap", code="corp-ldap", config={}, enabled=1)
         )
 
 
@@ -138,7 +142,7 @@ def test_create_provider_rejects_unknown_type(monkeypatch):
     monkeypatch.setattr(sso_service, "AuthProviderRepository", lambda db: _FakeProviderRepo())
     with pytest.raises(BadRequestError):
         sso_service.create_provider(
-            _db(), SimpleNamespace(name="x", type="saml", code="x", config={}, enabled=1)
+            _db(), _actor(), SimpleNamespace(name="x", type="saml", code="x", config={}, enabled=1)
         )
 
 
@@ -157,11 +161,50 @@ def test_update_provider_keeps_ciphertext_when_secret_masked(monkeypatch):
     repo = _FakeProviderRepo([provider])
     monkeypatch.setattr(sso_service, "AuthProviderRepository", lambda db: repo)
     sso_service.update_provider(
-        _db(), 1, SimpleNamespace(name=None, enabled=None, config={"bind_password": "re****", "base_dn": "dc=y"})
+        _db(), _actor(), 1,
+        SimpleNamespace(name=None, enabled=None, config={"bind_password": "re****", "base_dn": "dc=y"}),
     )
     stored = sso_service._decrypt_config(provider)
     assert stored["bind_password"] == "realpw"  # masked echo must not overwrite
     assert stored["base_dn"] == "dc=y"
+
+
+# ------------------------------------------------- O1 (seq2068): default_role_codes
+
+
+def test_unknown_default_role_code_is_422(monkeypatch):
+    monkeypatch.setattr(sso_service, "AuthProviderRepository", lambda db: _FakeProviderRepo())
+    monkeypatch.setattr(sso_service, "RoleRepository", lambda db: SimpleNamespace(by_code=lambda c: None))
+    with pytest.raises(ValidationError):
+        sso_service._validate_role_codes(_db(), ["ghost-role"])
+
+
+def test_privileged_default_role_code_is_allowed_and_audited(monkeypatch):
+    monkeypatch.setattr(sso_service, "AuthProviderRepository", lambda db: _FakeProviderRepo())
+    monkeypatch.setattr(
+        sso_service, "RoleRepository",
+        lambda db: SimpleNamespace(by_code=lambda c: SimpleNamespace(id=1, code=c)),
+    )
+    audit_rows = []
+    monkeypatch.setattr(sso_service, "_audit_privileged_grant", lambda db, a, code, codes, action: audit_rows.append((code, codes, action)))
+    sso_service.create_provider(
+        _db(), _actor(),
+        SimpleNamespace(name="Corp LDAP", type="ldap", code="corp", config={"default_role_codes": ["admin"]}, enabled=1),
+    )
+    assert audit_rows and audit_rows[0][0] == "corp"
+    assert audit_rows[0][1] == ["admin"]
+
+
+def test_platform_default_privileged_role_refused_not_silent(monkeypatch):
+    user = SimpleNamespace(id=3)
+    added = []
+    monkeypatch.setattr(sso_service, "RoleRepository", lambda db: SimpleNamespace(by_code=lambda c: SimpleNamespace(id=1)))
+    monkeypatch.setattr(sso_service, "_config_rule", lambda db, k, d: ["admin", "operator"])
+    monkeypatch.setattr(sso_service, "UserRole", lambda user_id, role_id: added.append((user_id, role_id)))
+    sso_service._bind_default_roles(_db(), user, {"default_role_codes": None})
+    # only the non-privileged code is bound
+    assert added == [(3, 1)]
+
 
 
 # ---------------------------------------------------------------- feature flag
@@ -172,7 +215,7 @@ def test_create_provider_blocked_when_feature_disabled(monkeypatch):
     monkeypatch.setattr(sso_service, "AuthProviderRepository", lambda db: _FakeProviderRepo())
     with pytest.raises(BadRequestError):
         sso_service.create_provider(
-            _db(), SimpleNamespace(name="x", type="ldap", code="x", config={}, enabled=1)
+            _db(), _actor(), SimpleNamespace(name="x", type="ldap", code="x", config={}, enabled=1)
         )
 
 
@@ -219,6 +262,28 @@ def test_provisioning_requires_opt_in(monkeypatch):
     monkeypatch.setattr(sso_service, "_config_rule", lambda db, k, d: False)
     with pytest.raises(UnauthorizedError):
         sso_service._resolve_external_user(_db(), provider, "ghost", {"map_key": "username"})
+
+
+def test_provisioning_creates_non_admin_user_with_auth_source(monkeypatch):
+    """§22 item3 ④: a first-login provisioned user is never auto-privileged."""
+    provider = _provider(id=1, code="corp-ldap", type="ldap")
+    added = []
+    repo = SimpleNamespace(
+        by_username=lambda u: None, by_email=lambda e: None, add=lambda u: added.append(u)
+    )
+    monkeypatch.setattr(sso_service, "UserRepository", lambda db: repo)
+    monkeypatch.setattr(sso_service, "_config_rule", lambda db, k, d: [] if k == "sso.default_role_codes" else False)
+    monkeypatch.setattr(sso_service, "RoleRepository", lambda db: SimpleNamespace(by_code=lambda c: None))
+    monkeypatch.setattr(sso_service, "hash_password", lambda p: "hashed")
+    db = _db()
+    db.flush = lambda: None
+    user = sso_service._resolve_external_user(
+        db, provider, "alice", {"map_key": "username", "auto_provision": True}
+    )
+    assert user.auth_source == "ldap"
+    assert user.is_admin == 0
+    assert user.external_id == "alice"
+    assert added and added[0] is user
 
 
 # ---------------------------------------------------------------- OAuth2

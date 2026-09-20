@@ -22,7 +22,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.exceptions import BadRequestError, NotFoundError, UnauthorizedError
+from app.core.exceptions import BadRequestError, NotFoundError, UnauthorizedError, ValidationError
 from app.core.redis_helper import (
     clear_login_failures,
     consume_oauth_state,
@@ -30,7 +30,7 @@ from app.core.redis_helper import (
     store_oauth_state,
 )
 from app.core.security import decrypt_secret, encrypt_secret, hash_password
-from app.db.models import AuthProvider, ConfigRule, User, UserRole
+from app.db.models import AuditLog, AuthProvider, ConfigRule, User, UserRole
 from app.repositories import (
     AuthProviderRepository,
     ConfigRuleRepository,
@@ -45,6 +45,9 @@ logger = logging.getLogger(__name__)
 OAUTH_STATE_TTL = 300
 _CODE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _SECRET_KEYS = {"password", "bind_password", "client_secret", "secret", "token"}
+# Privileged role codes: an SSO provider may grant them explicitly, but only with
+# an audit trail; the platform default must never apply them silently (seq2068 O1).
+_PRIVILEGED_ROLE_CODES = {"admin", "superadmin", "super_admin", "super"}
 _REQUIRED_CONFIG = {
     "ldap": ("server_uri", "bind_dn_template", "base_dn"),
     "oauth2": ("authorize_url", "token_url", "client_id"),
@@ -160,10 +163,53 @@ def _get_enabled_by_code(db: Session, code: str, expected_type: str | None = Non
     return provider
 
 
+def _is_privileged(code: str) -> bool:
+    return code.strip().lower() in _PRIVILEGED_ROLE_CODES
+
+
+def _validate_role_codes(db: Session, codes: list[str] | None) -> list[str]:
+    """Validate provider-declared default_role_codes (seq2068 O1).
+
+    Unknown/illegal code -> 422. Returns the privileged codes present (allowed
+    explicitly, but the caller must record an audit trail)."""
+    if not codes:
+        return []
+    role_repo = RoleRepository(db)
+    privileged: list[str] = []
+    for code in codes:
+        if role_repo.by_code(code) is None:
+            raise ValidationError(f"unknown role code: {code}")
+        if _is_privileged(code):
+            privileged.append(code)
+    return privileged
+
+
+def _audit_privileged_grant(
+    db: Session, actor, provider_code: str, codes: list[str], action: str
+) -> None:
+    """Mandatory audit when a provider explicitly grants admin/super roles."""
+    db.execute(
+        AuditLog.__table__.insert().values(
+            user_id=getattr(actor, "id", None),
+            username=getattr(actor, "username", "") or "",
+            module="auth",
+            action=action,
+            method="PUT",
+            path="/api/v1/auth/providers",
+            params={"provider_code": provider_code, "default_role_codes": codes, "privileged": True},
+            ip="",
+            user_agent="",
+            status=1,
+            cost_ms=0,
+            trace_id="",
+        )
+    )
+
+
 # ---------------------------------------------------------------- provider CRUD
 
 
-def create_provider(db: Session, data: sch.AuthProviderCreate) -> dict:
+def create_provider(db: Session, actor, data: sch.AuthProviderCreate) -> dict:
     if not _feature_enabled(db):
         raise BadRequestError("sso feature disabled")
     if data.type not in ("ldap", "oauth2"):
@@ -172,6 +218,7 @@ def create_provider(db: Session, data: sch.AuthProviderCreate) -> dict:
     code = _normalize_code(data.code, data.name)
     if repo.by_code(code) is not None:
         raise BadRequestError(f"provider code already exists: {code}")
+    privileged = _validate_role_codes(db, (data.config or {}).get("default_role_codes"))
     provider = AuthProvider(
         code=code,
         name=data.name,
@@ -180,19 +227,26 @@ def create_provider(db: Session, data: sch.AuthProviderCreate) -> dict:
         enabled=data.enabled,
     )
     repo.add(provider)
+    if privileged:
+        _audit_privileged_grant(db, actor, code, privileged, "sso.provider.privileged_roles")
     db.commit()
     return _provider_out(provider)
 
 
-def update_provider(db: Session, provider_id: int, data: sch.AuthProviderUpdate) -> dict:
+def update_provider(db: Session, actor, provider_id: int, data: sch.AuthProviderUpdate) -> dict:
     provider = _get_provider(db, provider_id)
     if data.name is not None:
         provider.name = data.name
     if data.enabled is not None:
         provider.enabled = data.enabled
     if data.config is not None:
+        privileged = _validate_role_codes(db, data.config.get("default_role_codes"))
         existing = _decrypt_config(provider)
         provider.config_enc = _encrypt_config(_resolve_config_incoming(data.config, existing))
+        if privileged:
+            _audit_privileged_grant(
+                db, actor, provider.code, privileged, "sso.provider.privileged_roles"
+            )
     db.commit()
     return _provider_out(provider)
 
@@ -297,9 +351,24 @@ def _resolve_external_user(
 
 
 def _bind_default_roles(db: Session, user: User, profile: dict) -> None:
-    codes = profile.get("default_role_codes")
-    if codes is None:
-        codes = _config_rule(db, "sso.default_role_codes", [])
+    """Bind default roles to a newly provisioned external user.
+
+    Provider-declared codes (explicit, already 422-validated + audited on the
+    provider write) are applied as-is. Platform `config_rule sso.default_role_codes`
+    must never apply admin/super silently -> privileged codes are refused and logged
+    (seq2068 O1)."""
+    explicit = profile.get("default_role_codes")
+    if explicit is None:
+        codes = _config_rule(db, "sso.default_role_codes", []) or []
+        refused = [c for c in codes if _is_privileged(c)]
+        if refused:
+            logger.warning(
+                "sso: platform default_role_codes contains privileged %s; refused (not applied)",
+                refused,
+            )
+        codes = [c for c in codes if not _is_privileged(c)]
+    else:
+        codes = explicit
     role_repo = RoleRepository(db)
     for code in codes or []:
         role = role_repo.by_code(code)

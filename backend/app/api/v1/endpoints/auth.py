@@ -67,13 +67,13 @@ def list_providers(db: DbDep, user: OptionalUserDep):
 @router.post("/providers", response_model=Result)
 def create_provider(db: DbDep, user: UserDep, data: sch.AuthProviderCreate):
     user.require_perm("system:auth:provider:add")
-    return Result.ok(sso_service.create_provider(db, data))
+    return Result.ok(sso_service.create_provider(db, user, data))
 
 
 @router.put("/providers/{provider_id}", response_model=Result)
 def update_provider(db: DbDep, user: UserDep, provider_id: int, data: sch.AuthProviderUpdate):
     user.require_perm("system:auth:provider:edit")
-    return Result.ok(sso_service.update_provider(db, provider_id, data))
+    return Result.ok(sso_service.update_provider(db, user, provider_id, data))
 
 
 @router.delete("/providers/{provider_id}", response_model=Result)

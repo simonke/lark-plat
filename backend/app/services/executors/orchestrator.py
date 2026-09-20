@@ -8,7 +8,7 @@ The gates and the log writer reuse the SAME existing symbols as the agent path
 (``exec_service.detect_sensitive`` / ``ExecLogRepository.append``); this module
 does not modify the agent code. It is entered by ``connector == "ssh"``.
 
-The skeleton performs no real SSH: ``SshExecutor.exec`` degrades with
+The skeleton performs no real SSH: ``SSHExecutor.exec`` degrades with
 ``NotImplementedError`` when ``paramiko`` is absent, and the orchestration still
 runs both gates first and records a degraded ``exec_log`` row (so gate order and
 the ``exec_log`` shape are assertable offline).

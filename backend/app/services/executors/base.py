@@ -6,18 +6,21 @@ executor here opens a real connection. Approval/sensitivity gates, the
 ``exec_log`` structure and the WS frames stay owned by the existing agent path
 in ``exec_service``; an executor is *selected*, it never dispatches around those
 gates.
+
+Frozen contract (seq2191): ``available`` / ``reason`` are attribute-accessible
+(plain attribute or ``@property``), ``check(host)`` returns exactly
+``{"ok", "latency_ms", "detail"}``.
 """
 
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol
 
 CONNECTOR_AGENT = "agent"
 CONNECTOR_SSH = "ssh"
 CONNECTORS: tuple[str, ...] = (CONNECTOR_AGENT, CONNECTOR_SSH)
 
 
-@runtime_checkable
 class Executor(Protocol):
     """A host execution connector.
 
@@ -28,10 +31,8 @@ class Executor(Protocol):
     """
 
     name: str
-
-    def available(self) -> bool: ...
-
-    def reason(self) -> str | None: ...
+    available: bool
+    reason: str | None
 
     def check(self, host: Any) -> dict[str, Any]: ...
 

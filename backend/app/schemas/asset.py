@@ -108,7 +108,7 @@ class HostOut(BaseModel):
 
 class ConnResult(BaseModel):
     ok: bool
-    latency_ms: int
+    latency_ms: int | None = None
     detail: str
 
 

@@ -12,12 +12,8 @@ class AgentExecutor:
     """Agent connector. ``check`` reproduces the pre-P2-SS agent branch verbatim."""
 
     name = "agent"
-
-    def available(self) -> bool:
-        return True
-
-    def reason(self) -> str | None:
-        return None
+    available = True
+    reason: str | None = None
 
     def check(self, host: Any) -> dict[str, Any]:
         last = getattr(host, "last_heartbeat_at", None)
@@ -34,3 +30,6 @@ class AgentExecutor:
         raise NotImplementedError(
             "agent execution is dispatched by exec_service (unchanged by P2-SS)"
         )
+
+
+agent_executor = AgentExecutor()

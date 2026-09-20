@@ -280,7 +280,7 @@ def connectivity_check(db: Session, user, host_id: int) -> dict:
         raise ForbiddenError("no data permission for this host")
     # P2-SS: the connector decides the executor; the agent branch keeps the exact
     # pre-P2-SS heartbeat semantics (AgentExecutor.check reproduces it verbatim),
-    # the ssh branch now goes through SshExecutor instead of a hardcoded string.
+    # the ssh branch now goes through SSHExecutor instead of a hardcoded string.
     if host.connector == CONNECTOR_SSH:
         result = build_executor(CONNECTOR_SSH).check(host)
     elif host.connector == CONNECTOR_AGENT:
@@ -326,7 +326,7 @@ def host_executors(db: Session, user, host_id: int) -> dict:
     return {
         "available": available_executors(),
         "active": active,
-        "reason": None if active_executor.available() else active_executor.reason(),
+        "reason": None if active_executor.available else active_executor.reason,
     }
 
 

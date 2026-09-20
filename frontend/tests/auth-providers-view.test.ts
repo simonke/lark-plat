@@ -33,6 +33,20 @@ function setAdmin() {
   store.loaded = true
 }
 
+function setPerms(perms: string[]) {
+  const store = useAuthStore()
+  store.user = {
+    id: 2,
+    username: 'op',
+    real_name: 'Op',
+    roles: [],
+    permissions: perms,
+    visible_group_ids: [],
+    is_admin: false,
+  }
+  store.loaded = true
+}
+
 function mountView() {
   return mount(AuthProvidersView, {
     global: { plugins: [ElementPlus], directives: { perm: vPerm } },
@@ -86,6 +100,24 @@ describe('AuthProvidersView (P2-3 identity providers)', () => {
     await flushPromises()
 
     expect(providersApi.testAuthProvider).toHaveBeenCalledWith(7)
+    wrapper.unmount()
+  })
+
+  it('gates write actions by granular perms (base perm alone hides add/edit/test/del)', async () => {
+    setPerms(['system:auth:provider'])
+    vi.mocked(providersApi.listAuthProviders).mockResolvedValue([
+      { id: 1, code: 'corp-ldap', name: '企业 LDAP', type: 'ldap', enabled: 1, config_mask: {}, created_at: '2026-09-20T00:00:00Z' },
+    ])
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    const labels = wrapper.findAll('button').map((b) => b.text())
+    expect(labels.some((t) => t.includes('新增身份源'))).toBe(false)
+    expect(labels.some((t) => t.includes('编辑'))).toBe(false)
+    expect(labels.some((t) => t.includes('试测'))).toBe(false)
+    expect(labels.some((t) => t.includes('删除'))).toBe(false)
+    expect(wrapper.text()).toContain('企业 LDAP')
     wrapper.unmount()
   })
 })

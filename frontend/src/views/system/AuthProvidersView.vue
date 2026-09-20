@@ -4,7 +4,7 @@
       <template #header>
         <div class="toolbar">
           <span class="title">身份源</span>
-          <el-button type="primary" v-perm="'system:auth:provider'" @click="openCreate">新增身份源</el-button>
+          <el-button type="primary" v-perm="'system:auth:provider:add'" @click="openCreate">新增身份源</el-button>
         </div>
       </template>
 
@@ -36,14 +36,14 @@
         </el-table-column>
         <el-table-column label="操作" width="320" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" v-perm="'system:auth:provider'" @click="openEdit(row)">编辑</el-button>
-            <el-button size="small" v-perm="'system:auth:provider'" :loading="testingId === row.id" @click="onTest(row)">
+            <el-button size="small" v-perm="'system:auth:provider:edit'" @click="openEdit(row)">编辑</el-button>
+            <el-button size="small" v-perm="'system:auth:provider:test'" :loading="testingId === row.id" @click="onTest(row)">
               试测
             </el-button>
-            <el-button size="small" v-perm="'system:auth:provider'" @click="onToggle(row)">
+            <el-button size="small" v-perm="'system:auth:provider:edit'" @click="onToggle(row)">
               {{ row.enabled === 1 ? '禁用' : '启用' }}
             </el-button>
-            <el-button size="small" type="danger" v-perm="'system:auth:provider'" @click="onDelete(row)">删除</el-button>
+            <el-button size="small" type="danger" v-perm="'system:auth:provider:del'" @click="onDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>

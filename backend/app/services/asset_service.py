@@ -18,14 +18,8 @@ from app.repositories import (
     HostRepository,
 )
 from app.schemas import asset as sch
-from app.services.executors import (
-    CONNECTORS,
-    CONNECTOR_AGENT,
-    CONNECTOR_SSH,
-    available_executors,
-    build_executor,
-    resolve_executor,
-)
+from app.services import executors as executor_registry
+from app.services.executors import CONNECTORS, CONNECTOR_AGENT, CONNECTOR_SSH
 
 
 # ---------------------------------------------------------------- groups
@@ -282,9 +276,9 @@ def connectivity_check(db: Session, user, host_id: int) -> dict:
     # pre-P2-SS heartbeat semantics (AgentExecutor.check reproduces it verbatim),
     # the ssh branch now goes through SSHExecutor instead of a hardcoded string.
     if host.connector == CONNECTOR_SSH:
-        result = build_executor(CONNECTOR_SSH).check(host)
+        result = executor_registry.build_executor(CONNECTOR_SSH).check(host)
     elif host.connector == CONNECTOR_AGENT:
-        result = build_executor(CONNECTOR_AGENT).check(host)
+        result = executor_registry.build_executor(CONNECTOR_AGENT).check(host)
     else:
         result = {"ok": False, "latency_ms": 0, "detail": "no agent"}
     ok, latency, detail = result["ok"], result["latency_ms"], result["detail"]
@@ -319,12 +313,12 @@ def host_executors(db: Session, user, host_id: int) -> dict:
         raise NotFoundError("host not found")
     if not _host_visible(user, host):
         raise ForbiddenError("no data permission for this host")
-    active = resolve_executor(host.connector, ssh_fallback=ssh_fallback_enabled(db))
+    active = executor_registry.resolve_executor(host.connector, ssh_fallback=ssh_fallback_enabled(db))
     if active not in CONNECTORS:
         active = CONNECTOR_AGENT
-    active_executor = build_executor(active)
+    active_executor = executor_registry.build_executor(active)
     return {
-        "available": available_executors(),
+        "available": executor_registry.available_executors(),
         "active": active,
         "reason": None if active_executor.available else active_executor.reason,
     }

@@ -24,7 +24,9 @@ def build_executor(name: str) -> Executor:
 
 
 def all_executors() -> list[Executor]:
-    return [_EXECUTORS[name] for name in CONNECTORS]
+    # Resolve via build_executor every call so monkeypatching the frozen
+    # injection seam (build_executor) also drives infos/availability.
+    return [build_executor(name) for name in CONNECTORS]
 
 
 def executor_infos() -> list[dict[str, Any]]:
@@ -47,7 +49,7 @@ def resolve_executor(connector: str, *, ssh_fallback: bool = False) -> str:
     ``executor.ssh_fallback`` config_rule is on AND ssh is actually usable
     (``paramiko`` present); otherwise it stays on the agent path.
     """
-    if connector == CONNECTOR_AGENT and ssh_fallback and ssh_executor.available:
+    if connector == CONNECTOR_AGENT and ssh_fallback and build_executor(CONNECTOR_SSH).available:
         return CONNECTOR_SSH
     return connector
 

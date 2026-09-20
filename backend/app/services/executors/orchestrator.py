@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import ExecTask, ExecTaskHost
 from app.repositories import ApprovalRepository, ExecLogRepository
-from app.services.executors import build_executor
+from app.services import executors as executor_registry
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +83,7 @@ def run_exec(
         _write_log(db, th, "warn", f"[executor:{th.executor}] skipped: {skip}")
         return {"ok": False, "detail": skip, "skipped": True}
 
-    ex = executor if executor is not None else build_executor(th.executor)
+    ex = executor if executor is not None else executor_registry.build_executor(th.executor)
     try:
         result = ex.exec(db=db, task=task, host=th, content=content)
     except NotImplementedError as exc:

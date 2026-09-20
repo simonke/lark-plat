@@ -134,6 +134,37 @@ def release_semaphore(key: str) -> None:
     r.decr(f"sem:{key}")
 
 
+# ------------------------------------------------------------- OAuth2 state
+
+import json as _json
+
+
+def store_oauth_state(state: str, payload: dict, ttl: int = 300) -> None:
+    """One-time OAuth2 `state` (CSRF guard) with a 5-minute TTL."""
+    r = get_redis()
+    if r is None:
+        return
+    r.setex(f"oauth:state:{state}", ttl, _json.dumps(payload))
+
+
+def consume_oauth_state(state: str) -> dict | None:
+    """Atomically read-and-delete `state`; replay/expired returns None (-> 400)."""
+    r = get_redis()
+    if r is None:
+        return None
+    key = f"oauth:state:{state}"
+    pipe = r.pipeline()
+    pipe.get(key)
+    pipe.delete(key)
+    value = pipe.execute()[0]
+    if not value:
+        return None
+    try:
+        return _json.loads(value)
+    except (TypeError, ValueError):
+        return None
+
+
 # ------------------------------------------------------------- token buckets (rate limit)
 
 

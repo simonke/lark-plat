@@ -57,6 +57,9 @@ class UserRepository(BaseRepository[User]):
     def by_username(self, username: str) -> User | None:
         return self.session.scalar(select(User).where(User.username == username))
 
+    def by_email(self, email: str) -> User | None:
+        return self.session.scalar(select(User).where(User.email == email))
+
     def search(self, username: str | None, real_name: str | None, status: int | None,
                role_id: int | None, page: int, size: int) -> tuple[list[User], int]:
         stmt = select(User).where(User.deleted == 0)

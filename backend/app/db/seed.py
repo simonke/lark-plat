@@ -199,6 +199,19 @@ PERMISSION_TREE: list[tuple[str, str, str, str, str, list[tuple[str, str, str, s
         [("system:audit:export", "导出", "button", "", "Download")],
     ),
     (
+        "system:auth:provider",
+        "身份集成",
+        "menu",
+        "/system/auth-providers",
+        "Connection",
+        [
+            ("system:auth:provider:add", "新增身份源", "button", "", "Plus"),
+            ("system:auth:provider:edit", "编辑身份源", "button", "", "Edit"),
+            ("system:auth:provider:del", "删除身份源", "button", "", "Delete"),
+            ("system:auth:provider:test", "连通测试", "button", "", "Promotion"),
+        ],
+    ),
+    (
         "monitor:metric:view",
         "监控面板",
         "menu",
@@ -464,6 +477,16 @@ DEFAULT_CONFIG_RULES: dict[str, dict] = {
     # P2-MA O3/I2: sweep cadence + metric freshness defaults (never overwrite existing)
     "monitor.sweep_interval": {"seconds": 30},
     "monitor.metric_freshness_seconds": {"seconds": 300},
+    # P2-3 SSO defaults (never overwrite existing)
+    "sso.auto_provision": {"value": False},
+    "sso.default_role_codes": {"value": []},
+}
+
+_CONFIG_RULE_REMARKS: dict[str, str] = {
+    "monitor.sweep_interval": "P2-MA default (O3/I2)",
+    "monitor.metric_freshness_seconds": "P2-MA default (O3/I2)",
+    "sso.auto_provision": "P2-3 SSO default",
+    "sso.default_role_codes": "P2-3 SSO default",
 }
 
 
@@ -471,7 +494,7 @@ def seed_config_rules(db: Session) -> int:
     created = 0
     for key, value in DEFAULT_CONFIG_RULES.items():
         if db.scalar(select(ConfigRule).where(ConfigRule.rule_key == key)) is None:
-            db.add(ConfigRule(rule_key=key, rule_value=value, remark="P2-MA default (O3/I2)"))
+            db.add(ConfigRule(rule_key=key, rule_value=value, remark=_CONFIG_RULE_REMARKS.get(key, "")))
             created += 1
     return created
 

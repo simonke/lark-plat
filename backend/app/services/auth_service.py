@@ -71,6 +71,22 @@ def _build_me(db: Session, user: User, role_ids: list[int]) -> dict:
         "permissions": permissions,
         "visible_group_ids": visible,
         "is_admin": bool(user.is_admin),
+        "auth_source": getattr(user, "auth_source", "local") or "local",
+    }
+
+
+def issue_tokens(db: Session, user: User) -> dict:
+    """Mint the contract JWT pair + UserBrief. Shared by local login and P2-3 SSO
+    so external and local logins return an identical payload shape (§3)."""
+    access = create_access_token(user.id)
+    refresh = create_refresh_token(user.id)
+    refresh_payload = decode_token(refresh)
+    store_refresh(user.id, refresh_payload["jti"])
+    return {
+        "access_token": access,
+        "refresh_token": refresh,
+        "token_type": "bearer",
+        "user": _build_user_brief(db, user, _role_ids(db, user.id)),
     }
 
 
@@ -84,20 +100,10 @@ def login(db: Session, username: str, password: str) -> dict:
         raise UnauthorizedError("invalid username or password")
     clear_login_failures(username)
 
-    access = create_access_token(user.id)
-    refresh = create_refresh_token(user.id)
-    refresh_payload = decode_token(refresh)
-    store_refresh(user.id, refresh_payload["jti"])
-
+    result = issue_tokens(db, user)
     user.last_login_at = datetime.now(timezone.utc)
     db.commit()
-
-    return {
-        "access_token": access,
-        "refresh_token": refresh,
-        "token_type": "bearer",
-        "user": _build_user_brief(db, user, _role_ids(db, user.id)),
-    }
+    return result
 
 
 def logout(db: Session, access_token: str) -> None:

@@ -130,10 +130,18 @@
             allow-create
             default-first-option
             style="width: 100%"
-            placeholder="选择/输入角色码（不得含 admin）"
+            placeholder="选择/输入角色码（不预置 admin）"
           >
             <el-option v-for="r in roles" :key="r.code" :label="`${r.name} (${r.code})`" :value="r.code" />
           </el-select>
+          <el-alert
+            v-if="hasPrivilegedDefault"
+            class="role-warn"
+            type="warning"
+            :closable="false"
+            show-icon
+            title="默认角色含 admin/超管：将显式提交并留痕（审计），请确认符合最小权限原则"
+          />
         </el-form-item>
 
         <el-form-item label="状态">
@@ -204,6 +212,10 @@ const configBool = reactive({
   auto_provision: false,
   default_role_codes: [] as string[],
 })
+
+const hasPrivilegedDefault = computed(() =>
+  configBool.default_role_codes.some((code) => /admin|super/i.test(code)),
+)
 
 const form = reactive({
   name: '',
@@ -393,5 +405,8 @@ onMounted(async () => {
 .mask {
   color: var(--el-text-color-secondary);
   font-family: monospace;
+}
+.role-warn {
+  margin-top: 6px;
 }
 </style>

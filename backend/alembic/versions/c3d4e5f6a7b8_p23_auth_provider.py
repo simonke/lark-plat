@@ -51,7 +51,6 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("code"),
     )
-    op.create_index("ix_auth_provider_code", "auth_provider", ["code"])
 
     op.add_column(
         "sys_user",
@@ -68,5 +67,4 @@ def downgrade() -> None:
     op.drop_column("sys_user", "last_external_login_at")
     op.drop_column("sys_user", "external_id")
     op.drop_column("sys_user", "auth_source")
-    op.drop_index("ix_auth_provider_code", table_name="auth_provider")
     op.drop_table("auth_provider")

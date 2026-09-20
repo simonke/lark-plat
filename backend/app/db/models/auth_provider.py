@@ -21,8 +21,10 @@ class AuthProvider(Base, TimestampMixin):
     __tablename__ = "auth_provider"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    code: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    code: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     type: Mapped[str] = mapped_column(String(16), nullable=False)  # ldap/oauth2
-    config_enc: Mapped[str] = mapped_column(Text, nullable=False, default="")  # JSON, AES-GCM
-    enabled: Mapped[int] = mapped_column(Integer, default=1)
+    config_enc: Mapped[str] = mapped_column(
+        Text, nullable=False, default="", server_default=""
+    )  # JSON, AES-GCM
+    enabled: Mapped[int] = mapped_column(Integer, default=1, server_default="1")

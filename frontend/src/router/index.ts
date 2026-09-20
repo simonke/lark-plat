@@ -61,6 +61,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/exec/ExecTasksView.vue'),
       },
       {
+        path: 'transfer',
+        name: 'transfer',
+        component: () => import('../views/transfer/TransferView.vue'),
+      },
+      {
         path: 'schedules',
         name: 'schedules',
         component: () => import('../views/schedules/SchedulesView.vue'),
@@ -79,6 +84,26 @@ const routes: RouteRecordRaw[] = [
         path: 'operations/notifications',
         name: 'operations-notifications',
         component: () => import('../views/notify/NotifyView.vue'),
+      },
+      {
+        path: 'monitor/dashboard',
+        name: 'monitor-dashboard',
+        component: () => import('../views/monitoring/MonitoringDashboardView.vue'),
+      },
+      {
+        path: 'monitor/alerts',
+        name: 'monitor-alerts',
+        component: () => import('../views/monitoring/AlertsView.vue'),
+      },
+      {
+        path: 'monitor/rules',
+        name: 'monitor-rules',
+        component: () => import('../views/monitoring/AlertRulesView.vue'),
+      },
+      {
+        path: 'monitor/adapters',
+        name: 'monitor-adapters',
+        component: () => import('../views/monitoring/AdaptersView.vue'),
       },
     ],
   },

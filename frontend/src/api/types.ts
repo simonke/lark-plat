@@ -433,6 +433,150 @@ export interface WsTokenOut {
   token: string
 }
 
+// ---------------------------------------------------------------- transfer (P2-1, api-design-v3 §1 frozen)
+export type TransferMode = 'push' | 'pull'
+export type TransferTaskStatus = 'processing' | 'success' | 'partial' | 'failed' | 'canceled'
+export type TransferHostStatus =
+  | 'pending'
+  | 'pulling'
+  | 'transferring'
+  | 'verifying'
+  | 'success'
+  | 'failed'
+  | 'verify_failed'
+  | 'degraded'
+  | 'canceled'
+
+export interface TransferFileItem {
+  path: string
+  size: number
+  sha256: string
+}
+
+export interface TransferUploadResult {
+  package_id: number
+  items: TransferFileItem[]
+}
+
+export interface TransferPackageOut {
+  id: number
+  name: string
+  file_count: number
+  total_size: number
+  created_by: number | null
+  created_at: string
+}
+
+export interface TransferPackageDetail extends TransferPackageOut {
+  items: TransferFileItem[]
+}
+
+export interface TransferPackageQuery {
+  name?: string
+  start?: string
+  end?: string
+  page?: number
+  size?: number
+}
+
+export interface TransferTaskCreate {
+  mode: TransferMode
+  package_id?: number
+  source_host_id?: number
+  source_host_path?: string
+  target_path: string
+  host_ids: number[]
+  overwrite: 0 | 1
+  verify: 0 | 1
+  limit_mbps?: number
+}
+
+export interface TransferTaskCreated {
+  id: number
+  task_no: string
+  status: TransferTaskStatus
+  pending: number
+}
+
+export interface TransferTaskOut {
+  id: number
+  task_no: string
+  mode: TransferMode
+  package_id: number | null
+  source_host_id: number | null
+  source_host_path: string | null
+  target_path: string
+  host_ids: Record<string, unknown> | null
+  overwrite: 0 | 1
+  verify: 0 | 1
+  limit_mbps: number | null
+  status: TransferTaskStatus
+  created_by: number | null
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+}
+
+export interface TransferHostOut {
+  id: number
+  host_id: number
+  hostname: string
+  ip: string
+  channel: string
+  status: TransferHostStatus
+  current_offset: number
+  verify_sha256: string | null
+  error: string | null
+  started_at: string | null
+  finished_at: string | null
+}
+
+export interface TransferLogHostOut {
+  id: number
+  hostname: string
+}
+
+export interface TransferTaskMineOut extends TransferTaskOut {
+  hosts: TransferLogHostOut[]
+}
+
+export interface TransferTaskDetail extends TransferTaskOut {
+  hosts: TransferHostOut[]
+  stats: TransferStats
+}
+
+export interface TransferLogOut {
+  seq: number
+  level: string
+  content: string
+  created_at: string
+}
+
+export interface TransferLogPage {
+  list: TransferLogOut[]
+  next_seq: number
+}
+
+export interface TransferStats {
+  total: number
+  pending: number
+  transferring: number
+  verifying: number
+  verify_failed: number
+  success: number
+  failed: number
+}
+
+export interface TransferTaskQuery {
+  task_no?: string
+  mode?: TransferMode
+  status?: TransferTaskStatus
+  start?: string
+  end?: string
+  page?: number
+  size?: number
+}
+
 // ---------------------------------------------------------------- approval (stage 4 preview, types only)
 
 export interface ApproveIn {
@@ -738,6 +882,236 @@ export interface RecentApproval {
   title: string
   status: string
   created_at: string
+}
+
+// ---------------------------------------------------------------- monitoring (P2-MA v3.0)
+// 归一化事件模型 MonEvent 契约 (api-design v3.0 §P2-MA)
+export type MonEventKind = 'metric' | 'alert' | 'log' | 'apm'
+export type MonSource = 'agent' | 'prometheus' | 'elk' | 'skywalking' | 'alertmanager' | 'webhook'
+export type MonSeverity = 'critical' | 'warning' | 'info'
+
+export interface MonEntity {
+  entity_type: 'host' | 'app' | 'service'
+  entity_id: string
+  entity_name: string
+}
+
+export interface MonEvent {
+  source: MonSource
+  kind: MonEventKind
+  entity: MonEntity
+  ts: string
+  value: number | null
+  severity: MonSeverity | null
+  labels: Record<string, unknown>
+  raw: Record<string, unknown>
+  fingerprint: string
+}
+
+// /monitor/metrics 查询参数（后端 acceptance: entity_ids/group_id/metric_name/start/end/agg/page/size）
+export interface MonMetricQuery {
+  entity_ids?: string
+  group_id?: number
+  metric_name?: string
+  start?: string
+  end?: string
+  agg?: '5m' | '1h' | '1d'
+  page?: number
+  size?: number
+}
+
+// agg 命中时后端返回的分桶点
+// 契约 §2 冻结 ts/value；bucket/avg/max/min/count/entity_id 为附加键（add-only，
+// 架构师裁定 C：只加不改）。ts/value 暂标可选以兼容修复前后端旧形状。
+export interface MonMetricBucket {
+  ts?: string
+  value?: number
+  bucket?: string
+  avg?: number
+  max?: number
+  min?: number
+  count?: number
+  entity_id?: string
+}
+
+// 未分桶时后端返回的原始采样点
+export interface MonMetricSamplePoint {
+  ts: string
+  entity_id: string
+  value: number
+  source: MonSource
+}
+
+// GET /monitor/metrics 统一返回体：{agg, points, total?, page?, size?}
+export interface MonMetricResult {
+  agg: '5m' | '1h' | '1d' | null
+  points: (MonMetricBucket | MonMetricSamplePoint)[]
+  total?: number
+  page?: number
+  size?: number
+}
+
+// GET /monitor/metrics/current 返回 {list:[...]}
+export interface MonCurrentMetric {
+  entity_id: string
+  metric_name: string
+  value: number
+  ts: string | null
+}
+
+// /monitor/alerts 查询参数（后端支持 status/severity/rule_id + 分页）
+export interface MonAlertQuery {
+  status?: string
+  severity?: MonSeverity
+  rule_id?: number
+  entity_id?: string
+  start?: string
+  end?: string
+  page?: number
+  size?: number
+}
+
+// WS /ws/monitor 推送帧契约 (api-design-v3.md §2, S→C)
+export type MonAlertAction = 'fire' | 'acknowledge' | 'escalate' | 'resolve' | 'suppress'
+
+export interface MonAlertOut {
+  id: number
+  rule_id: number | null
+  rule_name: string | null
+  entity: MonEntity
+  source: MonSource
+  status: string
+  severity: MonSeverity
+  last_value: number | null
+  fired_at: string | null
+  resolved_at: string | null
+  action: MonAlertAction
+  ts: string | null
+}
+
+export interface MonMetricFrame {
+  host_id: string
+  metric_name: string
+  value: number
+  ts: string
+}
+
+export interface MonWsFrame<T = unknown> {
+  type: 'hello' | 'alert' | 'metric' | 'pong' | string
+  data: T
+}
+
+export interface MonSubscribeIn {
+  scope?: string
+  ids?: string[]
+}
+
+export interface MonHelloData {
+  subscribed: boolean
+  ids: string[]
+}
+
+export interface AlertRuleCreate {
+  name: string
+  description?: string
+  enabled?: number
+  event_source?: MonSource | null
+  event_kind: MonEventKind
+  metric_name?: string
+  condition_operator: '>' | '<' | '>=' | '<=' | '==' | '!='
+  condition_threshold: number
+  condition_duration_seconds?: number
+  scope_type?: string | null
+  scope_ids?: string[] | null
+  level?: string
+  cooldown_seconds?: number
+  converge_sec?: number
+  escalation_enabled?: number
+  escalation_after_seconds?: number
+  escalation_severity?: MonSeverity
+  escalate_levels?: string[] | null
+  notify_scene?: string
+  notify_channel_ids?: number[]
+}
+
+export interface AlertRuleUpdate {
+  name?: string
+  description?: string | null
+  enabled?: number | null
+  event_source?: MonSource | null
+  event_kind?: MonEventKind
+  metric_name?: string | null
+  condition_operator?: string
+  condition_threshold?: number
+  condition_duration_seconds?: number
+  scope_type?: string | null
+  scope_ids?: string[] | null
+  level?: string
+  cooldown_seconds?: number
+  converge_sec?: number
+  escalation_enabled?: number | null
+  escalation_after_seconds?: number
+  escalation_severity?: MonSeverity
+  escalate_levels?: string[] | null
+  notify_scene?: string
+  notify_channel_ids?: number[]
+}
+
+export interface AlertRuleOut {
+  id: number
+  name: string
+  description: string | null
+  enabled: number
+  event_source: MonSource | null
+  event_kind: MonEventKind
+  metric_name: string | null
+  condition_operator: string
+  condition_threshold: number
+  condition_duration_seconds: number
+  scope_type: string | null
+  scope_ids: string[] | null
+  level: string
+  cooldown_seconds: number
+  converge_sec: number
+  escalation_enabled: number
+  escalation_after_seconds: number
+  escalation_severity: MonSeverity
+  escalate_levels: string[] | null
+  notify_scene: string
+  notify_channel_ids: number[]
+  created_by: number | null
+  created_at: string
+  updated_at: string
+}
+
+export interface AlertRuleQuery {
+  enabled?: number
+  event_kind?: MonEventKind
+  page?: number
+  size?: number
+}
+
+// GET /monitor/adapters 列表项（后端 _adapter_out）
+export interface MonAdapterOut {
+  id: number
+  name: string
+  type: MonSource
+  endpoint: string | null
+  config_mask: Record<string, unknown>
+  enabled: number
+  status: string
+  last_heartbeat: string | null
+  metrics_received_count: number
+  error_msg: string | null
+  created_by: number | null
+  created_at: string | null
+}
+
+// POST /monitor/adapters/{id}/test 返回体（后端 test_adapter）
+export interface AdapterTestResult {
+  ok: boolean
+  latency_ms: number | null
+  error_message: string | null
 }
 
 

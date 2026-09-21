@@ -55,8 +55,9 @@ head = `e8a1b2c3d4f5`（唯一）。
 
 > **code-required ≤ live `alembic_version` ≤ 允许上界 A**
 
-- `code-required` = 取「**已分类**（∈B∪C）的链上**最高允许（∈B）**版」。例如 master `6e8c353` 含 P2-3 代码 ⇒ `code-required = c3d4e5f6a7b8`。
-- 遇**链上未分类**版本 ⇒ 该项 **NOT RUN**（**绝不低配 PASS**）。
+- `code-required` = `max{ rev ∈ 链 ∩ **A** }`（**上界只取 A `LIVE_REV_ALLOWED`**）。例如 master `6e8c353` ⇒ `code-required = c3d4e5f6a7b8`。
+- ⚠️ **C 版本不得入上界**：`e8a1b2c3d4f5` 在 `c3d4e5f6a7b8` **之上**，若计入会抬高上界、令正确的 `live=c3d4e5f6a7b8` **误红**；C 只作**完备性分类**（评审 seq2372-二）。
+- **已分类性**单独校验（∈B∪C）：`∃ 链上版本 ∉ (B∪C) ⇒ NOT RUN`（**绝不低配 PASS**）。
 - **判据不是 `live == head`**：live 不应、也不允许迁到 `e8a1b2c3d4f5`。
 - 本次真实漂移 = 判定式右半失败：代码需 P2-3（`c3d4e5f6a7b8`），live 停在 P2-MA（`d4e5f6a7b8c9`）。
 

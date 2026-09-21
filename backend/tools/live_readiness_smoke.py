@@ -133,7 +133,7 @@ def _check_db_rev(repo: Path, dsn: str | None, code_required: str | None) -> tup
     if unclassified:
         return NOT_RUN, f"unclassified chain rev(s): {unclassified} (never PASS)"
     required = code_required or next(
-        (rev for rev in reversed(order) if rev in LIVE_REV_ALLOWED), None)
+        (rev for rev in reversed(order) if rev in MIGRATION_LIVE_APPLICABLE), None)
     if not required:
         return NOT_RUN, "code-required undetermined; pass --code-required (never PASS)"
     if live in MIGRATION_LIVE_FORBIDDEN:
@@ -165,8 +165,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dsn", default=None)
     parser.add_argument("--code-required", default=None,
                         help="revision the served code requires on the shared DB; "
-                             "defaults to the highest allow-list rev present in the "
-                             "repo migration chain (never silently PASS)")
+                             "defaults to the highest live-applicable (B) rev present "
+                             "in the repo migration chain (never silently PASS)")
     args = parser.parse_args(argv)
 
     repo = _repo_root(args.repo)

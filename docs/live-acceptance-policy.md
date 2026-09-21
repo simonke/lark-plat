@@ -27,6 +27,9 @@ owner＝**当批 live 执行席**（不得由离线测试席兼任）。闸门�
 - 权威清单＝`docs/migration-shared-db-allowlist.md`；允许集＝`{d4e5f6a7b8c9, c3d4e5f6a7b8}`；
   **`e8a1b2c3d4f5` 明令不落共享库**。
 - 判据＝「**code-required ≤ live ≤ 允许上界**」（按迁移链序），**非** `== head`。
+- **精确规则**：`code-required = max{ 链 ∩ B }`（B 自动同步、fail-closed）；`live` 合法性用 **A**；
+  **C 版本不得入上界**（否则 `e8a1b2c3d4f5` 抬高上界使正确的 `live=c3d4e5f6a7b8` 误红——「已分类 ≠ 允许」）；
+  `∃ rev ∈ 链 : rev ∉ (B∪C) ⇒ NOT RUN`（绝不低配 PASS）。
 - **版本合法 ≠ 功能就绪**：`d4e5f6a7b8c9` 合法，但若 served 代码需 P2-3，则触库路由 500＝功能未就绪，
   仍须 BLOCKED。
 

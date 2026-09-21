@@ -38,3 +38,17 @@ live harness 必须区分：
 - **有响应且 ≥500** → **fail/error**。
 
 `tests/integration/stage1/conftest.py` 由本批修正（`_api_reachable` / `login` / `_skip_live`，owner：后端）。
+
+## 5. 反盲区六条（每批必守）
+
+1. **证据面矩阵**：先列面 `单元锁` / `in-process(TestClient)` / `契约(openapi)` / `live-served` /
+   `共享环境(DB/Redis/进程)`；每条验收必标所属面，触库批次至少一条落在 live-served 或共享环境。
+2. **fail-closed 门禁**：禁静默转 skip——transport error＝NOT RUN、有响应 ≥5xx＝fail；NOT RUN 不计通过。
+3. **环境-代码契约**：触库/迁移批次必查「code-required ≤ live `alembic_version` ≤ 允许上界」＋代表触库路由非 5xx。
+4. **防同质（common-mode）**：各席若验同一面＝0 冗余；至少一席走不同面，或显式声明「只验了 X、未验 Y」；
+   禁把各自同面全绿当组合绿。
+5. **非空判/负控制**：每个门禁须证明能变红（前置 SHA/真实漂移即 RED/BLOCKED）；未证明能红＝门禁不成立。
+6. **措辞纪律**：live 结论必附 PID/served HEAD/DB revision；未做 e2e/真机不得称「功能全绿」；
+   live 项显式「已验（附证据）/列 C」，禁隐式。
+
+配套：`docs/acceptance-checklist-template.md`（每批填写，含「本批未覆盖面」必填栏）。

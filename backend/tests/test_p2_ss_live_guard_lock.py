@@ -21,6 +21,14 @@ GUARD CONTRACT (frozen by architect seq2263):
   - `executor.ssh_fallback` default stays False; `check` subkey set unchanged
     (NOT a contract change).
 
+SEAM (architect seq2293/2295, ruling B): drive the two availability states by
+  patching the PUBLIC contract attribute `available` on the executor class
+  (`monkeypatch.setattr(type(obj), "available", True|False)`). The private name
+  `_load_paramiko` is NOT touched, and no `sys.modules` juggling is used (the
+  latter is environment-dependent: a re-import can fall back to disk in a
+  paramiko-present interpreter). A separate real-state baseline pins the
+  interpreter-agnostic invariant `available` <-> `reason` with no patch at all.
+
 DELIBERATE NON-PINS (avoid the head-pin style maintenance hazard):
   - The exact `detail` string is NOT asserted (only non-empty str) so wording
     may evolve without red-ing this lock.
@@ -31,13 +39,14 @@ DELIBERATE NON-PINS (avoid the head-pin style maintenance hazard):
 Evidence boundary (hard): offline pure fake, NO real SSH. Real SSH / `agent.exe`
 / `paramiko` on D: are deferred (list C) and must not be claimed here.
 
-Run from the backend checkout:
+Run from the backend checkout (canonical interpreter = backend .venv, absent):
     python -m pytest tests/test_p2_ss_live_guard_lock.py -p no:cacheprovider -q
 """
 
 from __future__ import annotations
 
 import importlib
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -71,9 +80,13 @@ def _executor_instance(mod):
     pytest.fail("P2-SS live-guard lock: SSH executor object not found")
 
 
-def _force_available(mod, monkeypatch, present: bool):
-    """Drive `available` deterministically by stubbing the lazy loader."""
-    monkeypatch.setattr(mod, "_load_paramiko", (lambda: object()) if present else (lambda: None))
+def _set_available(monkeypatch, obj, present: bool):
+    """Seam B: patch the PUBLIC `available` class attribute (no private name).
+
+    `reason` is derived from `self.available`, so patching the class attribute
+    deterministically drives BOTH states on any interpreter.
+    """
+    monkeypatch.setattr(type(obj), "available", present)
 
 
 def _mount_fake_host(asset, monkeypatch, connector: str):
@@ -87,12 +100,35 @@ def _mount_fake_host(asset, monkeypatch, connector: str):
     return host
 
 
+# ── G0: interpreter-agnostic real-state invariant (no patch, deterministic) ───
+
+def test_g0_real_state_invariant(record_property):
+    """No patch: the public `available` <-> `reason` invariant must hold on ANY
+    interpreter, so this is deterministic whether or not `paramiko` is present.
+
+    Evidence discipline (seq2260-6): the interpreter path and the OBSERVED
+    `available` value are recorded for traceability, but are NOT red/green
+    conditions. Canonical interpreter = backend .venv (paramiko absent).
+    """
+    mod = _ssh_module()
+    obj = _executor_instance(mod)
+    observed = obj.available
+    record_property("sys_executable", sys.executable)
+    record_property("observed_available", observed)
+    ctx = f"sys.executable={sys.executable} observed_available={observed!r}"
+    assert isinstance(observed, bool), ctx
+    if observed is False:
+        assert obj.reason == "paramiko not installed", ctx + f" reason={obj.reason!r}"
+    else:
+        assert obj.reason is None, ctx + f" reason={obj.reason!r}"
+
+
 # ── G1: available=False branch stays contract-compliant (regression guard) ────
 
 def test_g1_check_returns_keyset_when_absent(monkeypatch):
     mod = _ssh_module()
     obj = _executor_instance(mod)
-    _force_available(mod, monkeypatch, present=False)
+    _set_available(monkeypatch, obj, present=False)
     assert obj.available is False
     # absent-state reason literal is the seq2191 canonical freeze (pinned, not soft)
     assert obj.reason == "paramiko not installed", repr(obj.reason)
@@ -107,8 +143,8 @@ def test_g1_check_returns_keyset_when_absent(monkeypatch):
 def test_g2_check_never_raises_and_returns_keyset_when_available(monkeypatch):
     mod = _ssh_module()
     obj = _executor_instance(mod)
-    _force_available(mod, monkeypatch, present=True)
-    assert obj.available is True, "stub failed to drive available=True"
+    _set_available(monkeypatch, obj, present=True)
+    assert obj.available is True, "seam B failed to drive available=True"
 
     try:
         res = obj.check(SimpleNamespace(connector="ssh", id=1))
@@ -130,7 +166,7 @@ def test_g2_check_never_raises_and_returns_keyset_when_available(monkeypatch):
 def test_g2b_available_and_reason_contract_when_present(monkeypatch):
     mod = _ssh_module()
     obj = _executor_instance(mod)
-    _force_available(mod, monkeypatch, present=True)
+    _set_available(monkeypatch, obj, present=True)
     assert obj.available is True
     assert obj.reason is None
 

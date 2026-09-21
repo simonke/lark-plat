@@ -42,7 +42,10 @@ class SSHExecutor:
         if not self.available:
             return {"ok": False, "latency_ms": None,
                     "detail": f"ssh connector unavailable: {PARAMIKO_MISSING_REASON}"}
-        raise NotImplementedError("ssh connectivity check not implemented in skeleton")
+        # available but not implemented yet: degrade instead of raising, so a
+        # host health check can never 500 while real SSH is still pending.
+        return {"ok": False, "latency_ms": None,
+                "detail": "ssh check not implemented"}
 
     def exec(self, *args: Any, **kwargs: Any) -> Any:
         if not self.available:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -20,6 +21,8 @@ from app.repositories import (
 from app.schemas import asset as sch
 from app.services import executors as executor_registry
 from app.services.executors import CONNECTORS, CONNECTOR_AGENT, CONNECTOR_SSH
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------- groups
@@ -276,7 +279,12 @@ def connectivity_check(db: Session, user, host_id: int) -> dict:
     # pre-P2-SS heartbeat semantics (AgentExecutor.check reproduces it verbatim),
     # the ssh branch now goes through SSHExecutor instead of a hardcoded string.
     if host.connector == CONNECTOR_SSH:
-        result = executor_registry.build_executor(CONNECTOR_SSH).check(host)
+        try:
+            result = executor_registry.build_executor(CONNECTOR_SSH).check(host)
+        except Exception as exc:  # noqa: BLE001 - host health check must never 500
+            logger.warning("ssh connectivity check failed: %s", exc)
+            result = {"ok": False, "latency_ms": None,
+                      "detail": f"ssh check failed: {exc}"}
     elif host.connector == CONNECTOR_AGENT:
         result = executor_registry.build_executor(CONNECTOR_AGENT).check(host)
     else:

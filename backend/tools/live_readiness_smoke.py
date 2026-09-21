@@ -116,15 +116,20 @@ def _check_db_rev(repo: Path, dsn: str | None, code_required: str | None) -> tup
     if not row:
         return BLOCKED, "alembic_version empty"
     live = row[0]
+    order = _migration_order(repo / "backend" / "alembic" / "versions")
+    required = code_required or next(
+        (rev for rev in reversed(order) if rev in ALLOWED_LIVE_REVS), None)
+    if not required:
+        return NOT_RUN, "code-required undetermined; pass --code-required (never PASS)"
     if live in FORBIDDEN_REVS:
         return BLOCKED, f"live rev {live} is forbidden on the shared DB"
     if live not in ALLOWED_LIVE_REVS:
         return BLOCKED, f"live rev {live} not in allow-list {sorted(ALLOWED_LIVE_REVS)}"
-    if code_required:
-        order = _migration_order(repo / "backend" / "alembic" / "versions")
-        if code_required in order and live in order and order.index(live) < order.index(code_required):
-            return BLOCKED, f"code requires {code_required} but live is {live}"
-    return PASS, f"live rev {live} (allow-list ok)"
+    if required not in order or live not in order:
+        return NOT_RUN, f"rev not on repo chain (live={live}, required={required})"
+    if order.index(live) < order.index(required):
+        return BLOCKED, f"code requires {required} but live is {live}"
+    return PASS, f"live rev {live} >= code-required {required} (allow-list ok)"
 
 
 def _check_db_touch(api_base: str) -> tuple[str, str]:
@@ -144,7 +149,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", default=None)
     parser.add_argument("--dsn", default=None)
     parser.add_argument("--code-required", default=None,
-                        help="revision the served code requires on the shared DB")
+                        help="revision the served code requires on the shared DB; "
+                             "defaults to the highest allow-list rev present in the "
+                             "repo migration chain (never silently PASS)")
     args = parser.parse_args(argv)
 
     repo = _repo_root(args.repo)

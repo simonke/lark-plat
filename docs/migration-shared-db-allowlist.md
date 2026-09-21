@@ -18,7 +18,7 @@ head = `e8a1b2c3d4f5`（唯一）。
 
 | 集合 | 常量名 | 语义 | 值 |
 | --- | --- | --- | --- |
-| **A** | `LIVE_REV_ALLOWED` | live `alembic_version` **允许停留值**（`db_rev` 上界） | `{d4e5f6a7b8c9, c3d4e5f6a7b8}` |
+| **A** | `LIVE_REV_ALLOWED` | live `alembic_version` **允许停留值**（**live 合法性**判据） | `{d4e5f6a7b8c9, c3d4e5f6a7b8}` |
 | **B** | `MIGRATION_LIVE_APPLICABLE` | **可被应用**到共享库的迁移全集 | 11 版（全链除 `e8a1b2c3d4f5`） |
 | **C** | `MIGRATION_LIVE_FORBIDDEN` | **禁落**共享库的迁移 | `{e8a1b2c3d4f5}` |
 

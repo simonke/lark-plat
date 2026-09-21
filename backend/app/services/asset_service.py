@@ -282,9 +282,10 @@ def connectivity_check(db: Session, user, host_id: int) -> dict:
         try:
             result = executor_registry.build_executor(CONNECTOR_SSH).check(host)
         except Exception as exc:  # noqa: BLE001 - host health check must never 500
+            # keep the raw exception server-side only: the response must not
+            # echo it (frozen rule: zero credential/secret echo).
             logger.warning("ssh connectivity check failed: %s", exc)
-            result = {"ok": False, "latency_ms": None,
-                      "detail": f"ssh check failed: {exc}"}
+            result = {"ok": False, "latency_ms": None, "detail": "ssh check failed"}
     elif host.connector == CONNECTOR_AGENT:
         result = executor_registry.build_executor(CONNECTOR_AGENT).check(host)
     else:

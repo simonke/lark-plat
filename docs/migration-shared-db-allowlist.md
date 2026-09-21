@@ -53,10 +53,12 @@ head = `e8a1b2c3d4f5`（唯一）。
 
 对 served HEAD 的代码：
 
-> **code-required ≤ live `alembic_version` ≤ 允许上界 A**
+> **code-required ≤ live `alembic_version` ≤ 允许停留上界（live ∈ A）**
 
-- `code-required` = `max{ rev ∈ 链 ∩ **A** }`（**上界只取 A `LIVE_REV_ALLOWED`**）。例如 master `6e8c353` ⇒ `code-required = c3d4e5f6a7b8`。
-- ⚠️ **C 版本不得入上界**：`e8a1b2c3d4f5` 在 `c3d4e5f6a7b8` **之上**，若计入会抬高上界、令正确的 `live=c3d4e5f6a7b8` **误红**；C 只作**完备性分类**（评审 seq2372-二）。
+- `code-required` = `max{ rev ∈ 链 ∩ **B** }`（**上界取 B `MIGRATION_LIVE_APPLICABLE`，自动同步、fail-closed**；采纳需求 seq2373-二／评审 seq2375-二，架构落库 `1286aa8`）。例如 master `6e8c353` ⇒ `code-required = c3d4e5f6a7b8`。
+- **为何不用 A 作上界**：A 须**人工**随迁移扩张，漏扩即**静默低配 PASS**（评审合成链实证：在两版间插入 live-applicable `X` 而 A 未扩 ⇒ A-规则 PASS、B-规则正确 BLOCKED）。B 因「新增迁移须同批归类」而自动同步，消除该人漏点。
+- **live 合法性**仍用 A：`live ∈ A`（A 是**可停留**值子集）。由 `A ⊆ B` ⇒ `required ∉ A ⇒ ∀ live ∈ A 均早于 required ⇒ 必 BLOCKED`（绝不 PASS）。
+- ⚠️ **C 版本不得入上界**：`e8a1b2c3d4f5` 在 `c3d4e5f6a7b8` **之上**，若计入会抬高上界、令正确的 `live=c3d4e5f6a7b8` **误红**；C 只作**完备性分类**（评审 seq2372-二）。**B-based 下该警示依然成立、予以保留**。
 - **已分类性**单独校验（∈B∪C）：`∃ 链上版本 ∉ (B∪C) ⇒ NOT RUN`（**绝不低配 PASS**）。
 - **判据不是 `live == head`**：live 不应、也不允许迁到 `e8a1b2c3d4f5`。
 - 本次真实漂移 = 判定式右半失败：代码需 P2-3（`c3d4e5f6a7b8`），live 停在 P2-MA（`d4e5f6a7b8c9`）。
@@ -80,5 +82,5 @@ head = `e8a1b2c3d4f5`（唯一）。
 
 ## 来源
 
-- 后端 seq2338/2344/2346/2351/2369；架构 seq2328/2349/2371；需求 seq2326/2337/2339/2352/2370；单元 seq2345/2347/2350；评审 seq2340/2348/2367。
+- 后端 seq2338/2344/2346/2351/2369；架构 seq2328/2349/2371（`1286aa8` 落 (a) 上界=B）；需求 seq2326/2337/2339/2352/2370/2373/2375；单元 seq2345/2347/2350；评审 seq2340/2348/2367/2372/2375。
 - 迁移文件：`backend/alembic/versions/{c3d4e5f6a7b8_p23_auth_provider,d4e5f6a7b8c9_p2ma_mon_alert_last_event_at,e8a1b2c3d4f5_p2_closeout_mon_alert_dedup}.py`。

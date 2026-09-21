@@ -43,8 +43,9 @@ def _migration_order(versions_dir: Path) -> list[str]:
     revs: dict[str, str | None] = {}
     for path in versions_dir.glob("*.py"):
         text = path.read_text(encoding="utf-8")
-        rev = re.search(r'^revision\s*=\s*"([^"]+)"', text, re.M)
-        down = re.search(r'^down_revision\s*=\s*(?:"([^"]+)"|None)', text, re.M)
+        rev = re.search(r"^revision(?:\s*:\s*[^=\n]+)?\s*=\s*['\"]([^'\"]+)['\"]", text, re.M)
+        down = re.search(
+            r"^down_revision(?:\s*:\s*[^=\n]+)?\s*=\s*(?:['\"]([^'\"]+)['\"]|None)", text, re.M)
         if rev:
             revs[rev.group(1)] = down.group(1) if down and down.group(1) else None
     ordered: list[str] = []
@@ -105,7 +106,7 @@ def _check_db_rev(repo: Path, dsn: str | None, code_required: str | None) -> tup
     except Exception as exc:  # noqa: BLE001
         return NOT_RUN, f"psycopg2 unavailable: {exc}"
     try:
-        conn = psycopg2.connect(dsn)
+        conn = psycopg2.connect(re.sub(r"\+[a-z0-9_]+://", "://", dsn, count=1))
         cur = conn.cursor()
         cur.execute("SELECT version_num FROM alembic_version")
         row = cur.fetchone()

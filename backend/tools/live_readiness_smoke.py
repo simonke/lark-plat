@@ -7,9 +7,9 @@ Runs the three checks a live batch must pass before live evidence is accepted:
   2. db_rev     : live PostgreSQL alembic_version is inside the shared-DB
                   allow-list AND satisfies 'code-required <= live <= upper';
   3. db_touch   : one representative DB-touching route answers with a non-5xx
-                  status (transport failure is NOT RUN, HTTP >= 500 is FAIL).
+                  status (transport failure is NOT RUN, HTTP >= 500 is BLOCKED).
 
-Output lines are PASS / FAIL / NOT RUN. Exit code 0 only when nothing FAILs
+Output lines are PASS / BLOCKED / NOT RUN. Exit code 0 only when nothing is BLOCKED
 and nothing is NOT RUN for the required checks.
 
 The allow-list mirrors docs/migration-shared-db-allowlist.md and must stay in
@@ -30,7 +30,7 @@ ALLOWED_LIVE_REVS = {"d4e5f6a7b8c9", "c3d4e5f6a7b8"}
 FORBIDDEN_REVS = {"e8a1b2c3d4f5"}
 TOUCH_ROUTE = "/auth/providers"
 
-PASS, FAIL, NOT_RUN = "PASS", "FAIL", "NOT RUN"
+PASS, BLOCKED, NOT_RUN = "PASS", "BLOCKED", "NOT RUN"
 
 
 def _repo_root(arg: str | None) -> Path:
@@ -95,7 +95,7 @@ def _check_contract(api_base: str, repo: Path) -> tuple[str, str]:
     served = json.loads(docs.read_text(encoding="utf-8"))
     if live == served:
         return PASS, "live /openapi.json == repo docs/openapi.json"
-    return FAIL, "live /openapi.json differs from repo docs/openapi.json"
+    return BLOCKED, "live /openapi.json differs from repo docs/openapi.json"
 
 
 def _check_db_rev(repo: Path, dsn: str | None, code_required: str | None) -> tuple[str, str]:
@@ -114,16 +114,16 @@ def _check_db_rev(repo: Path, dsn: str | None, code_required: str | None) -> tup
     except Exception as exc:  # noqa: BLE001
         return NOT_RUN, f"db query failed: {exc}"
     if not row:
-        return FAIL, "alembic_version empty"
+        return BLOCKED, "alembic_version empty"
     live = row[0]
     if live in FORBIDDEN_REVS:
-        return FAIL, f"live rev {live} is forbidden on the shared DB"
+        return BLOCKED, f"live rev {live} is forbidden on the shared DB"
     if live not in ALLOWED_LIVE_REVS:
-        return FAIL, f"live rev {live} not in allow-list {sorted(ALLOWED_LIVE_REVS)}"
+        return BLOCKED, f"live rev {live} not in allow-list {sorted(ALLOWED_LIVE_REVS)}"
     if code_required:
         order = _migration_order(repo / "backend" / "alembic" / "versions")
         if code_required in order and live in order and order.index(live) < order.index(code_required):
-            return FAIL, f"code requires {code_required} but live is {live}"
+            return BLOCKED, f"code requires {code_required} but live is {live}"
     return PASS, f"live rev {live} (allow-list ok)"
 
 
@@ -133,7 +133,7 @@ def _check_db_touch(api_base: str) -> tuple[str, str]:
     except Exception as exc:  # noqa: BLE001
         return NOT_RUN, f"transport error: {exc}"
     if status >= 500:
-        return FAIL, f"GET {TOUCH_ROUTE} -> HTTP {status}"
+        return BLOCKED, f"GET {TOUCH_ROUTE} -> HTTP {status}"
     return PASS, f"GET {TOUCH_ROUTE} -> HTTP {status} (non-5xx)"
 
 
@@ -158,10 +158,10 @@ def main(argv: list[str] | None = None) -> int:
     for name, (verdict, detail) in results.items():
         print(f"{name:9s} {verdict:8s} {detail}")
 
-    failed = [n for n, (v, _) in results.items() if v == FAIL]
+    blocked = [n for n, (v, _) in results.items() if v == BLOCKED]
     not_run = [n for n, (v, _) in results.items() if v == NOT_RUN]
-    if failed:
-        print(f"RESULT: FAIL ({', '.join(failed)})")
+    if blocked:
+        print(f"RESULT: BLOCKED ({', '.join(blocked)})")
         return 1
     if not_run:
         print(f"RESULT: NOT RUN ({', '.join(not_run)})")

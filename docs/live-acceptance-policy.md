@@ -20,7 +20,7 @@ owner＝**当批 live 执行席**（不得由离线测试席兼任）。闸门�
 2. **db_rev**：`SELECT version_num FROM alembic_version` ∈ 允许集 **且** `code-required ≤ live ≤ 允许上界`；
 3. **db_touch**：代表触库路由（`/auth/providers`）**非 5xx**。
 
-任一 FAIL ⇒ 该批 live 项 **BLOCKED**，不得静默。
+任一 **BLOCKED** ⇒ 该批 live 项即 BLOCKED，不得静默。
 
 ## 3. live 版本判据（非 `== head`）
 

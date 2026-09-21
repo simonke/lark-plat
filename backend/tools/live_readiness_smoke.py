@@ -13,7 +13,8 @@ Output lines are PASS / BLOCKED / NOT RUN. Exit code 0 only when nothing is BLOC
 and nothing is NOT RUN for the required checks.
 
 The allow-list mirrors docs/migration-shared-db-allowlist.md and must stay in
-sync with the static lock (ALLOWED_LIVE_REVS).
+sync with the static lock and docs/migration-shared-db-allowlist.md
+(A = LIVE_REV_ALLOWED, B = MIGRATION_LIVE_APPLICABLE, C = MIGRATION_LIVE_FORBIDDEN).
 """
 from __future__ import annotations
 
@@ -26,8 +27,16 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-ALLOWED_LIVE_REVS = {"d4e5f6a7b8c9", "c3d4e5f6a7b8"}
-FORBIDDEN_REVS = {"e8a1b2c3d4f5"}
+# A: live alembic_version values the shared DB is allowed to stay at (upper bound).
+LIVE_REV_ALLOWED = {"d4e5f6a7b8c9", "c3d4e5f6a7b8"}
+# B: migrations allowed to be applied to the shared DB (chain up to the upper bound).
+MIGRATION_LIVE_APPLICABLE = {
+    "e70f471cb518", "a1c7e9d24b60", "c4f7a1d20e91", "a7b3c5d9f2e1",
+    "d1e2f3a4b5c6", "f5e010c0a100", "e6f7a8b9c0d1", "a1b2c3d4e5f6",
+    "b2c3d4e5f6a7", "d4e5f6a7b8c9", "c3d4e5f6a7b8",
+}
+# C: migrations forbidden on the shared DB (P2 close-out).
+MIGRATION_LIVE_FORBIDDEN = {"e8a1b2c3d4f5"}
 TOUCH_ROUTE = "/auth/providers"
 
 PASS, BLOCKED, NOT_RUN = "PASS", "BLOCKED", "NOT RUN"
@@ -117,14 +126,20 @@ def _check_db_rev(repo: Path, dsn: str | None, code_required: str | None) -> tup
         return BLOCKED, "alembic_version empty"
     live = row[0]
     order = _migration_order(repo / "backend" / "alembic" / "versions")
+    unclassified = [
+        rev for rev in order
+        if rev not in MIGRATION_LIVE_APPLICABLE and rev not in MIGRATION_LIVE_FORBIDDEN
+    ]
+    if unclassified:
+        return NOT_RUN, f"unclassified chain rev(s): {unclassified} (never PASS)"
     required = code_required or next(
-        (rev for rev in reversed(order) if rev in ALLOWED_LIVE_REVS), None)
+        (rev for rev in reversed(order) if rev in LIVE_REV_ALLOWED), None)
     if not required:
         return NOT_RUN, "code-required undetermined; pass --code-required (never PASS)"
-    if live in FORBIDDEN_REVS:
+    if live in MIGRATION_LIVE_FORBIDDEN:
         return BLOCKED, f"live rev {live} is forbidden on the shared DB"
-    if live not in ALLOWED_LIVE_REVS:
-        return BLOCKED, f"live rev {live} not in allow-list {sorted(ALLOWED_LIVE_REVS)}"
+    if live not in LIVE_REV_ALLOWED:
+        return BLOCKED, f"live rev {live} not in allow-list {sorted(LIVE_REV_ALLOWED)}"
     if required not in order or live not in order:
         return NOT_RUN, f"rev not on repo chain (live={live}, required={required})"
     if order.index(live) < order.index(required):

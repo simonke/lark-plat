@@ -286,6 +286,9 @@ def test_approval_gate_blocks_before_exec(exec_env, monkeypatch):
     em.expire_all()
     logs = em.query(ExecLog).filter_by(task_host_id=th_id).all()
     assert any(l.level == "warn" and "awaiting approval" in l.content for l in logs)
+    assert not any(
+        l.level == "info" and "[executor:" in (l.content or "") for l in logs
+    ), "a blocked task must not emit an executor run log (fail-closed, G1 seq2441)"
 
 
 def test_sensitivity_gate_blocks_before_exec(exec_env, monkeypatch):
@@ -310,6 +313,9 @@ def test_sensitivity_gate_blocks_before_exec(exec_env, monkeypatch):
     em.expire_all()
     logs = em.query(ExecLog).filter_by(task_host_id=th_id).all()
     assert any(l.level == "warn" and "sensitive operation" in l.content for l in logs)
+    assert not any(
+        l.level == "info" and "[executor:" in (l.content or "") for l in logs
+    ), "a blocked task must not emit an executor run log (fail-closed, G1 seq2441)"
 
 
 def test_agent_host_path_is_untouched(exec_env):

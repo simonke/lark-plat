@@ -26,12 +26,24 @@ import pytest
 _EXECUTORS_PATH = "/api/v1/assets/hosts/{id}/executors"
 _CONNECTOR_PATH = "/api/v1/assets/hosts/{id}/connector"
 
-_BACKEND = Path(
-    os.environ.get(
-        "LARK_BACKEND",
-        r"C:\Users\youth\.loop\agents\agt_dp9sj7cgogb0l2\lark-plat\backend",
-    )
-)
+def _resolve_backend() -> Path:
+    """Resolve the backend checkout hermetically.
+
+    Order: explicit ``LARK_BACKEND`` override -> walk up to the checkout that
+    owns ``app/main.py``. There is deliberately no machine-specific absolute
+    fallback: one made the openapi-count assertion read an unrelated checkout's
+    ``docs/openapi.json`` (non-hermetic; G2, seq2441).
+    """
+    env = os.environ.get("LARK_BACKEND")
+    if env:
+        return Path(env)
+    for cand in Path(__file__).resolve().parents:
+        if (cand / "app" / "main.py").is_file():
+            return cand
+    raise RuntimeError("LARK_BACKEND unset and no app/main.py found in parents")
+
+
+_BACKEND = _resolve_backend()
 _REPO_ROOT = _BACKEND.parent
 
 

@@ -403,6 +403,9 @@ def test_eq_a1b_gate_failure_skips_exec_but_logs(monkeypatch):
     res = orch.run_exec(None, task, th, "cmd", executor=FakeExec())
     assert order == [], "approval gate must run before sensitivity/exec; neither may fire"
     assert logs and logs[0][0] == "warn", f"skip must be recorded as a warn exec_log; got {logs}"
+    assert not any(
+        level == "info" and "[executor:" in content for level, content in logs
+    ), "a blocked task must not emit an executor run log (fail-closed, G1 seq2441)"
     assert res.get("skipped") is True
 
 

@@ -204,7 +204,7 @@ SSH/Windows 执行器对前端无新增接口（复用 exec/* 与 /terminals）�
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | /tickets | 分页：category/status/priority/requester_id/assignee_id/时间范围 |
+| GET | /tickets | 分页：`ticket_no`/category/status/priority/requester_id/assignee_id/时间范围 |
 | POST | /tickets | {title,category,priority,description,assignee_id?,host_ids?,due_at?} |
 | GET | /tickets/{id} | 详情（refs + comments + attachments） |
 | PUT | /tickets/{id} | 编辑（未受理前） |
@@ -217,7 +217,9 @@ SSH/Windows 执行器对前端无新增接口（复用 exec/* 与 /terminals）�
 | POST | /tickets/{id}/cancel | 取消 |
 | POST | /tickets/{id}/comments | {content} |
 | POST | /tickets/{id}/attachments | multipart files[] |
-| POST | /tickets/{id}/refs | {ref_type,ref_id} 关联执行/审批/资产/脚本/知识 |
+| POST | /tickets/{id}/refs | {ref_type,ref_id} 关联执行/审批/资产/计划/脚本/知识 |
+
+输出：`TicketOut`（create/detail/list 同值）含**只读** `ticket_no`（`TK-YYYYMMDD-NNN`，全局唯一、不可变；不入建单/编辑入参）。
 
 请求示例（建单）：
 ```json
@@ -225,7 +227,7 @@ SSH/Windows 执行器对前端无新增接口（复用 exec/* 与 /terminals）�
   "description": "P95 延迟升高，需排查", "assignee_id": 5, "host_ids": [3] }
 ```
 
-权限点：ticket:list/create/edit/assign/accept/process/done/close/reopen/cancel/comment/attachment（按状态机校验）
+权限点：ticket:list/create/edit/assign/accept/process/done/close/reopen/cancel/comment/attachment/ref（13 码，按状态机校验）
 
 ## 6. 知识库（P3-2）
 

@@ -17,8 +17,8 @@ Scope of THIS lock (name-stable surface only)
 P1  asset relation/topo 权限码 ∈ seed `PERMISSION_TREE`
     {asset:relation:list, asset:relation:add, asset:relation:del, asset:topo:view}
 A1  openapi: 4 new URL keys present with correct methods
-A2  openapi `paths` grows 129 -> >129 (monotonic; exact count re-pinned in
-    `test_contract_openapi.py` per tuple — OpenAPI `paths` is URL-keyed)
+A2  openapi `paths` == 133 (129 + 4 URL keys; URL-keyed, NOT operations)
+    (@后端 seq2814 / @reviewer seq2816 / @集成 seq2815 — §27.1 #4)
 M1  table `entity_relation` registered (same-table reuse; no `cmdb_ci_relation`)
 M2  core columns of `entity_relation`
 C1  UNIQUE(src_type, src_id, dst_type, dst_id, rel_type) — dedup directed edges
@@ -33,7 +33,9 @@ B1  POST /assets/relations is **idempotent** (repeat -> same response, HTTP 200,
 B2  topology `depth` > hard cap 3 => 422 (KB-depth convention)
 B3  GET /assets/cmdb/topology shape {nodes[], edges[], truncated}
 B4  GET /assets/cmdb/impact shape {root, affected[], count}
-B5  US-03: non-admin with no visible entities sees no topology nodes
+B5  US-03 read: non-admin with no visible entities sees no topology nodes
+B6  US-03 write: POST /assets/relations needs caller-visible src AND dst, else 403
+    (§27.1 #6, @reviewer seq2811 / @集成 seq2812 / @后端 seq2814)
 
 Run (from the backend checkout, backend venv):
     python -m pytest tests/test_p3_3_cmdb_relation_lock.py -p no:cacheprovider -o addopts= -q
@@ -130,11 +132,11 @@ def test_a1_p3_3_paths_present_with_methods():
     assert not problems, "P3-3 openapi surface incomplete: " + "; ".join(problems)
 
 
-def test_a2_paths_count_grows():
+def test_a2_paths_count_133():
     paths = _openapi_paths()
-    assert len(paths) > 129, (
-        f"P3-3 must add relation/topology/impact URL keys (129 -> >129); got {len(paths)}. "
-        "OpenAPI `paths` is URL-keyed; exact count re-pinned in test_contract_openapi.py."
+    assert len(paths) == 133, (
+        f"P3-3 adds 4 URL keys => paths must be 133 (129 + 4); got {len(paths)}. "
+        "OpenAPI `paths` is URL-keyed (GET+POST share one key); exact gate is 133."
     )
 
 
@@ -456,3 +458,14 @@ def test_b5_topology_respects_us03(p33_client):
         )
     else:
         assert r.status_code == 403, r.text
+
+
+def test_b6_us03_write_requires_src_and_dst_visible(p33_client):
+    client, set_user, h1, h2 = p33_client
+    set_user(["asset:relation:add"], admin=False)  # no visible entities
+    body = {"src_type": "host", "src_id": h1, "dst_type": "host", "dst_id": h2, "rel_type": "depends_on"}
+    r = client.post("/api/v1/assets/relations", json=body)
+    assert r.status_code == 403, (
+        f"US-03 write: POST /assets/relations must require caller-visible src AND dst (403); got {r.status_code}"
+    )
+    assert r.json().get("code") == 403

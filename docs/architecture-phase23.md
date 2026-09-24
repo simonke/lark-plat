@@ -1,6 +1,6 @@
 # lark-plat 自动化运维平台 — 二期/三期架构设计 v3.0
 
-版本: v3.1（草案，对齐需求 v1.2；2026-09-24 P3 立项补全：新增 CMDB 深化、编排/CI-CD 拆批 P3-3/4/5）  |  日期: 2026-09-08  |  作者: 架构师
+版本: v3.1（草案，对齐需求 v1.2；2026-09-24 P3 立项补全：新增 CMDB 深化、编排/CI-CD 拆批 P3-3/4/5）  |  日期: 2026-09-08／2026-09-24  |  作者: 架构师
 
 > 承接 v2.1 终态（权威根 4309005）。本文档为二/三期新增能力的架构设计，全部模块对一期 MVP 采用 **add-only 扩展**：不修改既有 434 基线行为、alembic 保持单 head、新能力经 feature flag 可切。接口契约增量见 `api-design-v3.md`。
 
@@ -222,7 +222,7 @@ IdP 回调 GET /auth/oauth/{provider}/callback?code&state → 校验 state
 ### 12.1 能力
 - **关系管理**：CI 间**有向关系** `src→dst` + 类型词表；CRUD、**幂等**（同 `(src,dst,rel_type)` 唯一，重复创建返回既有行）、**禁自环/重边**；US-03 数据权限一致、写操作记审计。
 - **拓扑**：给定 CI 展开**邻域**（上/下游）⇒ 节点 + 边；**深度**默认 2、**硬上限 3**（超限返回 **422**，对齐 KB 深度惯例；`config_rule cmdb.topo_max_depth` 仅可**下调**）；**环安全**（visited 集合，遇环不展开亦不报错）。
-- **影响分析**：给定 CI 求**下游可达集**（故障影响面，可选上游）⇒ 受影响 CI 集 + 计数；同为**环安全**遍历。
+- **影响分析**：给定 CI 求**下游可达集**（故障影响面，可选上游）⇒ 受影响 CI 集 + 计数；同为**环安全**遍历、**深度默认 2 / 硬上限 3**（超限 422）。
 - **手工维护**：不做自动发现。**非目标**：不改 `asset` 列语义、不做图库/大屏、不做自动发现/探活。
 
 ### 12.2 数据模型（新增表，add-only；与 §26 AIOps 拓扑**同表复用**）
@@ -241,17 +241,19 @@ IdP 回调 GET /auth/oauth/{provider}/callback?code&state → 校验 state
 ### 12.3 接口（REST；全部走一期 `Result` 信封 / 分页 / 权限依赖 / 审计）
 - `GET  /assets/relations`（`asset:relation:list`）：分页；筛选 `src_type/src_id/dst_type/dst_id/rel_type`。
 - `POST /assets/relations`（`asset:relation:add`）：**幂等**创建（重复 → 返回既有行，不 409）。
-- `DELETE /assets/relations/{id}`（`asset:relation:del`）。
+- `DELETE /assets/relations/{id}`（`asset:relation:del`）：**幂等**（删已不存在亦返 **204**）。
 - `GET  /assets/cmdb/topology`（`asset:topo:view`）：`entity_type,entity_id,direction∈{up,down,both},depth(默认 2 / 硬上限 3，超限 **422**),rel_types[]` ⇒ `{nodes[{type,id,label,role∈{root,up,down}}],edges[{src:{type,id},dst:{type,id},rel_type}],truncated}`。
-- `GET  /assets/cmdb/impact`（`asset:topo:view`）：`entity_type,entity_id,direction(默认 down),depth,rel_types[]` ⇒ `{root,affected[],count}`。
-- **数据权限（US-03）**：拓扑/影响结果按当前用户**可见实体集**裁剪（与 `HostRepository.visible_entity_ids` 同源），越权节点不返回。
+- `GET  /assets/cmdb/impact`（`asset:topo:view`）：`entity_type,entity_id,direction(默认 down),depth(默认 2 / 硬上限 3，超限 **422**),rel_types[]` ⇒ `{root,affected[],count}`。
+- **数据权限（US-03）**：拓扑/影响结果按当前用户**可见实体集**裁剪（与 `HostRepository.visible_entity_ids` 同源），越权节点不返回；**写路径** `POST/DELETE` 须校验调用者**同时可见 src 与 dst**，否则 **403**。
 
 ### 12.4 权限码 / flag / 迁移 / 边界
 - **权限码**（**复用 `asset:` 命名空间，不新开 `cmdb:`**）：`asset:relation:list` / `asset:relation:add` / `asset:relation:del` / `asset:topo:view`（新增 4 点）。
 - **feature flag**：`config_rule` 命名空间 **`feature.cmdb_topology`**（默认 False；与既有 `feature.*` 一致）。
 - **迁移**：新增 **1** 迁移（`entity_relation` + 约束/索引），`down_revision=e1f2a3b4c5d7`，**保持单 head**；`LIVE_REV_ALLOWED` 不变（本批不入 live-DB 白名单，验证于独立 PG/测试库）。
 - **前端**：`/assets/cmdb/topology` 拓扑页 + 关系维护（`v-perm` 复用），由前端随批接入。
-- **路径增量**：约 **+5**（4 × relation + 1 × topology；`/assets/cmdb/impact` 若独立再 +1），openapi 自动同步。
+- **路径增量**：**+5**（3 × relation list/add/del ＋ topology ＋ impact）；**`removed==[]`**，openapi 自动同步。
+- **审计（R4）**：关系 `add/del` **写 `sys_audit_log`**。
+- **悬空边（无 FK，多态引用）**：删主机/分组时**应用层级联清理**其关系；查询侧对缺失 id **防御性跳过**（不报错）。
 
 ### 12.5 与 §26 AIOps 的关系（避免双建）
 - §26 AIOps 只读「拓扑」= **复用本 §12 的 `entity_relation`**；AIOps 若需新增节点类型（`service`/`app`/`ops_event` 等）**扩展 `*_type` 枚举与 `rel_type` 词表**，不另建表。

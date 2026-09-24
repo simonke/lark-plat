@@ -31,7 +31,8 @@ T6  `app.db.models.ticket.TICKET_CATEGORIES` membership (req seq2608)
 T7  `app.db.models.ticket.TICKET_PRIORITIES` membership (req seq2608)
 B1  `app.services.kb_service.KB_CATEGORY_MAX_DEPTH` == 3
 P3.1 工单编号 (human business key; tuple v1 @架构 seq2739; branch `p3-1-ticket-no`):
-    N1 `ticket.ticket_no` NOT NULL + unique index `uq_ticket_ticket_no` (M2 追加)
+    N1 `ticket.ticket_no` NOT NULL + unique index `ix_ticket_ticket_no` (M2 追加;
+       @架构 seq2743② 统一名 = `ix_`, 同构 ExecTask/TransferTask.task_no)
     N2 `TicketOut` 暴露只读 `ticket_no`; `TicketCreate`/`TicketUpdate` **不含**
     N3 `GET /tickets` 增可选 `?ticket_no=` 过滤（路由不增 ⇒ paths 恒 129）
     N4 不可变：创建后编辑 `category` ⇒ `ticket_no` 不变（双层保险）
@@ -359,7 +360,7 @@ def test_b1_kb_category_max_depth():
 # ── N1–N5: P3.1 工单编号 ticket_no (tuple v1 @架构 seq2739) ───────────────────
 
 TICKET_NO_RE = re.compile(r"^TK-\d{8}-\d{3,}$")
-TICKET_NO_UNIQUE_NAME = "uq_ticket_ticket_no"
+TICKET_NO_UNIQUE_NAME = "ix_ticket_ticket_no"
 
 
 def test_n1_ticket_no_not_null_and_unique_index():

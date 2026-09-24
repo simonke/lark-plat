@@ -202,8 +202,11 @@ def _openapi_paths():
 def test_a1_paths_count_109_and_monitor_19():
     paths = _openapi_paths()
     monitor = [p for p in paths if "/monitor" in p]
-    assert len(paths) == 109, (
-        f"openapi paths must be 107->109 after P2-SS (2 new URL keys); got {len(paths)}")
+    # P2-SS added paths 107->109. Later batches (P3) add more, so assert the
+    # P2-SS floor holds rather than pinning the absolute global count (the
+    # per-batch locks assert their own exact value).
+    assert len(paths) >= 109, (
+        f"openapi paths must be >= 109 after P2-SS (2 new URL keys); got {len(paths)}")
     assert len(monitor) == 19, f"/monitor/* must stay 19; got {len(monitor)}"
 
 
@@ -289,14 +292,23 @@ def _revisions() -> list[tuple[str, str | None]]:
 def test_m1_single_head_unchanged_e8a1b2c3d4f5():
     revs = _revisions()
     _require(revs, "alembic revisions")
+    by_rev = dict(revs)
     downs = {d for _, d in revs if d}
     heads = {r for r, _ in revs if r not in downs}
     assert len(heads) == 1, f"alembic must have exactly one head; got {sorted(heads)}"
-    # P2-SS is explicitly schema-free (seq2185): the head must NOT move.
-    # If a later, separate batch legitimately appends a migration, relax this as
-    # test maintenance (assert 'e8a1b2c3d4f5 on the head chain' instead).
-    assert heads == {"e8a1b2c3d4f5"}, (
-        f"P2-SS adds no migration ⇒ head must remain e8a1b2c3d4f5; got {sorted(heads)}")
+    # P2-SS is explicitly schema-free (seq2185) so it did not move the head. A
+    # later, separate batch (P3 ticket/kb) legitimately appends a migration, so
+    # per the note below we assert the close-out revision stays ON the single
+    # head chain rather than pinning it as the only head.
+    head = next(iter(heads))
+    chain: set[str] = set()
+    cur: str | None = head
+    while cur and cur not in chain:
+        chain.add(cur)
+        cur = by_rev.get(cur)
+    assert "e8a1b2c3d4f5" in chain, (
+        f"P2 close-out e8a1b2c3d4f5 must stay on the single head chain; "
+        f"head={head!r}, chain={sorted(chain)}")
 
 
 # ── SS-5 (等价): B′ structural same-source + A behaviour (offline fakes) ─────

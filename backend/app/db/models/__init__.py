@@ -43,6 +43,24 @@ from app.db.models.monitor import (
     MonMetricSample,
     MonRule,
 )
+from app.db.models.ticket import (
+    TICKET_CATEGORIES,
+    TICKET_EDITABLE_STATUSES,
+    TICKET_PRIORITIES,
+    TICKET_REF_TYPES,
+    TICKET_STATUSES,
+    Ticket,
+    TicketAttachment,
+    TicketComment,
+    TicketRef,
+)
+from app.db.models.kb import (
+    KB_VISIBILITIES,
+    KbArticle,
+    KbArticleTag,
+    KbArticleVersion,
+    KbCategory,
+)
 
 __all__ = [
     "User",
@@ -99,4 +117,18 @@ __all__ = [
     "MON_EVENT_STATUSES",
     "MON_ADAPTER_STATUSES",
     "MON_NOTIFY_SCENES",
+    "Ticket",
+    "TicketComment",
+    "TicketAttachment",
+    "TicketRef",
+    "TICKET_STATUSES",
+    "TICKET_EDITABLE_STATUSES",
+    "TICKET_CATEGORIES",
+    "TICKET_PRIORITIES",
+    "TICKET_REF_TYPES",
+    "KbArticle",
+    "KbArticleVersion",
+    "KbCategory",
+    "KbArticleTag",
+    "KB_VISIBILITIES",
 ]

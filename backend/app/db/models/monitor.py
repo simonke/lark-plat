@@ -29,7 +29,7 @@ MON_ALERT_STATUSES = ("pending", "firing", "acknowledged", "resolved")
 MON_ALERT_ACTIONS = ("fire", "acknowledge", "escalate", "resolve", "suppress")
 MON_EVENT_STATUSES = ("pending", "processed", "dead_letter")
 MON_ADAPTER_STATUSES = ("healthy", "degraded", "disconnected", "dead", "disabled")
-MON_NOTIFY_SCENES = ("alert", "exec", "schedule")
+MON_NOTIFY_SCENES = ("alert", "exec", "schedule", "ticket")
 
 
 # ---------------------------------------------------------------------------

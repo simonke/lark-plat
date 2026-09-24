@@ -36,6 +36,8 @@ B4  GET /assets/cmdb/impact shape {root, affected[], count}
 B5  US-03 read: non-admin with no visible entities sees no topology nodes
 B6  US-03 write: POST /assets/relations needs caller-visible src AND dst, else 403
     (§27.1 #6, @reviewer seq2811 / @集成 seq2812 / @后端 seq2814)
+B7  DELETE /assets/relations/{id}: first delete 200 (Result), repeat/missing 404
+    (@架构 tuple v0.4 seq2817 #2 — platform convention, 204 dropped)
 
 Run (from the backend checkout, backend venv):
     python -m pytest tests/test_p3_3_cmdb_relation_lock.py -p no:cacheprovider -o addopts= -q
@@ -469,3 +471,26 @@ def test_b6_us03_write_requires_src_and_dst_visible(p33_client):
         f"US-03 write: POST /assets/relations must require caller-visible src AND dst (403); got {r.status_code}"
     )
     assert r.json().get("code") == 403
+
+
+def test_b7_delete_first_200_then_missing_404(p33_client):
+    client, set_user, h1, h2 = p33_client
+    set_user(["asset:relation:list", "asset:relation:add", "asset:relation:del"], admin=True)
+    body = {"src_type": "host", "src_id": h1, "dst_type": "host", "dst_id": h2, "rel_type": "depends_on"}
+    assert client.post("/api/v1/assets/relations", json=body).status_code == 200
+
+    lst = client.get("/api/v1/assets/relations")
+    assert lst.status_code == 200, lst.text
+    d = lst.json().get("data")
+    rows = d.get("list") if isinstance(d, dict) else d
+    assert rows, f"relation list must expose the created row; got {d!r}"
+    rid = rows[0]["id"]
+
+    d1 = client.delete(f"/api/v1/assets/relations/{rid}")
+    assert d1.status_code == 200, (
+        f"first DELETE must be 200 + Result envelope (NOT 204); got {d1.status_code}: {d1.text}"
+    )
+    d2 = client.delete(f"/api/v1/assets/relations/{rid}")
+    assert d2.status_code == 404, (
+        f"repeat/missing DELETE must be 404; got {d2.status_code}: {d2.text}"
+    )

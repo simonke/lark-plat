@@ -43,6 +43,9 @@ class Ticket(Base, TimestampMixin):
     __tablename__ = "ticket"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    # Human-readable business key, frozen at create time (P3.x). Mirrors ExecTask/TransferTask
+    # task_no: String(32) unique/not-null/index; generated race-free from seq_ticket_no.
+    ticket_no: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(256), nullable=False)
     category: Mapped[str] = mapped_column(String(16), default="incident", nullable=False)
     priority: Mapped[str] = mapped_column(String(16), default="medium", nullable=False)

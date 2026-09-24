@@ -35,9 +35,10 @@ MIGRATION_LIVE_APPLICABLE = {
     "d1e2f3a4b5c6", "f5e010c0a100", "e6f7a8b9c0d1", "a1b2c3d4e5f6",
     "b2c3d4e5f6a7", "d4e5f6a7b8c9", "c3d4e5f6a7b8",
 }
-# C: migrations forbidden on the shared DB (P2 close-out + P3 ticket/kb, which
-# descends from the close-out and therefore cannot be applied to shared live).
-MIGRATION_LIVE_FORBIDDEN = {"e8a1b2c3d4f5", "c9e3f1a2b4d6"}
+# C: migrations forbidden on the shared DB (P2 close-out + P3 ticket/kb + P3.x
+# ticket_no, which descend from the close-out and therefore cannot be applied
+# to shared live).
+MIGRATION_LIVE_FORBIDDEN = {"e8a1b2c3d4f5", "c9e3f1a2b4d6", "e1f2a3b4c5d7"}
 TOUCH_ROUTE = "/auth/providers"
 
 PASS, BLOCKED, NOT_RUN = "PASS", "BLOCKED", "NOT RUN"

@@ -221,12 +221,12 @@ IdP 回调 GET /auth/oauth/{provider}/callback?code&state → 校验 state
 
 ### 12.1 能力
 - **关系管理**：CI 间**有向关系** `src→dst` + 类型词表；CRUD、**幂等**（同 `(src,dst,rel_type)` 唯一，重复创建返回既有行）、**禁自环/重边**；US-03 数据权限一致、写操作记审计。
-- **拓扑**：给定 CI 展开**邻域**（上/下游）⇒ 节点 + 边；**深度上限**（默认 2、上限 5，`config_rule cmdb.topo_max_depth`）；**环安全**（visited 集合，遇环不展开亦不报错）。
+- **拓扑**：给定 CI 展开**邻域**（上/下游）⇒ 节点 + 边；**深度**默认 2、**硬上限 3**（超限返回 **422**，对齐 KB 深度惯例；`config_rule cmdb.topo_max_depth` 仅可**下调**）；**环安全**（visited 集合，遇环不展开亦不报错）。
 - **影响分析**：给定 CI 求**下游可达集**（故障影响面，可选上游）⇒ 受影响 CI 集 + 计数；同为**环安全**遍历。
 - **手工维护**：不做自动发现。**非目标**：不改 `asset` 列语义、不做图库/大屏、不做自动发现/探活。
 
 ### 12.2 数据模型（新增表，add-only；与 §26 AIOps 拓扑**同表复用**）
-- **`entity_relation`**（★ **P3-3 定义、为唯一关系真相源**；§26 AIOps 拓扑**复用本表，不双建**）：
+- **`entity_relation`**（★ **P3-3 定义、为唯一关系真相源**；§26 AIOps 拓扑**复用本表，不双建** ⇒ **「同表复用」= YES**：采纳 §26 提案之原名 `entity_relation`，**不另建 `cmdb_ci_relation`**）：
   - `id` BIGINT PK；
   - `src_type` VARCHAR(32)（CI 类型；初值枚举 `host` | `host_group`，**可扩展**）；`src_id` BIGINT；
   - `dst_type` VARCHAR(32)；`dst_id` BIGINT；
@@ -235,13 +235,14 @@ IdP 回调 GET /auth/oauth/{provider}/callback?code&state → 校验 state
   - `created_by` BIGINT NULL；`created_at`/`updated_at`（TimestampMixin）。
   - 约束：**UNIQUE(`src_type`,`src_id`,`dst_type`,`dst_id`,`rel_type`)**（重边去重）；**CHECK 禁自环**（`NOT(src_type=dst_type AND src_id=dst_id)`）。
   - 索引：`(src_type,src_id)`、`(dst_type,dst_id)`、`(rel_type)`。
+- **CI 抽象**：CI ＝ **(type,id) 二元组**，**不引入独立 CI 表**；`*_type` 初值 `host|host_group`（复用 `asset_host`/`asset_group`），端点校验 `type`∈枚举且 `id` 存在；未来扩节点类型仅扩枚举/词表。
 - **无独立拓扑/影响表**：拓扑/影响为**查询期计算**（递归 CTE），不物化，避免双真相源。
 
 ### 12.3 接口（REST；全部走一期 `Result` 信封 / 分页 / 权限依赖 / 审计）
 - `GET  /assets/relations`（`asset:relation:list`）：分页；筛选 `src_type/src_id/dst_type/dst_id/rel_type`。
 - `POST /assets/relations`（`asset:relation:add`）：**幂等**创建（重复 → 返回既有行，不 409）。
 - `DELETE /assets/relations/{id}`（`asset:relation:del`）。
-- `GET  /assets/cmdb/topology`（`asset:topo:view`）：`entity_type,entity_id,direction∈{up,down,both},depth(≤cmdb.topo_max_depth),rel_types[]` ⇒ `{nodes[{type,id,label}],edges[{src_type,src_id,dst_type,dst_id,rel_type}],truncated}`。
+- `GET  /assets/cmdb/topology`（`asset:topo:view`）：`entity_type,entity_id,direction∈{up,down,both},depth(默认 2 / 硬上限 3，超限 **422**),rel_types[]` ⇒ `{nodes[{type,id,label,role∈{root,up,down}}],edges[{src:{type,id},dst:{type,id},rel_type}],truncated}`。
 - `GET  /assets/cmdb/impact`（`asset:topo:view`）：`entity_type,entity_id,direction(默认 down),depth,rel_types[]` ⇒ `{root,affected[],count}`。
 - **数据权限（US-03）**：拓扑/影响结果按当前用户**可见实体集**裁剪（与 `HostRepository.visible_entity_ids` 同源），越权节点不返回。
 

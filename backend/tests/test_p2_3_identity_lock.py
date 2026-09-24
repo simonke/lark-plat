@@ -32,13 +32,13 @@ M1  migration revision `c3d4e5f6a7b8`.down_revision == `d4e5f6a7b8c9` and the
     moved to `e8a1b2c3d4f5` when the P2 收口批 item1 dedup migration appended
     after `c3d4e5f6a7b8`; the single-head invariant is preserved generically.]
 P1  permission point `system:auth:provider` registered in the seed PERMISSION_TREE.
-A1  openapi paths count == 107 (100 baseline + 7 UNIQUE URL keys covering the §3
+A1  openapi paths count >= 107 (100 baseline + 7 UNIQUE URL keys covering the §3
     nine operations: GET+POST /auth/providers share one key, PUT+DELETE
-    /auth/providers/{id} share one key), `/monitor/*` == 19, and all nine
-    provider/ldap/oauth operations exist with the correct method. (OpenAPI
-    `paths` is URL-keyed, so "100->109" is an operations count, not path keys;
-    flagged to 架构 seq2072 for ruling — if a separate admin path is required,
-    count becomes 108/109.)
+    /auth/providers/{id} share one key; later add-only batches only grow it — the
+    exact global count is asserted by each batch lock, P2-SS = 109), `/monitor/*`
+    == 19, and all nine provider/ldap/oauth operations exist with the correct
+    method. (OpenAPI `paths` is URL-keyed, so counts are URL keys, not operations;
+    flagged to 架构 seq2072/seq2191.)
 S1  AES-GCM helpers encrypt_secret/decrypt_secret round-trip (config_enc seam).
 C1  app.services.sso_service consumes the FROZEN v2.1 config keys —
     LDAP `bind_dn`(service account DN) + `password`(secret) + mandatory
@@ -282,9 +282,14 @@ def _has(paths, regex: str) -> bool:
 def test_a1_paths_count_107_and_monitor_19():
     paths = _openapi_paths()
     monitor = [p for p in paths if "/monitor" in p]
-    assert len(paths) == 107, (
-        "openapi paths must be 100->107 after P2-ID (7 unique URL keys for the §3 "
-        f"nine operations); got {len(paths)}")
+    # Monotonic (测试维护): P2-ID reached 107; later add-only batches grow the global
+    # count (P2-SS adds 2 -> 109). Do NOT pin the absolute global count here — the
+    # per-batch lock asserts its own exact value (P2-SS lock: == 109). This mirrors
+    # the migration head-agnostic lesson (never hard-pin a value a sibling add-only
+    # batch legitimately moves).
+    assert len(paths) >= 107, (
+        "openapi paths must not regress below the P2-ID surface (107); "
+        f"got {len(paths)}")
     assert len(monitor) == 19, f"/monitor/* must stay 19 (frozen P2-MA); got {len(monitor)}"
 
 

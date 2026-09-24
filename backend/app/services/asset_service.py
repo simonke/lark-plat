@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -11,8 +12,17 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 from app.core.security import decrypt_secret, encrypt_secret, mask_secret
 from app.db.models import AssetGroup, Host, HostCredential
-from app.repositories import CredentialRepository, GroupRepository, HostRepository
+from app.repositories import (
+    ConfigRuleRepository,
+    CredentialRepository,
+    GroupRepository,
+    HostRepository,
+)
 from app.schemas import asset as sch
+from app.services import executors as executor_registry
+from app.services.executors import CONNECTORS, CONNECTOR_AGENT, CONNECTOR_SSH
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------- groups
@@ -265,27 +275,72 @@ def connectivity_check(db: Session, user, host_id: int) -> dict:
         raise NotFoundError("host not found")
     if not _host_visible(user, host):
         raise ForbiddenError("no data permission for this host")
-    # MVP: agent heartbeat freshness decides connectivity; SSH fallback unsupported yet.
-    from datetime import datetime, timedelta, timezone
-
-    ok = False
-    detail = "no agent"
-    latency = 0
-    if host.connector == "agent" and host.last_heartbeat_at:
-        age = (datetime.now(timezone.utc) - host.last_heartbeat_at).total_seconds()
-        if age <= 90:
-            ok = True
-            detail = f"agent online, heartbeat {int(age)}s ago"
-        else:
-            detail = f"agent stale, last heartbeat {int(age)}s ago"
-    elif host.connector == "ssh":
-        detail = "ssh connector check not implemented in MVP (degraded mode)"
+    # P2-SS: the connector decides the executor; the agent branch keeps the exact
+    # pre-P2-SS heartbeat semantics (AgentExecutor.check reproduces it verbatim),
+    # the ssh branch now goes through SSHExecutor instead of a hardcoded string.
+    if host.connector == CONNECTOR_SSH:
+        try:
+            result = executor_registry.build_executor(CONNECTOR_SSH).check(host)
+        except Exception as exc:  # noqa: BLE001 - host health check must never 500
+            # keep the raw exception server-side only: the response must not
+            # echo it (frozen rule: zero credential/secret echo).
+            logger.warning("ssh connectivity check failed: %s", exc)
+            result = {"ok": False, "latency_ms": None, "detail": "ssh check failed"}
+    elif host.connector == CONNECTOR_AGENT:
+        result = executor_registry.build_executor(CONNECTOR_AGENT).check(host)
+    else:
+        result = {"ok": False, "latency_ms": 0, "detail": "no agent"}
+    ok, latency, detail = result["ok"], result["latency_ms"], result["detail"]
     if ok:
         host.status = "online"
     else:
         host.status = "offline"
     db.commit()
     return {"ok": ok, "latency_ms": latency, "detail": detail}
+
+
+# ------------------------------------------------------------ executor routing
+
+
+def _config_rule(db: Session, key: str, default: Any) -> Any:
+    rule = ConfigRuleRepository(db).by_key(key)
+    if rule is None:
+        return default
+    if isinstance(rule.rule_value, dict):
+        return rule.rule_value.get("value", default)
+    return default
+
+
+def ssh_fallback_enabled(db: Session) -> bool:
+    """P2-SS degraded routing switch: config_rule `executor.ssh_fallback` (default off)."""
+    return bool(_config_rule(db, "executor.ssh_fallback", False))
+
+
+def host_executors(db: Session, user, host_id: int) -> dict:
+    host = HostRepository(db).get(host_id)
+    if host is None:
+        raise NotFoundError("host not found")
+    if not _host_visible(user, host):
+        raise ForbiddenError("no data permission for this host")
+    active = executor_registry.resolve_executor(host.connector, ssh_fallback=ssh_fallback_enabled(db))
+    if active not in CONNECTORS:
+        active = CONNECTOR_AGENT
+    active_executor = executor_registry.build_executor(active)
+    return {
+        "available": executor_registry.available_executors(),
+        "active": active,
+        "reason": None if active_executor.available else active_executor.reason,
+    }
+
+
+def update_connector(db: Session, user, host_id: int, data: sch.ConnectorUpdate) -> None:
+    host = HostRepository(db).get(host_id)
+    if host is None:
+        raise NotFoundError("host not found")
+    if not _host_visible(user, host):
+        raise ForbiddenError("no data permission for this host")
+    host.connector = data.connector
+    db.commit()
 
 
 # ---------------------------------------------------------------- credentials

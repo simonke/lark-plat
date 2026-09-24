@@ -88,6 +88,21 @@ def connectivity(db: DbDep, user: UserDep, host_id: int):
     return Result.ok(asset_service.connectivity_check(db, user, host_id))
 
 
+# P2-SS: asset:host:executor reuses the asset:host:edit enforcement surface
+# (api-design-v3 §4), so the check stays on the existing permission code.
+@router.get("/hosts/{host_id}/executors", response_model=Result)
+def host_executors(db: DbDep, user: UserDep, host_id: int):
+    user.require_perm("asset:host:edit")
+    return Result.ok(asset_service.host_executors(db, user, host_id))
+
+
+@router.put("/hosts/{host_id}/connector", response_model=Result)
+def update_connector(db: DbDep, user: UserDep, host_id: int, data: sch.ConnectorUpdate):
+    user.require_perm("asset:host:edit")
+    asset_service.update_connector(db, user, host_id, data)
+    return Result.ok()
+
+
 @router.get("/groups/tree", response_model=Result)
 def group_tree(db: DbDep, user: UserDep):
     user.require_perm("asset:group:list")

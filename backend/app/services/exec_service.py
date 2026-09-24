@@ -25,6 +25,7 @@ from app.repositories import (
     ScriptVersionRepository,
 )
 from app import schemas
+from app.services.executors import resolve_executor
 from app.tasks.exec_tasks import exec_dispatch
 from app.ws.agent_ws import dispatch_to_agent_sync, task_has_inprocess_agent
 
@@ -67,6 +68,14 @@ def detect_sensitive(db: Session, command: str | None, script_content: str | Non
     if rules["threshold"] and host_count >= rules["threshold"]:
         reasons.append(f"batch size {host_count} >= threshold {rules['threshold']}")
     return (bool(reasons), "; ".join(reasons))
+
+
+def _executor_ssh_fallback(db: Session) -> bool:
+    """P2-SS degraded routing switch: config_rule `executor.ssh_fallback` (default off)."""
+    rule = ConfigRuleRepository(db).by_key("executor.ssh_fallback")
+    if rule is None or not isinstance(rule.rule_value, dict):
+        return False
+    return bool(rule.rule_value.get("value", False))
 
 
 def create_task(db: Session, user, data: schemas.ExecTaskCreate) -> dict:
@@ -129,11 +138,16 @@ def create_task(db: Session, user, data: schemas.ExecTaskCreate) -> dict:
 
     host_repo = HostRepository(db)
     task_host_repo = ExecTaskHostRepository(db)
+    # P2-SS: the executor is the connector unless the ssh_fallback routing switch
+    # is on and ssh is usable. Flag off (default) => value == host.connector,
+    # byte-identical to the pre-P2-SS behaviour; approval/sensitivity gates below
+    # are untouched.
+    ssh_fallback = _executor_ssh_fallback(db)
     for hid in data.target_host_ids:
         h = hosts[hid]
         task_host_repo.add(ExecTaskHost(
             exec_task_id=task.id, host_id=h.id, hostname=h.hostname, ip=h.ip,
-            executor=h.connector, status="pending",
+            executor=resolve_executor(h.connector, ssh_fallback=ssh_fallback), status="pending",
         ))
     db.flush()
 

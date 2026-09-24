@@ -86,9 +86,16 @@
           </el-select>
         </el-form-item>
         <el-form-item label="负责人">
-          <el-select v-model="form.assignee_id" clearable placeholder="可不指定" style="width: 100%">
+          <el-select
+            v-model="form.assignee_id"
+            clearable
+            :disabled="!canAssign"
+            :placeholder="canAssign ? '可不指定' : '无 ticket:assign 权限，不可指派'"
+            style="width: 100%"
+          >
             <el-option v-for="u in users" :key="u.id" :label="`${u.real_name || u.username} (#${u.id})`" :value="u.id" />
           </el-select>
+          <div v-if="!canAssign" class="hint">未持 <code>ticket:assign</code>：建单不可带负责人（后端强制双权限）。</div>
         </el-form-item>
         <el-form-item label="截止时间">
           <el-date-picker v-model="form.due_at" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" style="width: 100%" />
@@ -106,15 +113,18 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { listTickets, createTicket } from '../../api/ticket'
 import { listUsers } from '../../api/system'
+import { useAuthStore } from '../../stores/auth'
 import type { TicketOut, TicketQuery, TicketCreate, TicketCategory, TicketPriority, UserOut } from '../../api/types'
 import { extractError } from '../../api/http'
 
 const router = useRouter()
+const auth = useAuthStore()
+const canAssign = computed(() => auth.hasPerm('ticket:assign'))
 const loading = ref(false)
 const rows = ref<TicketOut[]>([])
 const total = ref(0)
@@ -271,5 +281,11 @@ onMounted(() => {
 .pager {
   margin-top: 12px;
   justify-content: flex-end;
+}
+.hint {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.4;
 }
 </style>

@@ -92,7 +92,13 @@
           </el-select>
         </el-form-item>
         <el-form-item label="负责人">
-          <el-select v-model="editForm.assignee_id" clearable style="width: 100%">
+          <el-select
+            v-model="editForm.assignee_id"
+            clearable
+            :disabled="!canAssign"
+            :placeholder="canAssign ? '' : '无 ticket:assign 权限'"
+            style="width: 100%"
+          >
             <el-option v-for="u in users" :key="u.id" :label="`${u.real_name || u.username} (#${u.id})`" :value="u.id" />
           </el-select>
         </el-form-item>
@@ -176,11 +182,14 @@ import {
   uploadTicketAttachments,
 } from '../../api/ticket'
 import { listUsers } from '../../api/system'
+import { useAuthStore } from '../../stores/auth'
 import type { TicketDetail, TicketUpdate, UserOut } from '../../api/types'
 import { extractError } from '../../api/http'
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
+const canAssign = computed(() => auth.hasPerm('ticket:assign'))
 const ticketId = Number(route.params.id)
 
 const loading = ref(false)

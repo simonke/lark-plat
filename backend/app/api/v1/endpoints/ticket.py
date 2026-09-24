@@ -25,6 +25,7 @@ def list_tickets(
     category: str | None = None,
     status: str | None = None,
     priority: str | None = None,
+    ticket_no: str | None = None,
     requester_id: int | None = None,
     assignee_id: int | None = None,
     start: str | None = None,
@@ -34,6 +35,7 @@ def list_tickets(
 ):
     filters = {
         "category": category, "status": status, "priority": priority,
+        "ticket_no": ticket_no,
         "requester_id": requester_id, "assignee_id": assignee_id,
         "start": start, "end": end,
     }

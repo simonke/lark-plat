@@ -51,9 +51,15 @@ describe('Ticket API (P3-1)', () => {
   it('lists tickets with query params', async () => {
     const page = { list: [{ id: 1, title: 't' }], total: 1, page: 1, size: 10 }
     vi.mocked(http.get).mockResolvedValue(ok(page))
-    const result = await listTickets({ status: 'create', category: 'incident', page: 1, size: 10 })
+    const result = await listTickets({
+      ticket_no: 'TK-20260924-001',
+      status: 'create',
+      category: 'incident',
+      page: 1,
+      size: 10,
+    })
     expect(http.get).toHaveBeenCalledWith('/tickets', {
-      params: { status: 'create', category: 'incident', page: 1, size: 10 },
+      params: { ticket_no: 'TK-20260924-001', status: 'create', category: 'incident', page: 1, size: 10 },
     })
     expect(result).toEqual(page)
   })
@@ -73,6 +79,23 @@ describe('Ticket API (P3-1)', () => {
     const result = await createTicket(payload)
     expect(http.post).toHaveBeenCalledWith('/tickets', payload)
     expect(result).toEqual(out)
+  })
+
+  it('carries the read-only ticket_no business key on create and list', async () => {
+    const out = { id: 2, ticket_no: 'TK-20260924-007', title: 't' }
+    vi.mocked(http.post).mockResolvedValue(ok(out))
+    const created = await createTicket({
+      title: 't',
+      category: 'incident' as const,
+      priority: 'high' as const,
+      description: '',
+    })
+    expect(created.ticket_no).toBe('TK-20260924-007')
+
+    const page = { list: [out], total: 1, page: 1, size: 10 }
+    vi.mocked(http.get).mockResolvedValue(ok(page))
+    const listed = await listTickets()
+    expect(listed.list[0].ticket_no).toBe('TK-20260924-007')
   })
 
   it('updates a ticket', async () => {

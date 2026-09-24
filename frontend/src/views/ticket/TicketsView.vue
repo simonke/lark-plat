@@ -9,6 +9,9 @@
       </template>
 
       <el-form inline :model="query" @submit.prevent="load">
+        <el-form-item label="编号">
+          <el-input v-model="query.ticket_no" placeholder="按编号过滤" clearable style="width: 150px" @keyup.enter="load" />
+        </el-form-item>
         <el-form-item label="分类">
           <el-select v-model="query.category" clearable placeholder="全部" style="width: 130px">
             <el-option v-for="c in categoryOptions" :key="c.value" :label="c.label" :value="c.value" />
@@ -32,6 +35,7 @@
 
       <el-table :data="rows" v-loading="loading" border @row-click="openDetail">
         <el-table-column prop="id" label="ID" width="70" />
+        <el-table-column prop="ticket_no" label="工单编号" min-width="150" show-overflow-tooltip />
         <el-table-column prop="title" label="标题" min-width="220" show-overflow-tooltip />
         <el-table-column label="分类" width="90">
           <template #default="{ row }">{{ categoryLabel(row.category) }}</template>
@@ -195,6 +199,7 @@ async function load() {
 }
 
 function resetQuery() {
+  query.ticket_no = undefined
   query.category = undefined
   query.status = undefined
   query.priority = undefined

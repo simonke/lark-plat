@@ -15,7 +15,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app import schemas
@@ -42,6 +42,20 @@ TICKET_TRANSITIONS = {
 }
 
 
+def _ticket_no(db: Session) -> str:
+    """Race-free human-readable ticket number (P3.x).
+
+    Mirrors ExecTask/TransferTask task_no (exec_service._task_no / transfer_service._task_no):
+    a PostgreSQL sequence makes nextval() atomic across concurrent creators, so two tickets
+    created at the same instant can never collide. The unique constraint is a backstop.
+    """
+    from datetime import date
+
+    prefix = date.today().strftime("%Y%m%d")
+    n = db.execute(text("SELECT nextval('seq_ticket_no')")).scalar()
+    return f"TK-{prefix}-{int(n):03d}"
+
+
 def _require_feature(db: Session) -> None:
     """feature.ticket gates behavior (not routes); default False => 400."""
     rule = ConfigRuleRepository(db).by_key("feature.ticket")
@@ -64,6 +78,7 @@ def _iso(value) -> str | None:
 def _out(ticket: Ticket) -> dict:
     return {
         "id": ticket.id,
+        "ticket_no": ticket.ticket_no,
         "title": ticket.title,
         "category": ticket.category,
         "priority": ticket.priority,
@@ -108,6 +123,7 @@ def create_ticket(db: Session, user, data: schemas.TicketCreate) -> dict:
         status = "assign"
 
     ticket = Ticket(
+        ticket_no=_ticket_no(db),
         title=data.title,
         category=data.category,
         priority=data.priority,
@@ -135,6 +151,8 @@ def list_tickets(db: Session, user, filters: dict, page: int, size: int) -> dict
     for key in ("category", "status", "priority"):
         if filters.get(key):
             conds.append(getattr(Ticket, key) == filters[key])
+    if filters.get("ticket_no"):
+        conds.append(Ticket.ticket_no == filters["ticket_no"])
     if filters.get("requester_id"):
         conds.append(Ticket.requester_id == filters["requester_id"])
     if filters.get("assignee_id"):

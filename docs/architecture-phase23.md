@@ -164,22 +164,22 @@ IdP 回调 GET /auth/oauth/{provider}/callback?code&state → 校验 state
 - 敏感操作从工单发起时仍走一期不可绕过审批（工单不提供绕过通道）。
 
 ### 7.2 数据模型
-- `ticket`：title, category, priority, status, requester_id, assignee_id, team_id(可选), description, sla_due_at, resolved_at/closed_at, created_at。
+- `ticket`：ticket_no(人读业务键，`TK-YYYYMMDD-NNN`，全局唯一、不可变、服务端生成), title, category, priority, status, requester_id, assignee_id, team_id(可选), description, sla_due_at, resolved_at/closed_at, created_at。
 - `ticket_comment`：ticket_id, author_id, content, at——append-only。
 - `ticket_attachment`：ticket_id, file_id(复用 file_package 存储), at。
-- `ticket_ref`：ticket_id, ref_type(exec_task|approval|asset_host|schedule|kb_article), ref_id。
+- `ticket_ref`：ticket_id, ref_type(exec_task|approval|asset_host|schedule|kb_article|script), ref_id。
 
 ## 8. 知识库（三期）
 
 ### 8.1 能力
 - 文章 CRUD + 分类/标签 + 版本历史（复刻 script 版本语义）+ 可见级（public/internal/classified，内附和 switch 到 RBAC 角色/主机组）。
 - 全文检索（Postgres FTS，中文分词扩展后续可选）；关联引用（文章↔脚本/资产/工单）。
-- 净化：指令类内容高亮与一键转执行（引用脚本时校验权限）。
+- 净化：指令类内容高亮与一键转执行（引用脚本时校验权限）。〔**deferred**：P3-2 未实现，留后续批〕
 
 ### 8.2 数据模型
-- `kb_article`：title, category_id, visibility, current_version, author_id, content(JSONB 或 text), created_at/updated_at。
-- `kb_article_version`：article_id, version, content, editor_id, at。
-- `kb_category` / `kb_article_tag`（tag 复用一期 tag 枚举思路）。
+- `kb_article`：title, category_id, visibility, current_version, author_id, summary(摘要), created_at/updated_at。
+- `kb_article_version`：article_id, version, content(Text，append-only，正文单一真相源), editor_id, at。
+- `kb_category` / `kb_article_tag`（tag 复用一期 tag 枚举思路）；分类树**深度≤3**（超限 422）、**禁回环/自环**。
 
 ## 9. CI/CD 集成 + 编排（三期，先立架构）
 
@@ -191,7 +191,7 @@ IdP 回调 GET /auth/oauth/{provider}/callback?code&state → 校验 state
 
 - **不破坏 234 基线**：全部新功能独立模块/新表/新路由；既有行为零改动；新增测试合计在新文件（锁定稿模式）。
 - **alembic 单 head**：二期/三期迁移按批次单链推进；`users` 仅在必要时加 nullable 列。
-- **feature flag**：`config_rule` 命名空间 `feature.transfer/monitor/sso/terminal_ssh` 控制开关，默认按批次上线。
+- **feature flag**：`config_rule` 命名空间 `feature.transfer/monitor/sso/terminal_ssh/ticket/kb` 控制开关（`feature.ticket`/`feature.kb` 门控**行为**、不门控路由，默认 False），默认按批次上线。
 - **分区继承**：metric/transfer_log 沿用 exec_log 按月分区模式（添加迁移+保留策略）。
 - **时序安全**：新增接口全部走一期 `Result` 信封/分页/权限依赖/审计中间件，无旁路。
 

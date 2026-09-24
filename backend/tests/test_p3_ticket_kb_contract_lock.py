@@ -1,4 +1,4 @@
-"""P3 (工单 P3-1 ＋ 知识库 P3-2) contract locks — @单元测试工程师 (lock-first).
+r"""P3 (工单 P3-1 ＋ 知识库 P3-2) contract locks — @单元测试工程师 (lock-first).
 
 Frozen contract: @架构 P3a tuple **v1.2 终稿** (v1.1 = seq2580 + paths 勘误 seq2581
 `109→129` + 残差 seq2586; v1.2 = seq2591/§25 seq2589 ⑥⑦⑧⑨ + seq2594 ⑩) ;
@@ -30,6 +30,14 @@ T5  `app.db.models.ticket.TICKET_EDITABLE_STATUSES` membership == {create,assign
 T6  `app.db.models.ticket.TICKET_CATEGORIES` membership (req seq2608)
 T7  `app.db.models.ticket.TICKET_PRIORITIES` membership (req seq2608)
 B1  `app.services.kb_service.KB_CATEGORY_MAX_DEPTH` == 3
+P3.1 工单编号 (human business key; tuple v1 @架构 seq2739; branch `p3-1-ticket-no`):
+    N1 `ticket.ticket_no` NOT NULL + unique index `ix_ticket_ticket_no` (M2 追加;
+       @架构 seq2743② 统一名 = `ix_`, 同构 ExecTask/TransferTask.task_no)
+    N2 `TicketOut` 暴露只读 `ticket_no`; `TicketCreate`/`TicketUpdate` **不含**
+    N3 `GET /tickets` 增可选 `?ticket_no=` 过滤（路由不增 ⇒ paths 恒 129）
+    N4 不可变：创建后编辑 `category` ⇒ `ticket_no` 不变（双层保险）
+    N5 生成器格式 `^TK-\d{8}-\d{3,}$`、全局单序列 `seq_ticket_no`
+       （生成器守卫见 `test_no_generation_guards.py`）
 (symbols pinned by @架构 seq2605 终裁: **enums live in `app/db/models/`**, not
  service — MON_*/EXEC_STATUSES/AUTH_PROVIDER_TYPES precedent; only the transition
  map lives in the service.)
@@ -48,6 +56,7 @@ Run (from the backend checkout, backend venv):
 from __future__ import annotations
 
 import importlib
+import re
 
 import pytest
 
@@ -189,7 +198,7 @@ P3_TABLES = {
     "kb_article_tag",
 }
 CORE_COLUMNS = {
-    "ticket": {"title", "category", "priority", "status", "requester_id", "assignee_id", "sla_due_at"},
+    "ticket": {"title", "category", "priority", "status", "requester_id", "assignee_id", "sla_due_at", "ticket_no"},
     "ticket_comment": {"ticket_id", "content"},
     "ticket_attachment": {"ticket_id", "file_id"},
     "ticket_ref": {"ticket_id", "ref_type", "ref_id"},
@@ -348,6 +357,68 @@ def test_b1_kb_category_max_depth():
     assert got == KB_CATEGORY_MAX_DEPTH, f"KB_CATEGORY_MAX_DEPTH must be {KB_CATEGORY_MAX_DEPTH}; got {got!r}"
 
 
+# ── N1–N5: P3.1 工单编号 ticket_no (tuple v1 @架构 seq2739) ───────────────────
+
+TICKET_NO_RE = re.compile(r"^TK-\d{8}-\d{3,}$")
+TICKET_NO_UNIQUE_NAME = "ix_ticket_ticket_no"
+
+
+def test_n1_ticket_no_not_null_and_unique_index():
+    tables = _tables()
+    t = tables.get("ticket")
+    if t is None:
+        pytest.fail("P3.1 lock: table 'ticket' missing")
+    col = t.columns.get("ticket_no")
+    if col is None:
+        pytest.fail("P3.1 lock: ticket.ticket_no missing (EXPECTED RED until P3.1 lands)")
+    assert col.nullable is False, "ticket_no must be NOT NULL"
+
+    found = []
+    for ix in t.indexes:
+        if ix.name == TICKET_NO_UNIQUE_NAME:
+            found.append(("index", bool(ix.unique), {c.name for c in ix.columns}))
+    for cst in t.constraints:
+        if getattr(cst, "name", None) == TICKET_NO_UNIQUE_NAME:
+            found.append(("constraint", True, {c.name for c in cst.columns}))
+    assert found, f"P3.1 lock: unique index/constraint {TICKET_NO_UNIQUE_NAME!r} missing on ticket"
+    kind, uniq, cols = found[0]
+    assert uniq and cols == {"ticket_no"}, (
+        f"{TICKET_NO_UNIQUE_NAME} must be UNIQUE over exactly {{ticket_no}}; "
+        f"got {kind} unique={uniq} cols={sorted(cols)}"
+    )
+
+
+def test_n2_ticket_no_readonly_not_in_create_or_update():
+    from app.schemas.ticket import TicketCreate, TicketOut, TicketUpdate  # noqa: PLC0415
+
+    assert "ticket_no" in TicketOut.model_fields, "TicketOut must expose read-only ticket_no"
+    assert "ticket_no" not in TicketCreate.model_fields, (
+        "ticket_no is server-generated; must NOT be client-settable via TicketCreate"
+    )
+    assert "ticket_no" not in TicketUpdate.model_fields, (
+        "ticket_no is immutable; must NOT appear in TicketUpdate"
+    )
+
+
+def test_n3_list_filter_exposes_ticket_no_param():
+    paths = _openapi_paths()
+    item = paths.get("/api/v1/tickets")
+    assert item is not None, "ticket list route missing"
+    params = item.get("get", {}).get("parameters", []) or []
+    names = {p.get("name") for p in params}
+    assert "ticket_no" in names, (
+        "GET /tickets must accept optional ?ticket_no= filter (mirror exec list_tasks); "
+        f"params seen: {sorted(n for n in names if n)}"
+    )
+
+
+def test_n3b_paths_unchanged_129():
+    paths = _openapi_paths()
+    assert len(paths) == 129, (
+        f"P3.1 adds no route (paths must stay 129); got {len(paths)}"
+    )
+
+
 # ── ⑥/⑨: route-level negative locks (in-process TestClient) ──────────────────
 #
 # Boots the *real* FastAPI app with three offline overrides (mirrors
@@ -487,3 +558,37 @@ def test_9_kb_category_below_max_depth_422(p3_route_client):
     resp = client.post("/api/v1/kb/categories", json={"name": "too-deep", "parent_id": depth3})
     assert resp.status_code == 422, resp.text
     assert resp.json().get("code") == 422
+
+
+def test_n4_ticket_no_immutable_on_category_edit(p3_route_client, monkeypatch):
+    """N4: after create, editing ``category`` must leave ``ticket_no`` unchanged.
+
+    The generator is monkeypatched (SQLite has no ``nextval``); this exercises the
+    service's read-only exposure + immutability, not the sequence itself.
+    """
+    client, set_user, _ = p3_route_client
+    from app.services import ticket_service  # noqa: PLC0415
+
+    if not hasattr(ticket_service, "_ticket_no"):
+        pytest.fail("P3.1 lock: ticket_service._ticket_no missing (EXPECTED RED until P3.1 lands)")
+    monkeypatch.setattr(ticket_service, "_ticket_no", lambda db: "TK-20260924-001")
+
+    set_user(["ticket:create", "ticket:edit"])
+    created = client.post(
+        "/api/v1/tickets",
+        json={"title": "immutable", "category": "incident", "priority": "low"},
+    )
+    assert created.status_code == 200, created.text
+    data = created.json()["data"]
+    assert data.get("ticket_no") == "TK-20260924-001", (
+        f"TicketOut must expose the generated ticket_no; got {data.get('ticket_no')!r}"
+    )
+    tid = data["id"]
+
+    edited = client.put(f"/api/v1/tickets/{tid}", json={"category": "other"})
+    assert edited.status_code == 200, edited.text
+    edata = edited.json()["data"]
+    assert edata.get("category") == "other", "edit must actually apply (guard must be meaningful)"
+    assert edata.get("ticket_no") == "TK-20260924-001", (
+        "editing category must NOT change ticket_no (immutable human key)"
+    )

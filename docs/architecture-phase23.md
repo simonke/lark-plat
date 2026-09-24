@@ -214,3 +214,44 @@ IdP 回调 GET /auth/oauth/{provider}/callback?code&state → 校验 state
 | P3-5 | CI/CD 集成（发布编排段，对接 GitLab CI/Jenkins） | P3-4 | 同上 |
 
 每批走既有流程：需求细化 → 本席设计定稿 → 开发 → 评审 → 单测 → 集成 live → 需求允收。
+
+## 12. CMDB 深化（三期 P3-3：资产关系 / 拓扑 / 影响分析）
+
+> 定位：**深化非新建**。一期 `asset_host`/`asset_group` 为「浅台账」（仅主机与分组），本批在其上加 **CI 关系**、**拓扑邻域**、**影响分析** 三层；不改一期列语义、不引入图库；新能力 flag 默认关。
+
+### 12.1 能力
+- **关系管理**：CI 间**有向关系** `src→dst` + 类型词表；CRUD、**幂等**（同 `(src,dst,rel_type)` 唯一，重复创建返回既有行）、**禁自环/重边**；US-03 数据权限一致、写操作记审计。
+- **拓扑**：给定 CI 展开**邻域**（上/下游）⇒ 节点 + 边；**深度上限**（默认 2、上限 5，`config_rule cmdb.topo_max_depth`）；**环安全**（visited 集合，遇环不展开亦不报错）。
+- **影响分析**：给定 CI 求**下游可达集**（故障影响面，可选上游）⇒ 受影响 CI 集 + 计数；同为**环安全**遍历。
+- **手工维护**：不做自动发现。**非目标**：不改 `asset` 列语义、不做图库/大屏、不做自动发现/探活。
+
+### 12.2 数据模型（新增表，add-only；与 §26 AIOps 拓扑**同表复用**）
+- **`entity_relation`**（★ **P3-3 定义、为唯一关系真相源**；§26 AIOps 拓扑**复用本表，不双建**）：
+  - `id` BIGINT PK；
+  - `src_type` VARCHAR(32)（CI 类型；初值枚举 `host` | `host_group`，**可扩展**）；`src_id` BIGINT；
+  - `dst_type` VARCHAR(32)；`dst_id` BIGINT；
+  - `rel_type` VARCHAR(32)（词表初值：`depends_on` | `runs_on` | `connects_to` | `member_of` | `hosts`）；
+  - `properties` JSONB NULL（weight/port 等可选，未来用）；`remark` VARCHAR(256)；
+  - `created_by` BIGINT NULL；`created_at`/`updated_at`（TimestampMixin）。
+  - 约束：**UNIQUE(`src_type`,`src_id`,`dst_type`,`dst_id`,`rel_type`)**（重边去重）；**CHECK 禁自环**（`NOT(src_type=dst_type AND src_id=dst_id)`）。
+  - 索引：`(src_type,src_id)`、`(dst_type,dst_id)`、`(rel_type)`。
+- **无独立拓扑/影响表**：拓扑/影响为**查询期计算**（递归 CTE），不物化，避免双真相源。
+
+### 12.3 接口（REST；全部走一期 `Result` 信封 / 分页 / 权限依赖 / 审计）
+- `GET  /assets/relations`（`asset:relation:list`）：分页；筛选 `src_type/src_id/dst_type/dst_id/rel_type`。
+- `POST /assets/relations`（`asset:relation:add`）：**幂等**创建（重复 → 返回既有行，不 409）。
+- `DELETE /assets/relations/{id}`（`asset:relation:del`）。
+- `GET  /assets/cmdb/topology`（`asset:topo:view`）：`entity_type,entity_id,direction∈{up,down,both},depth(≤cmdb.topo_max_depth),rel_types[]` ⇒ `{nodes[{type,id,label}],edges[{src_type,src_id,dst_type,dst_id,rel_type}],truncated}`。
+- `GET  /assets/cmdb/impact`（`asset:topo:view`）：`entity_type,entity_id,direction(默认 down),depth,rel_types[]` ⇒ `{root,affected[],count}`。
+- **数据权限（US-03）**：拓扑/影响结果按当前用户**可见实体集**裁剪（与 `HostRepository.visible_entity_ids` 同源），越权节点不返回。
+
+### 12.4 权限码 / flag / 迁移 / 边界
+- **权限码**（**复用 `asset:` 命名空间，不新开 `cmdb:`**）：`asset:relation:list` / `asset:relation:add` / `asset:relation:del` / `asset:topo:view`（新增 4 点）。
+- **feature flag**：`config_rule` 命名空间 **`feature.cmdb_topology`**（默认 False；与既有 `feature.*` 一致）。
+- **迁移**：新增 **1** 迁移（`entity_relation` + 约束/索引），`down_revision=e1f2a3b4c5d7`，**保持单 head**；`LIVE_REV_ALLOWED` 不变（本批不入 live-DB 白名单，验证于独立 PG/测试库）。
+- **前端**：`/assets/cmdb/topology` 拓扑页 + 关系维护（`v-perm` 复用），由前端随批接入。
+- **路径增量**：约 **+5**（4 × relation + 1 × topology；`/assets/cmdb/impact` 若独立再 +1），openapi 自动同步。
+
+### 12.5 与 §26 AIOps 的关系（避免双建）
+- §26 AIOps 只读「拓扑」= **复用本 §12 的 `entity_relation`**；AIOps 若需新增节点类型（`service`/`app`/`ops_event` 等）**扩展 `*_type` 枚举与 `rel_type` 词表**，不另建表。
+- AIOps 提案中架构列的 `entity_relation`(拓扑) **以本表为准**；AIOps 立项时**直接消费**。

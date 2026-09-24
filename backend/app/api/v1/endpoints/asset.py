@@ -11,7 +11,7 @@ from fastapi.responses import Response
 from app.api.deps import DbDep, UserDep
 from app.core.response import Result
 from app.schemas import asset as sch
-from app.services import asset_service
+from app.services import asset_service, cmdb_service
 
 router = APIRouter(prefix="/assets", tags=["assets"])
 
@@ -158,3 +158,72 @@ def delete_credential(db: DbDep, user: UserDep, cred_id: int):
 @router.get("/options", response_model=Result)
 def options(db: DbDep, user: UserDep):
     return Result.ok(asset_service.options(db, user))
+
+
+# ------------------------------------------------------------------ P3-3 CMDB
+
+
+@router.get("/relations", response_model=Result)
+def list_relations(
+    db: DbDep,
+    user: UserDep,
+    src_type: str | None = None,
+    src_id: int | None = None,
+    dst_type: str | None = None,
+    dst_id: int | None = None,
+    rel_type: str | None = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    size: Annotated[int, Query(ge=1, le=100)] = 20,
+):
+    user.require_perm("asset:relation:list")
+    return Result.ok(cmdb_service.list_relations(
+        db, user,
+        {"src_type": src_type, "src_id": src_id, "dst_type": dst_type,
+         "dst_id": dst_id, "rel_type": rel_type},
+        page, size,
+    ))
+
+
+@router.post("/relations", response_model=Result)
+def create_relation(db: DbDep, user: UserDep, data: sch.RelationCreate):
+    user.require_perm("asset:relation:add")
+    return Result.ok(cmdb_service.create_relation(db, user, data))
+
+
+@router.delete("/relations/{relation_id}", response_model=Result)
+def delete_relation(db: DbDep, user: UserDep, relation_id: int):
+    user.require_perm("asset:relation:del")
+    cmdb_service.delete_relation(db, user, relation_id)
+    return Result.ok()
+
+
+@router.get("/cmdb/topology", response_model=Result)
+def cmdb_topology(
+    db: DbDep,
+    user: UserDep,
+    entity_type: str,
+    entity_id: int,
+    direction: str = "both",
+    depth: int = 2,
+    rel_types: Annotated[list[str] | None, Query()] = None,
+):
+    user.require_perm("asset:topo:view")
+    return Result.ok(cmdb_service.topology(
+        db, user, entity_type, entity_id, direction, depth, rel_types
+    ))
+
+
+@router.get("/cmdb/impact", response_model=Result)
+def cmdb_impact(
+    db: DbDep,
+    user: UserDep,
+    entity_type: str,
+    entity_id: int,
+    direction: str = "down",
+    depth: int = 2,
+    rel_types: Annotated[list[str] | None, Query()] = None,
+):
+    user.require_perm("asset:topo:view")
+    return Result.ok(cmdb_service.impact(
+        db, user, entity_type, entity_id, direction, depth, rel_types
+    ))

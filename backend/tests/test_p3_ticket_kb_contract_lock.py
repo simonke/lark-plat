@@ -414,8 +414,12 @@ def test_n3_list_filter_exposes_ticket_no_param():
 
 def test_n3b_paths_unchanged_129():
     paths = _openapi_paths()
-    assert len(paths) == 129, (
-        f"P3.1 adds no route (paths must stay 129); got {len(paths)}"
+    # P3.1 itself adds no route: at the P3.1 release the exact count was 129.
+    # Later add-only batches (P3-3/P3-4/P3-5) legitimately raise the cumulative
+    # URL-key count, so the invariant is "keep the P3.1 baseline or grow
+    # add-only" (mirrors the P3 lock's `>= 129` form).
+    assert len(paths) >= 129, (
+        f"P3.1 baseline (129) must not shrink; got {len(paths)}"
     )
 
 

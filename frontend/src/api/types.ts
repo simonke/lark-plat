@@ -1156,4 +1156,219 @@ export interface AdapterTestResult {
   error_message: string | null
 }
 
+// ---------------------------------------------------------------- ticket (P3-1, api-design-v3 §5)
+// shapes @ backend/app/schemas/ticket.py (daab403)
+export type TicketCategory = 'incident' | 'change' | 'request' | 'other'
+export type TicketPriority = 'low' | 'medium' | 'high' | 'urgent'
+export type TicketStatus =
+  | 'create'
+  | 'assign'
+  | 'accept'
+  | 'processing'
+  | 'done'
+  | 'close'
+  | 'cancel'
+export type TicketRefType =
+  | 'exec_task'
+  | 'approval'
+  | 'asset_host'
+  | 'schedule'
+  | 'kb_article'
+  | 'script'
+
+export interface TicketCreate {
+  title: string
+  category?: TicketCategory
+  priority?: TicketPriority
+  description?: string
+  assignee_id?: number | null
+  host_ids?: number[] | null
+  due_at?: string | null
+}
+
+export interface TicketUpdate {
+  title?: string
+  category?: TicketCategory
+  priority?: TicketPriority
+  description?: string
+  assignee_id?: number | null
+  due_at?: string | null
+}
+
+export interface TicketOut {
+  id: number
+  title: string
+  category: string
+  priority: string
+  status: string
+  requester_id: number | null
+  assignee_id: number | null
+  team_id: number | null
+  description: string
+  sla_due_at: string | null
+  resolved_at: string | null
+  closed_at: string | null
+  version: number
+  created_at: string
+  updated_at?: string | null
+}
+
+export interface TicketRefOut {
+  id: number
+  ref_type: string
+  ref_id: number
+}
+
+export interface TicketCommentOut {
+  id: number
+  author_id: number | null
+  content: string
+  created_at: string | null
+}
+
+export interface TicketAttachmentOut {
+  id: number
+  file_id: number
+  filename: string
+  size: number
+  created_at: string | null
+}
+
+export interface TicketDetail extends TicketOut {
+  refs: TicketRefOut[]
+  comments: TicketCommentOut[]
+  attachments: TicketAttachmentOut[]
+}
+
+export interface TicketQuery {
+  category?: string
+  status?: string
+  priority?: string
+  requester_id?: number
+  assignee_id?: number
+  start?: string
+  end?: string
+  page?: number
+  size?: number
+}
+
+export interface TicketAssignIn {
+  assignee_id: number
+}
+
+export interface TicketDoneIn {
+  remark?: string
+  exec_task_id?: number | null
+}
+
+export interface TicketRefIn {
+  ref_type: string
+  ref_id: number
+}
+
+// ---------------------------------------------------------------- kb (P3-2, api-design-v3 §6)
+// shapes @ backend/app/schemas/kb.py (daab403)
+export type KbVisibility = 'public' | 'internal' | 'classified'
+
+export interface KbArticleCreate {
+  title: string
+  category_id?: number | null
+  visibility?: KbVisibility
+  content: string
+  summary?: string
+  tags?: string[] | null
+}
+
+export interface KbArticleUpdate {
+  title?: string
+  category_id?: number | null
+  visibility?: KbVisibility
+  content?: string
+  summary?: string
+  change_log?: string
+}
+
+export interface KbArticleOut {
+  id: number
+  title: string
+  category_id: number | null
+  visibility: string
+  current_version: number
+  author_id: number | null
+  summary: string
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface KbArticleDetail extends KbArticleOut {
+  content: string
+  tags: string[]
+}
+
+export interface KbArticleVersionOut {
+  id: number
+  version: number
+  title: string
+  change_log: string
+  editor_id: number | null
+  created_at: string | null
+}
+
+export interface KbVersionListOut {
+  article_id: number
+  current_version: number
+  list: KbArticleVersionOut[]
+}
+
+export interface KbVersionOut {
+  article_id: number
+  version: number
+  title: string
+  content: string
+  change_log: string
+  editor_id: number | null
+  created_at: string | null
+}
+
+export interface KbCategoryNode {
+  id: number
+  parent_id: number
+  name: string
+  sort: number
+  children: KbCategoryNode[]
+}
+
+export interface KbCategoryListOut {
+  tree: KbCategoryNode[]
+  total: number
+}
+
+export interface KbCategoryOut {
+  id: number
+  parent_id: number
+  name: string
+  sort: number
+}
+
+export interface KbCategoryCreate {
+  name: string
+  parent_id?: number | null
+  sort?: number
+}
+
+export interface KbCategoryUpdate {
+  name?: string
+  parent_id?: number | null
+  sort?: number
+}
+
+export interface KbArticleQuery {
+  keyword?: string
+  category_id?: number
+  tag?: string
+  visibility?: KbVisibility
+  page?: number
+  size?: number
+}
+
 

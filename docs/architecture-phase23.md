@@ -256,3 +256,59 @@ IdP 回调 GET /auth/oauth/{provider}/callback?code&state → 校验 state
 ### 12.5 与 §26 AIOps 的关系（避免双建）
 - §26 AIOps 只读「拓扑」= **复用本 §12 的 `entity_relation`**；AIOps 若需新增节点类型（`service`/`app`/`ops_event` 等）**扩展 `*_type` 枚举与 `rel_type` 词表**，不另建表。
 - AIOps 提案中架构列的 `entity_relation`(拓扑) **以本表为准**；AIOps 立项时**直接消费**。
+
+## 13. 编排 Playbook（三期 P3-4：DAG 工作流）
+
+> 承 §9：**复用一期 exec_task/审批/notify 原语**，在 Celery 之上做 DAG 调度器，**不引新框架**；flag 默认关。
+
+### 13.1 能力
+- **定义/版本**：Playbook ＝有向无环图（DAG），节点 `node_key`＋类型＋配置＋依赖；版本化（复刻 script/KB 语义：current_version 指针、append-only 版本、可回滚）。
+- **运行状态机**：`workflow_run`＝`pending→running→(succeeded|failed|cancelled)`，running 内节点可 `waiting`（候审批/回调/依赖）。
+- **调度**：节点入度满足才 ready；依赖表达 wait_for ＋ 分支（on_success/on_failure 边条件）；DAG 分支并行；**幂等/重入**（触发 Idempotency-Key、节点 attempt、断点续跑）。
+- **复用**：`node_type=exec_task` **创建并等待一期 exec_task**；`manual_approval` **复用审批状态机**；`wait/callback/sleep` 为编排原语。**不复制**执行/审批逻辑。
+- **控制**：取消传播（复用 exec stop）、超时收敛、失败按分支或整体 failed。
+- **非目标**：不做图库/大屏；不做新调度框架。
+
+### 13.2 数据模型（新增，add-only）
+- `workflow`：name(unique), description, current_version, enabled, created_by, ts。
+- `workflow_version`：workflow_id, version, **definition JSONB**（`nodes[{key,type∈{exec_task,manual_approval,wait,callback,sleep},config,depends_on[],on_success[],on_failure[]}]`）, editor_id, at（append-only）。
+- `workflow_run`：workflow_id, workflow_version, status(pending|running|succeeded|failed|cancelled), trigger_type(manual|ticket|schedule|alert|release), trigger_ref JSONB, context JSONB, started_at/finished_at, error, created_by, ts。
+- `workflow_node_run`：run_id, node_key, node_type, status(pending|running|succeeded|failed|skipped|waiting), **exec_task_id?**, **approval_id?**, attempt, output JSONB, error, started_at/finished_at。
+- 约束：`(run_id,node_key)` 唯一、`(workflow_id,version)` 唯一；留痕 `sys_audit_log` ＋节点 output。
+
+### 13.3 接口（REST + WS）
+- `GET/POST /workflows`、`GET/PUT/DELETE /workflows/{id}`（被运行引用 409）。
+- `POST/GET /workflows/{id}/versions`、`POST /workflows/{id}/rollback`。
+- `POST /workflows/{id}/run` ⇒ `{run_id}`（幂等 Idempotency-Key）。
+- `GET /workflow-runs`、`GET /workflow-runs/{id}`（**DAG 节点状态矩阵**）、`POST /workflow-runs/{id}/cancel|retry`。
+- WS `/ws/workflow-runs/{id}`：节点状态实时推送（复刻 exec WS 帧 seq 防乱序）。
+- 权限码：`workflow:list/add/edit/del/version/rollback/run/view/cancel`（9）；flag **`feature.workflow`**（默认 False）。
+- paths ≈ **+6**；迁移 **+1**（4 表，rev 链在 P3-3 `f2a3b4c5d6e7` 之后、单 head）。
+
+## 14. CI/CD 集成（三期 P3-5：发布编排段）
+
+> 定位：**不自造 CI 引擎**；平台只做「**发布编排段**」——消费流水线产物 → 触发/记录发布 → **灰度/回滚** → 审计；**建在 §13 workflow 之上**（release ＝ 一个 `workflow_run` 编排 ＋ provider 回调节点）。flag 默认关。
+
+### 14.1 能力
+- **Provider 对接**：`gitlab|jenkins|generic`，配置化接入（密钥密文）；出站触发/拉取产物走 provider API，**测试用 stub/mock**。
+- **入站事件**：`POST /cicd/webhooks/{provider}` 归一化「构建完成/产物就绪」事件（provider token 鉴权、**非 session**）；可触发 release 或 workflow。
+- **发布编排**：release 状态机 `pending→deploying→canary→succeeded`（异常 `failed→rolled_back`）；灰度＝分批放量＋健康检查（复用 exec_task 部署）；回滚＝回退上一版本。
+- **审计**：发布/灰度/回滚均记 `sys_audit_log`，关联 `workflow_run`/exec_task 证据。
+- **边界（非目标）**：**不含源码→构建→测试**（属 GitLab CI/Jenkins）。
+
+### 14.2 数据模型（新增，add-only）
+- `cicd_provider`：type(gitlab|jenkins|generic), name, endpoint, config_enc(JSON 串，密钥逐值密文), enabled, status, last_heartbeat, created_by, ts。
+- `release`：provider_id, app, version/artifact_ref, env(dev|test|prod), status, **workflow_run_id?**, target_host_ids JSONB, rolled_back_from?, created_by, ts。
+- 产物契约：`artifact_manifest`（version/app/env/artifact_ref/checksum），入站事件与 release 共用。
+
+### 14.3 接口（REST + inbound webhook）
+- `GET/POST /cicd/providers`、`PUT/DELETE /cicd/providers/{id}`、`POST /cicd/providers/{id}/test`。
+- `POST /cicd/webhooks/{provider}`（token 鉴权）。
+- `GET/POST /releases`、`GET /releases/{id}`（状态/证据链）、`POST /releases/{id}/canary|promote|rollback|cancel`。
+- 权限码：`cicd:provider:list/add/edit/del/test` ＋ `release:list/add/view/run/canary/promote/rollback/cancel`；flag **`feature.cicd`**（默认 False）。
+- paths ≈ **+8**；迁移 **+1**（链在 P3-4 rev 之后、单 head）。
+- 前端：`/cicd/providers`、`/releases`（列表/状态，不引图库）。
+
+### 14.4 与 §13 / 批次关系
+- release 编排**复用** §13 workflow（DAG/审批/exec_task 原语），**不重复造编排**；P3-5 只加 provider 接入＋发布语义＋灰度/回滚。
+- 批次序：**P3-3 冻结 → P3-4 → P3-5**；各批独立锚 ＋ live F ＋ 三源互证。

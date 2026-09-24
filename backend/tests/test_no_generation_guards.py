@@ -1,19 +1,23 @@
-"""B1 guard: task_no / approval_no must be race-free sequence-backed (P2).
+"""B1 guard: task_no / approval_no / ticket_no must be race-free sequence-backed.
 
 Architect ruling: display numbers derive at view layer and must not depend on
 the max(id)+1 window (collision-prone under concurrent creators). PostgreSQL
 sequences are atomic, so both generators read nextval() only. These tests pin:
   - rapid interleaved calls yield no duplicates (per generator and combined)
   - exec _task_no uses seq_exec_no, exec/approval _approval_no use seq_approval_no
-  - output format stays YYYYMMDD-<n> / AP-YYYYMMDD-<n> (<= 32 chars)
+  - ticket _ticket_no uses seq_ticket_no (P3.1 tuple v1 @架构 seq2739)
+  - output format stays YYYYMMDD-<n> / AP-YYYYMMDD-<n> / TK-YYYYMMDD-<n> (<= 32 chars)
 """
 
 from __future__ import annotations
 
+import re
 import threading
 from types import SimpleNamespace
 
-from app.services import approval_service, exec_service
+import pytest
+
+from app.services import approval_service, exec_service, ticket_service
 
 
 class _SeqDb:
@@ -84,3 +88,66 @@ def test_task_no_concurrent_readers_no_duplicate():
         t.join()
     assert len(results) == 3200
     assert len(set(results)) == 3200
+
+
+# ── P3.1 ticket_no (tuple v1 @架构 seq2739) ──────────────────────────────────
+
+TICKET_NO_RE = re.compile(r"^TK-\d{8}-\d{3,}$")
+
+
+class _RecordingDb:
+    """Records every statement; returns an incrementing scalar for nextval()."""
+
+    def __init__(self):
+        self.statements: list[str] = []
+        self._n = 0
+
+    def _bump(self):
+        self._n += 1
+        return self._n
+
+    def execute(self, stmt):
+        sql = str(stmt)
+        self.statements.append(sql)
+        n = self._bump() if "nextval" in sql.lower() else 0
+        return SimpleNamespace(scalar=lambda: n)
+
+    def scalar(self, stmt):
+        self.statements.append(str(stmt))
+        return 0
+
+
+def _ticket_no_gen():
+    fn = getattr(ticket_service, "_ticket_no", None)
+    if fn is None:
+        pytest.fail("EXPECTED RED until P3.1 lands: ticket_service._ticket_no missing")
+    return fn
+
+
+def test_ticket_no_sequence_backed_race_free():
+    gen = _ticket_no_gen()
+    db = _SeqDb({"seq_ticket_no": 0})
+    seen = {gen(db) for _ in range(1000)}
+    assert len(seen) == 1000
+
+
+def test_ticket_no_format_matches_tuple_v1():
+    gen = _ticket_no_gen()
+    db = _SeqDb({"seq_ticket_no": 0})
+    for _ in range(5):
+        no = gen(db)
+        assert len(no) <= 32, no
+        assert TICKET_NO_RE.match(no), no
+
+
+def test_ticket_no_generation_is_sequence_not_maxid():
+    gen = _ticket_no_gen()
+    db = _RecordingDb()
+    gen(db)
+    joined = " ".join(db.statements).lower()
+    assert "seq_ticket_no" in joined, (
+        f"ticket_no must read nextval('seq_ticket_no'); got {db.statements!r}"
+    )
+    assert "max(" not in joined, (
+        f"ticket_no must NOT use max()+1 (race-prone); got {db.statements!r}"
+    )

@@ -5,7 +5,7 @@
         <div class="toolbar">
           <div class="left">
             <el-button @click="goBack">返回</el-button>
-            <span class="title">工单 #{{ ticket?.id }}</span>
+            <span class="title">工单 {{ ticket?.ticket_no }}</span>
             <el-tag v-if="ticket" :type="statusTag(ticket.status)">{{ statusLabel(ticket.status) }}</el-tag>
           </div>
           <div class="actions" v-if="ticket">
@@ -23,12 +23,14 @@
 
       <template v-if="ticket">
         <el-descriptions :column="3" border>
+          <el-descriptions-item label="工单编号">{{ ticket.ticket_no }}</el-descriptions-item>
+          <el-descriptions-item label="ID">{{ ticket.id }}</el-descriptions-item>
+          <el-descriptions-item label="版本">v{{ ticket.version }}</el-descriptions-item>
           <el-descriptions-item label="标题" :span="3">{{ ticket.title }}</el-descriptions-item>
           <el-descriptions-item label="分类">{{ categoryLabel(ticket.category) }}</el-descriptions-item>
           <el-descriptions-item label="优先级">
             <el-tag :type="priorityTag(ticket.priority)" size="small">{{ priorityLabel(ticket.priority) }}</el-tag>
           </el-descriptions-item>
-          <el-descriptions-item label="版本">v{{ ticket.version }}</el-descriptions-item>
           <el-descriptions-item label="申请人">{{ ticket.requester_id ?? '-' }}</el-descriptions-item>
           <el-descriptions-item label="负责人">{{ ticket.assignee_id ?? '-' }}</el-descriptions-item>
           <el-descriptions-item label="截止时间">{{ formatTime(ticket.sla_due_at) }}</el-descriptions-item>

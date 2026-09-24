@@ -1197,6 +1197,7 @@ export interface TicketUpdate {
 
 export interface TicketOut {
   id: number
+  ticket_no: string
   title: string
   category: string
   priority: string
@@ -1241,6 +1242,7 @@ export interface TicketDetail extends TicketOut {
 }
 
 export interface TicketQuery {
+  ticket_no?: string
   category?: string
   status?: string
   priority?: string

@@ -112,11 +112,29 @@ def _api_reachable(client: httpx.Client) -> bool:
 
 def _skip_live() -> None:
     if not LIVE_ENABLED:
-        pytest.skip("live tests disabled — set LARK_PLAT_API_BASE to enable (gate-safe default)")
+        pytest.skip(
+            "live NOT RUN — LARK_PLAT_API_BASE unset (offline gate-safe default; "
+            "not run, therefore not a pass)"
+        )
     pytest.skip(
-        f"API unreachable at {API_BASE} — live tests skipped; "
-        "set LARK_PLAT_API_BASE once a reachable stage-1 environment exists"
+        f"live NOT RUN — transport error / API unreachable at {API_BASE} "
+        "(not run, therefore not a pass)"
     )
+
+
+def _fail_on_server_error(resp: httpx.Response, where: str) -> None:
+    """A reachable server returning 5xx is an environment/code defect (e.g. DB
+    schema drift), NOT "unreachable" — surface it as a failure so the live gate
+    cannot silently turn green. Only transport errors may skip (see _skip_live).
+
+    backend seq2344; architect seq2349 (owner: 后端).
+    """
+    if resp.status_code >= 500:
+        pytest.fail(
+            f"live server error HTTP {resp.status_code} on {where} ({API_BASE}); "
+            f"body={resp.text[:300]!r}",
+            pytrace=False,
+        )
 
 
 @pytest.fixture(scope="session")
@@ -134,14 +152,21 @@ def _gate_live_tests(request, client):
 
 @pytest.fixture(scope="session")
 def login(client: httpx.Client):
-    """Returns a login helper; raises/skips if the API is unreachable."""
+    """Returns a login helper; skips (NOT RUN) when live is disabled, fails on 5xx.
+
+    Session-scoped, so it is set up before the function-scoped `_gate_live_tests`
+    autouse gate; it must therefore consult LIVE_ENABLED itself to keep a plain
+    `pytest` run fully offline/deterministic (no accidental :8000 contact).
+    """
+    if not LIVE_ENABLED:
+        _skip_live()
+
     def _login(username: str, password: str) -> httpx.Response:
         try:
             resp = client.post("/auth/login", json={"username": username, "password": password})
         except httpx.HTTPError:
             _skip_live()
-        if resp.status_code == 502 or resp.status_code >= 500:
-            pytest.skip(f"API unreachable or down ({resp.status_code})")
+        _fail_on_server_error(resp, "POST /auth/login")
         if resp.status_code == 404:
             pytest.skip(f"auth/login not routed ({resp.status_code})")
         return resp
@@ -165,6 +190,7 @@ def tokens(login, creds) -> dict[str, dict]:
     out: dict[str, dict] = {}
     for role, (user, pwd) in creds.items():
         resp = login(user, pwd)
+        _fail_on_server_error(resp, f"POST /auth/login ({role})")
         if resp.status_code != 200:
             pytest.skip(
                 f"seed login failed for {role} ({user}): HTTP {resp.status_code} — "

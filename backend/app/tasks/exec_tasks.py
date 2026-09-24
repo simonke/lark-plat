@@ -96,6 +96,22 @@ def _execute_via_mock(task: ExecTask, th: ExecTaskHost, content: str, timeout_se
         db.close()
 
 
+def _run_ssh_executor(db, task: ExecTask, th: ExecTaskHost, content: str, host_count: int) -> None:
+    """P2-SS additive ssh branch: orchestrate one host via run_exec.
+
+    Guarded by ``th.executor == "ssh"``; the agent branch is untouched. The
+    orchestration (approval gate -> sensitivity gate -> executor.exec() ->
+    exec_log write) is entered here on the real dispatch route.
+    """
+    from app.services.executors.orchestrator import run_exec
+
+    result = run_exec(db, task, th, content, host_count=host_count)
+    th.status = "success" if result.get("ok") else "failed"
+    th.exit_code = 0 if result.get("ok") else 1
+    th.finished_at = datetime.now(timezone.utc)
+    db.commit()
+
+
 @celery_app.task(name="app.tasks.exec_tasks.exec_dispatch")
 def exec_dispatch(task_id: int) -> dict:
     db = _new_session()
@@ -138,6 +154,13 @@ def exec_dispatch(task_id: int) -> dict:
             if th is None:
                 continue
             try:
+                # P2-SS (additive): an ssh host runs through the executor
+                # orchestration instead of the agent/mock fallback. Guarded by
+                # th.executor; the agent branch below stays unchanged.
+                if th.executor == "ssh":
+                    _run_ssh_executor(db, task, th, content, len(hosts))
+                    broadcast_sync(th.id, {"type": "status", "data": {"status": th.status, "exit_code": th.exit_code}})
+                    continue
                 dispatched = _dispatch_exec_frame(db, task, th, content)
                 broadcast_sync(th.id, {"type": "status", "data": {"status": "running"}})
                 if not dispatched:

@@ -108,8 +108,14 @@ class HostOut(BaseModel):
 
 class ConnResult(BaseModel):
     ok: bool
-    latency_ms: int
+    latency_ms: int | None = None
     detail: str
+
+
+class ConnectorUpdate(BaseModel):
+    """P2-SS: manual connector switch (only agent|ssh; anything else -> 422)."""
+
+    connector: Literal["agent", "ssh"]
 
 
 class CredentialCreate(BaseModel):

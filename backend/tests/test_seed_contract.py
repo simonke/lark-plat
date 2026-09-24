@@ -29,7 +29,7 @@ def test_seed_tree_permission_points():
     menus = [node[0] for node in PERMISSION_TREE]
     buttons = [child[0] for node in PERMISSION_TREE for child in node[5]]
     assert len(menus) == 20
-    assert len(buttons) == 64
+    assert len(buttons) == 65
     assert len(set(menus)) == len(menus)
     assert len(set(buttons)) == len(buttons)
 

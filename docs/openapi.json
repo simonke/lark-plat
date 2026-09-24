@@ -2878,6 +2878,142 @@
         ]
       }
     },
+    "/api/v1/assets/hosts/{host_id}/executors": {
+      "get": {
+        "tags": [
+          "assets"
+        ],
+        "summary": "Host Executors",
+        "operationId": "host_executors_api_v1_assets_hosts__host_id__executors_get",
+        "parameters": [
+          {
+            "name": "host_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Host Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/assets/hosts/{host_id}/connector": {
+      "put": {
+        "tags": [
+          "assets"
+        ],
+        "summary": "Update Connector",
+        "operationId": "update_connector_api_v1_assets_hosts__host_id__connector_put",
+        "parameters": [
+          {
+            "name": "host_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Host Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectorUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/api/v1/assets/groups/tree": {
       "get": {
         "tags": [
@@ -10571,6 +10707,24 @@
         },
         "type": "object",
         "title": "ChannelUpdate"
+      },
+      "ConnectorUpdate": {
+        "properties": {
+          "connector": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "ssh"
+            ],
+            "title": "Connector"
+          }
+        },
+        "type": "object",
+        "required": [
+          "connector"
+        ],
+        "title": "ConnectorUpdate",
+        "description": "P2-SS: manual connector switch (only agent|ssh; anything else -> 422)."
       },
       "CredentialCreate": {
         "properties": {

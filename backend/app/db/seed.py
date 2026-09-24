@@ -42,6 +42,7 @@ PERMISSION_TREE: list[tuple[str, str, str, str, str, list[tuple[str, str, str, s
             ("asset:host:import", "批量导入", "button", "", "Upload"),
             ("asset:host:export", "导出", "button", "", "Download"),
             ("asset:host:conn", "连通性检测", "button", "", "Connection"),
+            ("asset:host:executor", "执行器管理", "button", "", "Switch"),
         ],
     ),
     (
@@ -261,7 +262,7 @@ DEFAULT_ROLES: dict[str, dict[str, list[str]]] = {
         "permissions": [
             "dashboard:view",
             "asset:host:list", "asset:host:add", "asset:host:edit", "asset:host:import",
-            "asset:host:export", "asset:host:conn",
+            "asset:host:export", "asset:host:conn", "asset:host:executor",
             "asset:group:list", "asset:group:add", "asset:group:edit",
             "asset:cred:list", "asset:cred:add", "asset:cred:edit",
             "exec:task:list", "exec:task:run", "exec:task:stop", "exec:task:retry", "exec:task:log",
@@ -480,6 +481,8 @@ DEFAULT_CONFIG_RULES: dict[str, dict] = {
     # P2-3 SSO defaults (never overwrite existing)
     "sso.auto_provision": {"value": False},
     "sso.default_role_codes": {"value": []},
+    # P2-SS executor extension (never overwrite existing)
+    "executor.ssh_fallback": {"value": False},
 }
 
 _CONFIG_RULE_REMARKS: dict[str, str] = {
@@ -487,6 +490,7 @@ _CONFIG_RULE_REMARKS: dict[str, str] = {
     "monitor.metric_freshness_seconds": "P2-MA default (O3/I2)",
     "sso.auto_provision": "P2-3 SSO default",
     "sso.default_role_codes": "P2-3 SSO default",
+    "executor.ssh_fallback": "P2-SS ssh 降级路由默认关闭",
 }
 
 

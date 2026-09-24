@@ -26,6 +26,7 @@ revision = "e8a1b2c3d4f5"
 down_revision = "c3d4e5f6a7b8"
 branch_labels = None
 depends_on = None
+SHARED_LIVE_DB_FORBIDDEN = True
 
 # Active alert states (MON_ALERT_STATUSES minus 'resolved').
 _ACTIVE_STATES = "('pending','firing','acknowledged')"

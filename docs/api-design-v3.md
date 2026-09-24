@@ -257,7 +257,7 @@ SSH/Windows 执行器对前端无新增接口（复用 exec/* 与 /terminals）�
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET/POST | /assets/relations | 列表（筛选 src/dst/rel_type）/ 创建（**幂等**） |
-| DELETE | /assets/relations/{id} | 删除 |
+| DELETE | /assets/relations/{relation_id} | 删除（`{id}` 为速记别名；canonical=`{relation_id}`） |
 | GET | /assets/cmdb/topology | 邻域 `{nodes[{type,id,label,role}],edges[{src,dst,rel_type}]}`；depth 默认 2 / 硬上限 3（超限 **422**） |
 | GET | /assets/cmdb/impact | 下游可达集 `{root,affected[],count}` |
 

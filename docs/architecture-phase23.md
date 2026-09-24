@@ -241,7 +241,7 @@ IdP 回调 GET /auth/oauth/{provider}/callback?code&state → 校验 state
 ### 12.3 接口（REST；全部走一期 `Result` 信封 / 分页 / 权限依赖 / 审计）
 - `GET  /assets/relations`（`asset:relation:list`）：分页；筛选 `src_type/src_id/dst_type/dst_id/rel_type`。
 - `POST /assets/relations`（`asset:relation:add`）：**幂等**创建（重复 → 返回既有行，不 409）。
-- `DELETE /assets/relations/{id}`（`asset:relation:del`）：**首删 200（`Result` 信封）／目标缺失 404**（沿用平台 DELETE 惯例；POST 侧幂等返既有行）。
+- `DELETE /assets/relations/{relation_id}`（`asset:relation:del`）：**首删 200（`Result` 信封）／目标缺失 404**（沿用平台 DELETE 惯例；POST 侧幂等返既有行）。**路径参数名 canonical＝`{relation_id}`**（与 repo 惯例 `{host_id}/{group_id}/{cred_id}` 一致；`{id}` 仅文档速记别名）。
 - `GET  /assets/cmdb/topology`（`asset:topo:view`）：`entity_type,entity_id,direction∈{up,down,both},depth(默认 2 / 硬上限 3，超限 **422**),rel_types[]` ⇒ `{nodes[{type,id,label,role∈{root,up,down}}],edges[{src:{type,id},dst:{type,id},rel_type}],truncated}`。
 - `GET  /assets/cmdb/impact`（`asset:topo:view`）：`entity_type,entity_id,direction(默认 down),depth(默认 2 / 硬上限 3，超限 **422**),rel_types[]` ⇒ `{root,affected[],count,truncated}`。
 - **数据权限（US-03）**：拓扑/影响结果按当前用户**可见实体集**裁剪（与 `HostRepository.visible_entity_ids` 同源），越权节点不返回；**写路径** `POST/DELETE` 须校验调用者**同时可见 src 与 dst**，否则 **403**。
@@ -251,9 +251,10 @@ IdP 回调 GET /auth/oauth/{provider}/callback?code&state → 校验 state
 - **feature flag**：`config_rule` 命名空间 **`feature.cmdb_topology`**（默认 False；与既有 `feature.*` 一致）。
 - **迁移**：新增 **1** 迁移（`entity_relation` + 约束/索引），`down_revision=e1f2a3b4c5d7`，**保持单 head**；新 rev **入「禁落 live」集 C**（与 P3.1 同规；`LIVE_REV_ALLOWED` A/B 不变），三处 allow-set 锁 / 链计数随**实现批**同步（C 3→4、链 14→15）。
 - **前端**：`/assets/cmdb/topology` 拓扑页 + 关系维护（`v-perm` 复用），由前端随批接入。
-- **路径增量**：**URL 键 +4 → `len(paths)==133`**（`/assets/relations` GET+POST **共用 1 键**、`/assets/relations/{id}`、`/assets/cmdb/topology`、`/assets/cmdb/impact`）＝ **5 operations**；**`removed==[]`**，openapi 自动同步。
+- **路径增量**：**URL 键 +4 → `len(paths)==133`**（`/assets/relations` GET+POST **共用 1 键**、`/assets/relations/{relation_id}`、`/assets/cmdb/topology`、`/assets/cmdb/impact`）＝ **5 operations**；**`removed==[]`**，openapi 自动同步。
 - **审计（R4）**：关系 `add/del` 由 **`AuditMiddleware` 自动写 `sys_audit_log`**（写请求全覆盖、**无需新代码**）；关系行另存 `created_by/ts`。
 - **悬空边（无 FK，多态引用）**：删主机/分组时**应用层级联清理**其关系 ＋ 查询侧对缺失 id **防御性跳过**（`list` 过滤）。
+- **错误码优先级（backlog）**：本模块走 **权限门先**（路由 `require_perm` → 服务 `_require_feature`）⇒ flag 关时**有权限者 400 `feature disabled`、无权限者 403**；工单/知识库为 **feature 门先**（任何调用者 400）。P3-4/P3-5 按已冻 P3 惯例取 **feature 门先**；此差异记 backlog，待后续维护批统一。
 
 ### 12.5 与 §26 AIOps 的关系（避免双建）
 - §26 AIOps 只读「拓扑」= **复用本 §12 的 `entity_relation`**；AIOps 若需新增节点类型（`service`/`app`/`ops_event` 等）**扩展 `*_type` 枚举与 `rel_type` 词表**，不另建表。

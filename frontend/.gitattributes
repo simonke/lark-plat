@@ -1,0 +1,42 @@
+# W1 offline batch: scoped line-ending normalization for the frontend tree only.
+# Applies to frontend/** exclusively; adds NOTHING to any other path.
+# Policy: normalize frontend text sources to LF; leave binary assets untouched.
+# Add-only: existing blobs are NOT renormalized (no `git add --renormalize`).
+
+* text=auto eol=lf
+
+# Text sources (explicit, defensive against extension-less edge files)
+*.ts    text eol=lf
+*.tsx   text eol=lf
+*.js    text eol=lf
+*.jsx   text eol=lf
+*.cjs   text eol=lf
+*.mjs   text eol=lf
+*.css   text eol=lf
+*.scss  text eol=lf
+*.sass  text eol=lf
+*.less  text eol=lf
+*.html  text eol=lf
+*.json  text eol=lf
+*.jsonc text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.svg   text eol=lf
+*.txt   text eol=lf
+
+# Binary assets -- never EOL-processed
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.avif  binary
+*.ico   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.eot   binary
+*.otf   binary
+*.pdf   binary
+*.zip   binary

@@ -21,17 +21,28 @@ npm run build
 No Docker is available in this environment, so that mount is inert here; the
 artifact is produced locally by the steps above.
 
-## Fingerprint (hand-off)
+## Fingerprint (informational — NOT a gate)
 
-- recorded: 2026-09-24, source HEAD `cfce18f`
+The bundle is **toolchain-sensitive**: a rebuild under a different
+Node/npm/toolchain (e.g. npm 11 with `allow-scripts` blocking the
+`esbuild`/`vue-demi` postinstall) yields **different bytes**. Observed at
+hand-off: `files` = 55 in every run, but total bytes `2,173,062` (this
+build) vs `2,173,050` (independent rebuild), and the manifest digest differed
+run-to-run. **Treat the numbers below as informational only; do NOT gate CI or
+acceptance on them.**
+
+- recorded: 2026-09-24, source HEAD `cfce18f` (this machine's on-disk artifact)
 - files: `55`
 - bytes: `2,173,062`
 - `manifest_sha256`: `dd2b4ad3acdc3d360468050e3b909055b0ebdc472dc0dfc362e51aa72d4fae2f`
 
+For a **reproducible** fingerprint instead, pin Node/npm, allow install scripts,
+rebuild in a controlled environment, and record that digest.
+
 `manifest_sha256` = sha256 over the LF-joined, path-sorted lines
 `<sha256(file)>  <relpath>` (relpath uses `/`, relative to `dist/`).
 
-## Verify fingerprint (PowerShell)
+## Verify fingerprint (informational)
 
 ```powershell
 $root = (Resolve-Path frontend/dist).Path

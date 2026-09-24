@@ -106,12 +106,6 @@ class HostOut(BaseModel):
         return _normalize_tags(v)
 
 
-class ConnResult(BaseModel):
-    ok: bool
-    latency_ms: int | None = None
-    detail: str
-
-
 class ConnectorUpdate(BaseModel):
     """P2-SS: manual connector switch (only agent|ssh; anything else -> 422)."""
 

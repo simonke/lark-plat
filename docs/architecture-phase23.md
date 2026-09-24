@@ -1,6 +1,6 @@
 # lark-plat 自动化运维平台 — 二期/三期架构设计 v3.0
 
-版本: v3.0（草案，对齐需求 v1.2 待细化）  |  日期: 2026-09-08  |  作者: 架构师
+版本: v3.1（草案，对齐需求 v1.2；2026-09-24 P3 立项补全：新增 CMDB 深化、编排/CI-CD 拆批 P3-3/4/5）  |  日期: 2026-09-08  |  作者: 架构师
 
 > 承接 v2.1 终态（权威根 4309005）。本文档为二/三期新增能力的架构设计，全部模块对一期 MVP 采用 **add-only 扩展**：不修改既有 434 基线行为、alembic 保持单 head、新能力经 feature flag 可切。接口契约增量见 `api-design-v3.md`。
 
@@ -12,9 +12,11 @@
 | 二期 | 监控告警 | FR-25/26（指标采集/告警规则/通知联动）+ 外部监控生态对接（Prometheus/ELK/SkyWalking，刘辉 D2 定方向 2026-09-08） | 本设计 |
 | 二期 | 身份集成 | LDAP / OAuth2 SSO（对齐一期登录页预留形态） | 本设计 |
 | 二期 | 执行器扩展 | SSH 直连降级（架构决策 2 预留位启用）+ Windows 执行器 | 本设计 |
-| 三期 | 工单 | FR-27（运维工单流程） | 本设计 |
-| 三期 | 知识库 | 知识沉淀（关联脚本/资产/工单） | 本设计 |
-| 三期 | CI/CD 集成 + 编排 | 架构 §1 三期项 | 后续细化 |
+| 三期 | 工单 | FR-27（运维工单流程） | 已交付（P3-1） |
+| 三期 | 知识库 | 知识沉淀（关联脚本/资产/工单） | 已交付（P3-2） |
+| 三期 | CI/CD 集成 | 发布编排段（消费流水线产物→触发/记录发布→灰度/回滚→审计；不自造 CI 引擎，对接 GitLab CI/Jenkins） | 本设计（P3-5） |
+| 三期 | CMDB 深化 | 资产关系/拓扑/影响分析（**深化非新建**；一期 `asset`/`asset_host` 为浅台账） | 本设计（P3-3） |
+| 三期 | 编排 Playbook | 步骤依赖 DAG（wait_for/on_success/on_failure）+ `workflow` 服务 / `workflow_run` 状态机 | 本设计（P3-4） |
 
 ## 2. 总体架构演进（增量）
 
@@ -181,11 +183,13 @@ IdP 回调 GET /auth/oauth/{provider}/callback?code&state → 校验 state
 - `kb_article_version`：article_id, version, content(Text，append-only，正文单一真相源), editor_id, at。
 - `kb_category` / `kb_article_tag`（tag 复用一期 tag 枚举思路）；分类树**深度≤3**（超限 422）、**禁回环/自环**。
 
-## 9. CI/CD 集成 + 编排（三期，先立架构）
+## 9. CI/CD 集成 + 编排（三期 P3-4/P3-5，先立架构）
 
 - **Pipeline 抽象**：`pipeline → stage[] → step[]`；step 可触发 exec_task（复用执行链路）、自定义回调、等待人工审批（复用审批链路）。
 - **编排**：步骤间依赖 DAG（wait_for/on_success/on_failure），在 Celery 之上实现工作流调度器（`workflow` 服务 + `workflow_run` 状态机），不做新框架（避免过度设计）。
 - 与工单/知识库/告警联动（发布变更工单引出流水线等）作为三期后续细化内容，本版只立概念与边界。
+
+> **立项拆分（2026-09-24 刘辉裁定）**：本节两能力拆为独立批次——**编排＝P3-4**（`workflow`/`workflow_run`，复用 exec_task/审批原语）、**CI/CD 集成＝P3-5**（收敛为「发布编排段」，对接 GitLab CI/Jenkins、不自造 CI 引擎）。本节保留概念与边界，细化分属两批。
 
 ## 10. 非功能与兼容红线
 
@@ -205,6 +209,8 @@ IdP 回调 GET /auth/oauth/{provider}/callback?code&state → 校验 state
 | P2-4 | SSH 直连降级 + Windows 执行器 | P2-1 通道抽象 | 同上 |
 | P3-1 | 工单 | 一期审批/执行 | 同上 |
 | P3-2 | 知识库 | 一期脚本库 | 同上 |
-| P3-3 | CI/CD + 编排 | P3-1 | 另立项细化 |
+| P3-3 | CMDB 深化（资产关系/拓扑/影响分析，数据底座） | 一期 asset/asset_host | 同上 |
+| P3-4 | 编排 Playbook（`workflow` + `workflow_run` DAG 调度） | 一期 exec_task/审批 | 同上 |
+| P3-5 | CI/CD 集成（发布编排段，对接 GitLab CI/Jenkins） | P3-4 | 同上 |
 
 每批走既有流程：需求细化 → 本席设计定稿 → 开发 → 评审 → 单测 → 集成 live → 需求允收。

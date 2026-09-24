@@ -1,6 +1,6 @@
 # lark-plat 自动化运维平台 — 二期/三期架构设计 v3.0
 
-版本: v3.0（草案，对齐需求 v1.2 待细化）  |  日期: 2026-09-08  |  作者: 架构师
+版本: v3.1（草案，对齐需求 v1.2；2026-09-24 P3 立项补全：新增 CMDB 深化、编排/CI-CD 拆批 P3-3/4/5）  |  日期: 2026-09-08／2026-09-24  |  作者: 架构师
 
 > 承接 v2.1 终态（权威根 4309005）。本文档为二/三期新增能力的架构设计，全部模块对一期 MVP 采用 **add-only 扩展**：不修改既有 434 基线行为、alembic 保持单 head、新能力经 feature flag 可切。接口契约增量见 `api-design-v3.md`。
 
@@ -12,9 +12,11 @@
 | 二期 | 监控告警 | FR-25/26（指标采集/告警规则/通知联动）+ 外部监控生态对接（Prometheus/ELK/SkyWalking，刘辉 D2 定方向 2026-09-08） | 本设计 |
 | 二期 | 身份集成 | LDAP / OAuth2 SSO（对齐一期登录页预留形态） | 本设计 |
 | 二期 | 执行器扩展 | SSH 直连降级（架构决策 2 预留位启用）+ Windows 执行器 | 本设计 |
-| 三期 | 工单 | FR-27（运维工单流程） | 本设计 |
-| 三期 | 知识库 | 知识沉淀（关联脚本/资产/工单） | 本设计 |
-| 三期 | CI/CD 集成 + 编排 | 架构 §1 三期项 | 后续细化 |
+| 三期 | 工单 | FR-27（运维工单流程） | 已交付（P3-1） |
+| 三期 | 知识库 | 知识沉淀（关联脚本/资产/工单） | 已交付（P3-2） |
+| 三期 | CI/CD 集成 | 发布编排段（消费流水线产物→触发/记录发布→灰度/回滚→审计；不自造 CI 引擎，对接 GitLab CI/Jenkins） | 本设计（P3-5） |
+| 三期 | CMDB 深化 | 资产关系/拓扑/影响分析（**深化非新建**；一期 `asset`/`asset_host` 为浅台账） | 本设计（P3-3） |
+| 三期 | 编排 Playbook | 步骤依赖 DAG（wait_for/on_success/on_failure）+ `workflow` 服务 / `workflow_run` 状态机 | 本设计（P3-4） |
 
 ## 2. 总体架构演进（增量）
 
@@ -181,11 +183,13 @@ IdP 回调 GET /auth/oauth/{provider}/callback?code&state → 校验 state
 - `kb_article_version`：article_id, version, content(Text，append-only，正文单一真相源), editor_id, at。
 - `kb_category` / `kb_article_tag`（tag 复用一期 tag 枚举思路）；分类树**深度≤3**（超限 422）、**禁回环/自环**。
 
-## 9. CI/CD 集成 + 编排（三期，先立架构）
+## 9. CI/CD 集成 + 编排（三期 P3-4/P3-5，先立架构）
 
 - **Pipeline 抽象**：`pipeline → stage[] → step[]`；step 可触发 exec_task（复用执行链路）、自定义回调、等待人工审批（复用审批链路）。
 - **编排**：步骤间依赖 DAG（wait_for/on_success/on_failure），在 Celery 之上实现工作流调度器（`workflow` 服务 + `workflow_run` 状态机），不做新框架（避免过度设计）。
 - 与工单/知识库/告警联动（发布变更工单引出流水线等）作为三期后续细化内容，本版只立概念与边界。
+
+> **立项拆分（2026-09-24 刘辉裁定）**：本节两能力拆为独立批次——**编排＝P3-4**（`workflow`/`workflow_run`，复用 exec_task/审批原语）、**CI/CD 集成＝P3-5**（收敛为「发布编排段」，对接 GitLab CI/Jenkins、不自造 CI 引擎）。本节保留概念与边界，细化分属两批。
 
 ## 10. 非功能与兼容红线
 
@@ -205,6 +209,108 @@ IdP 回调 GET /auth/oauth/{provider}/callback?code&state → 校验 state
 | P2-4 | SSH 直连降级 + Windows 执行器 | P2-1 通道抽象 | 同上 |
 | P3-1 | 工单 | 一期审批/执行 | 同上 |
 | P3-2 | 知识库 | 一期脚本库 | 同上 |
-| P3-3 | CI/CD + 编排 | P3-1 | 另立项细化 |
+| P3-3 | CMDB 深化（资产关系/拓扑/影响分析，数据底座） | 一期 asset/asset_host | 同上 |
+| P3-4 | 编排 Playbook（`workflow` + `workflow_run` DAG 调度） | 一期 exec_task/审批 | 同上 |
+| P3-5 | CI/CD 集成（发布编排段，对接 GitLab CI/Jenkins） | P3-4 | 同上 |
 
 每批走既有流程：需求细化 → 本席设计定稿 → 开发 → 评审 → 单测 → 集成 live → 需求允收。
+
+## 12. CMDB 深化（三期 P3-3：资产关系 / 拓扑 / 影响分析）
+
+> 定位：**深化非新建**。一期 `asset_host`/`asset_group` 为「浅台账」（仅主机与分组），本批在其上加 **CI 关系**、**拓扑邻域**、**影响分析** 三层；不改一期列语义、不引入图库；新能力 flag 默认关。
+
+### 12.1 能力
+- **关系管理**：CI 间**有向关系** `src→dst` + 类型词表；CRUD、**幂等**（同 `(src,dst,rel_type)` 唯一，重复创建返回既有行）、**禁自环/重边**；US-03 数据权限一致、写操作记审计。
+- **拓扑**：给定 CI 展开**邻域**（上/下游）⇒ 节点 + 边；**深度**默认 2、**硬上限 3**（超限返回 **422**，对齐 KB 深度惯例；`config_rule cmdb.topo_max_depth` 仅可**下调**）；**环安全**（visited 集合，遇环不展开亦不报错）。
+- **影响分析**：给定 CI 求**下游可达集**（故障影响面，可选上游）⇒ 受影响 CI 集 + 计数；同为**环安全**遍历、**深度默认 2 / 硬上限 3**（超限 422）。
+- **手工维护**：不做自动发现。**非目标**：不改 `asset` 列语义、不做图库/大屏、不做自动发现/探活。
+
+### 12.2 数据模型（新增表，add-only；与 §26 AIOps 拓扑**同表复用**）
+- **`entity_relation`**（★ **P3-3 定义、为唯一关系真相源**；§26 AIOps 拓扑**复用本表，不双建** ⇒ **「同表复用」= YES**：采纳 §26 提案之原名 `entity_relation`，**不另建 `cmdb_ci_relation`**）：
+  - `id` BIGINT PK；
+  - `src_type` VARCHAR(32)（CI 类型；初值枚举 `host` | `host_group`，**可扩展**）；`src_id` BIGINT；
+  - `dst_type` VARCHAR(32)；`dst_id` BIGINT；
+  - `rel_type` VARCHAR(32)（词表初值：`depends_on` | `runs_on` | `connects_to` | `member_of` | `hosts`）；
+  - `properties` JSONB NULL（weight/port 等可选，未来用）；`remark` VARCHAR(256)；
+  - `created_by` BIGINT NULL；`created_at`/`updated_at`（TimestampMixin）。
+  - 约束：**UNIQUE(`src_type`,`src_id`,`dst_type`,`dst_id`,`rel_type`)**（重边去重）；**CHECK 禁自环**（`NOT(src_type=dst_type AND src_id=dst_id)`）。
+  - 索引：`(src_type,src_id)`、`(dst_type,dst_id)`、`(rel_type)`。
+- **CI 抽象**：CI ＝ **(type,id) 二元组**，**不引入独立 CI 表**；`*_type` 初值 `host|host_group`（复用 `asset_host`/`asset_group`），端点校验 `type`∈枚举且 `id` 存在；未来扩节点类型仅扩枚举/词表。
+- **无独立拓扑/影响表**：拓扑/影响为**查询期计算**（递归 CTE），不物化，避免双真相源。
+
+### 12.3 接口（REST；全部走一期 `Result` 信封 / 分页 / 权限依赖 / 审计）
+- `GET  /assets/relations`（`asset:relation:list`）：分页；筛选 `src_type/src_id/dst_type/dst_id/rel_type`。
+- `POST /assets/relations`（`asset:relation:add`）：**幂等**创建（重复 → 返回既有行，不 409）。
+- `DELETE /assets/relations/{id}`（`asset:relation:del`）：**首删 200（`Result` 信封）／目标缺失 404**（沿用平台 DELETE 惯例；POST 侧幂等返既有行）。
+- `GET  /assets/cmdb/topology`（`asset:topo:view`）：`entity_type,entity_id,direction∈{up,down,both},depth(默认 2 / 硬上限 3，超限 **422**),rel_types[]` ⇒ `{nodes[{type,id,label,role∈{root,up,down}}],edges[{src:{type,id},dst:{type,id},rel_type}],truncated}`。
+- `GET  /assets/cmdb/impact`（`asset:topo:view`）：`entity_type,entity_id,direction(默认 down),depth(默认 2 / 硬上限 3，超限 **422**),rel_types[]` ⇒ `{root,affected[],count,truncated}`。
+- **数据权限（US-03）**：拓扑/影响结果按当前用户**可见实体集**裁剪（与 `HostRepository.visible_entity_ids` 同源），越权节点不返回；**写路径** `POST/DELETE` 须校验调用者**同时可见 src 与 dst**，否则 **403**。
+
+### 12.4 权限码 / flag / 迁移 / 边界
+- **权限码**（**复用 `asset:` 命名空间，不新开 `cmdb:`**）：`asset:relation:list` / `asset:relation:add` / `asset:relation:del` / `asset:topo:view`（新增 4 点）。
+- **feature flag**：`config_rule` 命名空间 **`feature.cmdb_topology`**（默认 False；与既有 `feature.*` 一致）。
+- **迁移**：新增 **1** 迁移（`entity_relation` + 约束/索引），`down_revision=e1f2a3b4c5d7`，**保持单 head**；新 rev **入「禁落 live」集 C**（与 P3.1 同规；`LIVE_REV_ALLOWED` A/B 不变），三处 allow-set 锁 / 链计数随**实现批**同步（C 3→4、链 14→15）。
+- **前端**：`/assets/cmdb/topology` 拓扑页 + 关系维护（`v-perm` 复用），由前端随批接入。
+- **路径增量**：**URL 键 +4 → `len(paths)==133`**（`/assets/relations` GET+POST **共用 1 键**、`/assets/relations/{id}`、`/assets/cmdb/topology`、`/assets/cmdb/impact`）＝ **5 operations**；**`removed==[]`**，openapi 自动同步。
+- **审计（R4）**：关系 `add/del` 由 **`AuditMiddleware` 自动写 `sys_audit_log`**（写请求全覆盖、**无需新代码**）；关系行另存 `created_by/ts`。
+- **悬空边（无 FK，多态引用）**：删主机/分组时**应用层级联清理**其关系 ＋ 查询侧对缺失 id **防御性跳过**（`list` 过滤）。
+
+### 12.5 与 §26 AIOps 的关系（避免双建）
+- §26 AIOps 只读「拓扑」= **复用本 §12 的 `entity_relation`**；AIOps 若需新增节点类型（`service`/`app`/`ops_event` 等）**扩展 `*_type` 枚举与 `rel_type` 词表**，不另建表。
+- AIOps 提案中架构列的 `entity_relation`(拓扑) **以本表为准**；AIOps 立项时**直接消费**。
+
+## 13. 编排 Playbook（三期 P3-4：DAG 工作流）
+
+> 承 §9：**复用一期 exec_task/审批/notify 原语**，在 Celery 之上做 DAG 调度器，**不引新框架**；flag 默认关。
+
+### 13.1 能力
+- **定义/版本**：Playbook ＝有向无环图（DAG），节点 `node_key`＋类型＋配置＋依赖；版本化（复刻 script/KB 语义：current_version 指针、append-only 版本、可回滚）。
+- **运行状态机**：`workflow_run`＝`pending→running→(succeeded|failed|cancelled)`，running 内节点可 `waiting`（候审批/回调/依赖）。
+- **调度**：节点入度满足才 ready；依赖表达 wait_for ＋ 分支（on_success/on_failure 边条件）；DAG 分支并行；**幂等/重入**（触发 Idempotency-Key、节点 attempt、断点续跑）。
+- **复用**：`node_type=exec_task` **创建并等待一期 exec_task**；`manual_approval` **复用审批状态机**；`wait/callback/sleep` 为编排原语。**不复制**执行/审批逻辑。
+- **控制**：取消传播（复用 exec stop）、超时收敛、失败按分支或整体 failed。
+- **非目标**：不做图库/大屏；不做新调度框架。
+
+### 13.2 数据模型（新增，add-only）
+- `workflow`：name(unique), description, current_version, enabled, created_by, ts。
+- `workflow_version`：workflow_id, version, **definition JSONB**（`nodes[{key,type∈{exec_task,manual_approval,wait,callback,sleep},config,depends_on[],on_success[],on_failure[]}]`）, editor_id, at（append-only）。
+- `workflow_run`：workflow_id, workflow_version, status(pending|running|succeeded|failed|cancelled), trigger_type(manual|ticket|schedule|alert|release), trigger_ref JSONB, context JSONB, started_at/finished_at, error, created_by, ts。
+- `workflow_node_run`：run_id, node_key, node_type, status(pending|running|succeeded|failed|skipped|waiting), **exec_task_id?**, **approval_id?**, attempt, output JSONB, error, started_at/finished_at。
+- 约束：`(run_id,node_key)` 唯一、`(workflow_id,version)` 唯一；留痕 `sys_audit_log` ＋节点 output。
+
+### 13.3 接口（REST + WS）
+- `GET/POST /workflows`、`GET/PUT/DELETE /workflows/{id}`（被运行引用 409）。
+- `POST/GET /workflows/{id}/versions`、`POST /workflows/{id}/rollback`。
+- `POST /workflows/{id}/run` ⇒ `{run_id}`（幂等 Idempotency-Key）。
+- `GET /workflow-runs`、`GET /workflow-runs/{id}`（**DAG 节点状态矩阵**）、`POST /workflow-runs/{id}/cancel|retry`。
+- WS `/ws/workflow-runs/{id}`：节点状态实时推送（复刻 exec WS 帧 seq 防乱序）。
+- 权限码：`workflow:list/add/edit/del/version/rollback/run/view/cancel`（9）；flag **`feature.workflow`**（默认 False）。
+- paths **URL 键 +9 → `len(paths)==142`**（`/workflows`·`/{id}`·`/{id}/versions`·`/{id}/rollback`·`/{id}/run` ＋ `/workflow-runs`·`/{id}`·`/{id}/cancel`·`/{id}/retry`；ops 13；WS 不入 openapi）；迁移 **+1**（4 表，rev 链在 P3-3 `f2a3b4c5d6e7` 之后、单 head）。
+
+## 14. CI/CD 集成（三期 P3-5：发布编排段）
+
+> 定位：**不自造 CI 引擎**；平台只做「**发布编排段**」——消费流水线产物 → 触发/记录发布 → **灰度/回滚** → 审计；**建在 §13 workflow 之上**（release ＝ 一个 `workflow_run` 编排 ＋ provider 回调节点）。flag 默认关。
+
+### 14.1 能力
+- **Provider 对接**：`gitlab|jenkins|generic`，配置化接入（密钥密文）；出站触发/拉取产物走 provider API，**测试用 stub/mock**。
+- **入站事件**：`POST /cicd/webhooks/{provider}` 归一化「构建完成/产物就绪」事件（provider token 鉴权、**非 session**）；可触发 release 或 workflow。
+- **发布编排**：release 状态机 `pending→deploying→canary→succeeded`（异常 `failed→rolled_back`）；灰度＝分批放量＋健康检查（复用 exec_task 部署）；回滚＝回退上一版本。
+- **审计**：发布/灰度/回滚均记 `sys_audit_log`，关联 `workflow_run`/exec_task 证据。
+- **边界（非目标）**：**不含源码→构建→测试**（属 GitLab CI/Jenkins）。
+
+### 14.2 数据模型（新增，add-only）
+- `cicd_provider`：type(gitlab|jenkins|generic), name, endpoint, config_enc(JSON 串，密钥逐值密文), enabled, status, last_heartbeat, created_by, ts。
+- `release`：provider_id, app, version/artifact_ref, env(dev|test|prod), status, **workflow_run_id?**, target_host_ids JSONB, rolled_back_from?, created_by, ts。
+- 产物契约：`artifact_manifest`（version/app/env/artifact_ref/checksum），入站事件与 release 共用。
+
+### 14.3 接口（REST + inbound webhook）
+- `GET/POST /cicd/providers`、`PUT/DELETE /cicd/providers/{id}`、`POST /cicd/providers/{id}/test`。
+- `POST /cicd/webhooks/{provider}`（token 鉴权）。
+- `GET/POST /releases`、`GET /releases/{id}`（状态/证据链）、`POST /releases/{id}/canary|promote|rollback|cancel`。
+- 权限码：`cicd:provider:list/add/edit/del/test` ＋ `release:list/add/view/run/canary/promote/rollback/cancel`；flag **`feature.cicd`**（默认 False）。
+- paths **URL 键 +10 → `len(paths)==152`**（`/cicd/providers`·`/{id}`·`/{id}/test`·`/cicd/webhooks/{provider}` ＋ `/releases`·`/{id}`·`/{id}/canary`·`/{id}/promote`·`/{id}/rollback`·`/{id}/cancel`；ops 13）；迁移 **+1**（链在 P3-4 rev 之后、单 head）。
+- 前端：`/cicd/providers`、`/releases`（列表/状态，不引图库）。
+
+### 14.4 与 §13 / 批次关系
+- release 编排**复用** §13 workflow（DAG/审批/exec_task 原语），**不重复造编排**；P3-5 只加 provider 接入＋发布语义＋灰度/回滚。
+- 批次序：**P3-3 冻结 → P3-4 → P3-5**；各批独立锚 ＋ live F ＋ 三源互证。

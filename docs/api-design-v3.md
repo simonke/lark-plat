@@ -250,20 +250,47 @@ SSH/Windows 执行器对前端无新增接口（复用 exec/* 与 /terminals）�
 权限点：kb:article:list/add/edit/del/version/rollback / kb:category:list/add/edit/del / kb:search
 （classified 可见级叠加主机组/RBAC 校验，复用一期数据权限中间件）
 
-## 7. CI/CD + 编排（P3-3，先立契约骨架）
+## 7. 三期契约：CMDB 深化 / 编排 / CI-CD（P3-3/4/5）
+
+### 7.1 CMDB 深化（P3-3）
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | /pipelines | {name,stages:[{name,steps:[{type:exec_task|manual_approval|callback, config}]}]} |
-| GET | /pipelines | 分页 |
-| PUT | /pipelines/{id} | 编辑 |
-| DELETE | /pipelines/{id} | 删除（历史运行引用 409） |
-| POST | /pipelines/{id}/run | 手动触发 → {run_id} |
-| GET | /pipelines/{id}/runs | 运行历史 |
-| GET | /pipelines/{id}/runs/{run_id} | 运行详情（DAG 节点状态） |
-| POST | /pipelines/{id}/runs/{run_id}/stop | 中止 |
+| GET/POST | /assets/relations | 列表（筛选 src/dst/rel_type）/ 创建（**幂等**） |
+| DELETE | /assets/relations/{id} | 删除 |
+| GET | /assets/cmdb/topology | 邻域 `{nodes[{type,id,label,role}],edges[{src,dst,rel_type}]}`；depth 默认 2 / 硬上限 3（超限 **422**） |
+| GET | /assets/cmdb/impact | 下游可达集 `{root,affected[],count}` |
 
-权限点：pipeline:list/add/edit/del/run/view 【三期细化】
+权限点：`asset:relation:list/add/del` / `asset:topo:view`。表 **`entity_relation`**（§26 AIOps 复用同表）。
+
+### 7.2 编排 Playbook（P3-4）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET/POST | /workflows | 列表/创建 |
+| GET/PUT/DELETE | /workflows/{id} | 详情/编辑/删除（被运行引用 409） |
+| POST/GET | /workflows/{id}/versions | 新版本 / 版本列表 |
+| POST | /workflows/{id}/rollback | 回滚 |
+| POST | /workflows/{id}/run | 触发 ⇒ {run_id}（Idempotency-Key） |
+| GET | /workflow-runs · /workflow-runs/{id} | 运行历史 / 详情（DAG 节点状态） |
+| POST | /workflow-runs/{id}/cancel · /retry | 取消 / 重试 |
+
+WS `/ws/workflow-runs/{id}`。权限点：`workflow:list/add/edit/del/version/rollback/run/view/cancel`。
+
+### 7.3 CI/CD 集成（P3-5）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET/POST | /cicd/providers | 列表/创建 |
+| PUT/DELETE | /cicd/providers/{id} · POST /cicd/providers/{id}/test | 编辑/删除/连通测试 |
+| POST | /cicd/webhooks/{provider} | 入站事件（**token 鉴权、非 session**） |
+| GET/POST | /releases | 列表 / 创建发布编排 |
+| GET | /releases/{id} | 详情（状态/证据链） |
+| POST | /releases/{id}/canary · /promote · /rollback · /cancel | 灰度/放量/回滚/取消 |
+
+权限点：`cicd:provider:list/add/edit/del/test` / `release:list/add/view/run/canary/promote/rollback/cancel`。
+
+> 本节取代旧版 §7「/pipelines」骨架：P3-3 拆为 **CMDB 深化 / 编排 Playbook / CI-CD 集成** 三段，承 @刘辉 2026-09-24 立项。
 
 ## 8. 批次落地顺序（与 architecture-phase23.md §11 对齐）
 
@@ -273,6 +300,8 @@ SSH/Windows 执行器对前端无新增接口（复用 exec/* 与 /terminals）�
 - P2-4 执行器扩展 → api §4（无新前端路由，仅行为）
 - P3-1 工单 → api §5
 - P3-2 知识库 → api §6
-- P3-3 CI/CD+编排 → api §7（三期细化）
+- P3-3 CMDB 深化 → api §7.1（表 `entity_relation`）
+- P3-4 编排 Playbook → api §7.2（`/workflows` + `/workflow-runs`）
+- P3-5 CI/CD 集成 → api §7.3（`/cicd/*` + `/releases`）
 
 > 全部新增端点注册遵循一期实现注意：静态段路由先于 `{id}` 参数段注册（如 `/transfer/tasks/stats` 先于 `/transfer/tasks/{id}`）。

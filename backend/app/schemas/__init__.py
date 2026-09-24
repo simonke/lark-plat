@@ -613,3 +613,32 @@ class TerminalRecordingOut(BaseModel):
     size: int
     has_more: bool
     chunks: list[TerminalRecordingChunkOut] = []
+
+
+# ---------------------------------------------------------------- ticket / kb (P3)
+# Re-exported from submodules so callers keep using `schemas.<Name>`.
+from app.schemas.kb import (  # noqa: E402
+    KbArticleCreate,
+    KbArticleDetail,
+    KbArticleOut,
+    KbArticleUpdate,
+    KbArticleVersionOut,
+    KbCategoryCreate,
+    KbCategoryOut,
+    KbCategoryUpdate,
+    KbRollbackIn,
+    KbSearchOut,
+)
+from app.schemas.ticket import (  # noqa: E402
+    TicketAssignIn,
+    TicketAttachmentOut,
+    TicketCommentIn,
+    TicketCommentOut,
+    TicketCreate,
+    TicketDetail,
+    TicketDoneIn,
+    TicketOut,
+    TicketRefIn,
+    TicketRefOut,
+    TicketUpdate,
+)

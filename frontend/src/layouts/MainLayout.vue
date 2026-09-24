@@ -44,6 +44,8 @@
           <el-menu-item index="/operations/approvals" v-if="auth.hasPerm('approval:view')">审批中心</el-menu-item>
           <el-menu-item index="/operations/terminals" v-if="auth.hasPerm('terminal:list')">Web 终端</el-menu-item>
           <el-menu-item index="/operations/notifications" v-if="auth.hasPerm('notify:channel:list')">通知中心</el-menu-item>
+          <el-menu-item index="/tickets" v-if="auth.hasPerm('ticket:list')">工单管理</el-menu-item>
+          <el-menu-item index="/kb/articles" v-if="auth.hasPerm('kb:article:list')">知识库</el-menu-item>
         </el-sub-menu>
         <el-sub-menu index="monitoring" v-if="auth.hasPerm('monitor:metric:view') || auth.hasPerm('monitor:alert:list') || auth.hasPerm('monitor:rule:list')">
           <template #title>

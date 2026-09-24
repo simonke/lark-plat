@@ -246,6 +246,46 @@ PERMISSION_TREE: list[tuple[str, str, str, str, str, list[tuple[str, str, str, s
             ("monitor:rule:test", "测试连通", "button", "", "Connection"),
         ],
     ),
+    (
+        "ticket:list",
+        "工单管理",
+        "menu",
+        "/tickets",
+        "Tickets",
+        [
+            ("ticket:create", "创建工单", "button", "", "Plus"),
+            ("ticket:edit", "编辑工单", "button", "", "Edit"),
+            ("ticket:assign", "指派工单", "button", "", "User"),
+            ("ticket:accept", "受理工单", "button", "", "Checked"),
+            ("ticket:process", "处理工单", "button", "", "Loading"),
+            ("ticket:done", "完成工单", "button", "", "Finished"),
+            ("ticket:close", "关闭工单", "button", "", "Close"),
+            ("ticket:reopen", "重新打开", "button", "", "Refresh"),
+            ("ticket:cancel", "取消工单", "button", "", "CircleClose"),
+            ("ticket:comment", "评论工单", "button", "", "ChatDotRound"),
+            ("ticket:attachment", "上传附件", "button", "", "Paperclip"),
+            ("ticket:ref", "关联对象", "button", "", "Link"),
+        ],
+    ),
+    (
+        "kb:article:list",
+        "知识库",
+        "menu",
+        "/kb/articles",
+        "Reading",
+        [
+            ("kb:article:add", "新增文章", "button", "", "Plus"),
+            ("kb:article:edit", "编辑文章", "button", "", "Edit"),
+            ("kb:article:del", "删除文章", "button", "", "Delete"),
+            ("kb:article:version", "版本管理", "button", "", "Clock"),
+            ("kb:article:rollback", "版本回滚", "button", "", "Back"),
+            ("kb:category:list", "分类管理", "button", "", "FolderOpened"),
+            ("kb:category:add", "新增分类", "button", "", "Plus"),
+            ("kb:category:edit", "编辑分类", "button", "", "Edit"),
+            ("kb:category:del", "删除分类", "button", "", "Delete"),
+            ("kb:search", "知识检索", "button", "", "Search"),
+        ],
+    ),
 ]
 
 # role code -> permission codes
@@ -483,6 +523,9 @@ DEFAULT_CONFIG_RULES: dict[str, dict] = {
     "sso.default_role_codes": {"value": []},
     # P2-SS executor extension (never overwrite existing)
     "executor.ssh_fallback": {"value": False},
+    # P3 feature flags (never overwrite existing; default off)
+    "feature.ticket": {"value": False},
+    "feature.kb": {"value": False},
 }
 
 _CONFIG_RULE_REMARKS: dict[str, str] = {
@@ -491,6 +534,8 @@ _CONFIG_RULE_REMARKS: dict[str, str] = {
     "sso.auto_provision": "P2-3 SSO default",
     "sso.default_role_codes": "P2-3 SSO default",
     "executor.ssh_fallback": "P2-SS ssh 降级路由默认关闭",
+    "feature.ticket": "P3-1 工单功能默认关闭",
+    "feature.kb": "P3-2 知识库功能默认关闭",
 }
 
 

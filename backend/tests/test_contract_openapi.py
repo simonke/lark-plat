@@ -130,7 +130,9 @@ def test_path_count_stable(openapi_spec):
     paths = openapi_spec["paths"]
     # 107 (P2-ID) -> 109: P2-SS adds GET /assets/hosts/{id}/executors and
     # PUT /assets/hosts/{id}/connector (add-only).
-    assert len(paths) == 109
+    # 109 -> 129: P3 adds 12 ticket URL keys + 8 knowledge-base URL keys
+    # (@架构 seq2581/seq2589, add-only; OpenAPI `paths` is URL-keyed).
+    assert len(paths) == 129
 
 
 def test_stage4_terminal_paths_present(openapi_spec):

@@ -115,6 +115,26 @@ const routes: RouteRecordRaw[] = [
         name: 'monitor-adapters',
         component: () => import('../views/monitoring/AdaptersView.vue'),
       },
+      {
+        path: 'tickets',
+        name: 'tickets',
+        component: () => import('../views/ticket/TicketsView.vue'),
+      },
+      {
+        path: 'tickets/:id',
+        name: 'ticket-detail',
+        component: () => import('../views/ticket/TicketDetailView.vue'),
+      },
+      {
+        path: 'kb/articles',
+        name: 'kb-articles',
+        component: () => import('../views/kb/KbArticlesView.vue'),
+      },
+      {
+        path: 'kb/articles/:id',
+        name: 'kb-article',
+        component: () => import('../views/kb/KbArticleView.vue'),
+      },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/' },

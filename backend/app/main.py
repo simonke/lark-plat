@@ -152,12 +152,14 @@ from app.api.v1.endpoints import (  # noqa: E402
     auth,
     dashboard,
     exec,
+    kb,
     monitor,
     notify,
     schedule,
     script,
     system,
     terminal,
+    ticket,
     transfer,
 )
 from app.ws import agent_ws, exec_ws, monitor_ws, terminal_ws, transfer_ws  # noqa: E402
@@ -175,6 +177,8 @@ for router in (
     terminal.router,
     monitor.router,
     transfer.router,
+    ticket.router,
+    kb.router,
 ):
     app.include_router(router, prefix=settings.api_prefix)
 

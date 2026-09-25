@@ -1436,9 +1436,10 @@ def _patch_app_env(monkeypatch, mod, env: str) -> None:
 
 
 def test_f4_resolve_store_config_prod_inmemory_fails_fast(monkeypatch):
-    """⑩ @架构 seq3265: `app_env=="prod"` + `in_memory` => raise (fail-fast). The gate
-    lives in `resolve_store_config`, so startup (which resolves) refuses to boot; no
-    silent in-memory fallback in prod. `db=None` short-circuits to `pg_array`."""
+    """⑩ @架构 seq3265/3279: `app_env=="prod"` + `in_memory` => raise `ValueError`
+    (fail-fast; exception type frozen @3279). The gate lives in `resolve_store_config`,
+    so startup (which resolves) refuses to boot; no silent in-memory fallback in prod.
+    `db=None` short-circuits to `pg_array`."""
     mod = _emb_mod()
     resolve = getattr(mod, "resolve_store_config", None)
     build = getattr(mod, "build_embedding_store", None)
@@ -1454,20 +1455,10 @@ def test_f4_resolve_store_config_prod_inmemory_fails_fast(monkeypatch):
         "⑩: db=None must short-circuit to pg_array (no config read, no env gate)"
     )
 
-    for label, call in (
-        ("resolve_store_config(object())", lambda: resolve(object())),
-        ("build_embedding_store(object())", lambda: build(object())),
-    ):
-        try:
-            call()
-        except AssertionError:
-            raise
-        except Exception:  # noqa: BLE001
-            continue
-        pytest.fail(
-            f"⑩ fail-fast: {label} must RAISE when app_env=='prod' and the configured "
-            f"store is {mem!r} (no silent in-memory fallback in prod)"
-        )
+    with pytest.raises(ValueError):
+        resolve(object())
+    with pytest.raises(ValueError):
+        build(object())
 
 
 def test_f5_resolve_store_config_dev_test_allows_inmemory(monkeypatch):

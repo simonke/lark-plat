@@ -1557,4 +1557,100 @@ export interface WorkflowRunQuery {
   size?: number
 }
 
+// ---------------------------------------------------------------- cicd provider (P3-5, tuple seq3043 / §14.2)
+export type CicdProviderType = 'gitlab' | 'jenkins' | 'generic'
+
+export interface CicdProvider {
+  id: number
+  type: CicdProviderType
+  name: string
+  endpoint: string
+  enabled: number
+  status: string
+  last_heartbeat: string | null
+  created_by: number | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CicdProviderOut extends CicdProvider {
+  config_mask?: Record<string, unknown>
+}
+
+export interface CicdProviderCreate {
+  type: CicdProviderType
+  name: string
+  endpoint: string
+  config?: Record<string, unknown>
+  enabled?: number
+}
+
+export interface CicdProviderUpdate {
+  name?: string | null
+  endpoint?: string | null
+  config?: Record<string, unknown> | null
+  enabled?: number | null
+}
+
+export interface CicdProviderTestResult {
+  ok: boolean
+  id?: number
+  type?: string
+  name?: string
+  status?: string
+  latency_ms?: number | null
+  error_message?: string | null
+}
+
+export interface CicdProviderQuery {
+  type?: CicdProviderType
+  name?: string
+  page?: number
+  size?: number
+}
+
+// ---------------------------------------------------------------- release (P3-5, tuple seq3043 / §14.1)
+export type ReleaseEnv = 'dev' | 'test' | 'prod'
+export type ReleaseStatus =
+  | 'pending'
+  | 'deploying'
+  | 'canary'
+  | 'succeeded'
+  | 'failed'
+  | 'rolled_back'
+  | 'cancelled'
+
+export interface Release {
+  id: number
+  provider_id: number
+  app: string
+  env: ReleaseEnv
+  version: string
+  artifact_ref?: string | null
+  status: ReleaseStatus
+  workflow_run_id: number | null
+  target_host_ids: number[] | null
+  rolled_back_from: number | null
+  created_by: number | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ReleaseCreate {
+  provider_id: number
+  app: string
+  version: string
+  env: ReleaseEnv
+  artifact_ref?: string | null
+  target_host_ids?: number[]
+}
+
+export interface ReleaseQuery {
+  app?: string
+  env?: ReleaseEnv
+  status?: ReleaseStatus
+  page?: number
+  size?: number
+}
+
 

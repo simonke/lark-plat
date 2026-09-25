@@ -56,7 +56,7 @@ def upgrade() -> None:
         sa.Column("doc_ref", sa.String(length=64), nullable=False),
         sa.Column("chunk_ref", sa.String(length=128), nullable=False),
         sa.Column("embedding", JSONB(), nullable=False),
-        sa.Column("entity_scope", JSONB(), nullable=True),
+        sa.Column("entity_scope", JSONB(), nullable=False, server_default=sa.text("'[]'::jsonb")),
         sa.Column("dim", sa.Integer(), nullable=False),
         sa.Column(
             "created_at", sa.DateTime(timezone=True),
@@ -91,7 +91,7 @@ def upgrade() -> None:
         sa.Column("name", sa.String(length=128), nullable=False),
         sa.Column("input", JSONB(), nullable=True),
         sa.Column("expected", JSONB(), nullable=True),
-        sa.Column("is_neg_control", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("is_neg_control", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column(
             "created_at", sa.DateTime(timezone=True),
             server_default=sa.text("now()"), nullable=False,

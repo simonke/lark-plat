@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Float, Index, Integer, String, func
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, Index, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -41,8 +41,9 @@ class KbEmbedding(Base):
     chunk_ref: Mapped[str] = mapped_column(String(128), nullable=False)
     # Application-side vector: JSONB list[float] (ADR#2 (b), no pgvector).
     embedding: Mapped[list] = mapped_column(JSONB, nullable=False)
-    # Retrieval-layer visibility key: list[str] of entity ids (NULL = global).
-    entity_scope: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # Retrieval-layer visibility key: list[str] of entity ids (NOT NULL, fail-closed).
+    # A missing/empty scope matches NO non-empty caller scope (never NULL=global).
+    entity_scope: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     dim: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -77,7 +78,7 @@ class AiEvalCase(Base):
     name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     input: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     expected: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    is_neg_control: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    is_neg_control: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

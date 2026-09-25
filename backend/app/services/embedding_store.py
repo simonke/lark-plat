@@ -17,7 +17,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.models.ai import KbEmbedding
@@ -26,6 +26,8 @@ from app.db.models.ai import KbEmbedding
 EMBEDDING_STORE_CONFIG_KEY = "ai.embedding_store"
 EMBEDDING_STORE_PG_ARRAY = "pg_array"
 EMBEDDING_STORE_IN_MEMORY = "in_memory"
+# Frozen selection enum (addendum ⑧, @架构 seq3248): anything else is invalid.
+VALID_STORES = (EMBEDDING_STORE_PG_ARRAY, EMBEDDING_STORE_IN_MEMORY)
 
 
 @dataclass
@@ -51,13 +53,18 @@ class EmbeddingHit:
 
 
 def _overlaps(record_scope, scope: ScopeFilter | None) -> bool:
-    """Retrieval-layer visibility: NULL scope = global; empty caller scope = closed."""
+    """Retrieval-layer visibility (ADR#3/⑨).
+
+    ``scope is None`` (admin) => all-visible. Otherwise the caller scope must be
+    non-empty AND the record must carry a matching scope: a NULL/absent record
+    scope is fail-closed (never treated as global).
+    """
     if scope is None:
         return True
     if not scope.entity_ids:
         return False  # fail-closed: no visible entities => nothing retrievable
     if record_scope is None:
-        return True  # global record is visible to any non-empty scope
+        return False  # ⑨ fail-closed: no-scope record never matches a scoped query
     if isinstance(record_scope, (list, tuple, set, frozenset)):
         rec = {str(x) for x in record_scope}
     else:  # scalar id (e.g. entity_scope=7)
@@ -151,7 +158,7 @@ class PostgresArrayEmbeddingStore(EmbeddingStore):
                         doc_ref=str(row.get("doc_ref", "")),
                         chunk_ref=str(row.get("chunk_ref", "")),
                         embedding=list(row.get("embedding") or []),
-                        entity_scope=list(row["entity_scope"]) if row.get("entity_scope") else None,
+                        entity_scope=list(row["entity_scope"]) if row.get("entity_scope") else [],
                         dim=int(row.get("dim") or len(row.get("embedding") or [])),
                     )
                 )
@@ -177,11 +184,12 @@ class PostgresArrayEmbeddingStore(EmbeddingStore):
                 if not scope.entity_ids:
                     return []  # fail-closed: no visible entities => nothing retrievable
                 ids = [str(i) for i in scope.entity_ids]
-                # Query-layer scope predicate (ADR#3): correlated EXISTS over the
+                # Query-layer scope predicate (ADR#3/⑨): correlated EXISTS over the
                 # JSONB array; compiled SQL carries `entity_scope ... IN (...)`.
+                # NULL/absent scope is NOT a pass branch (fail-closed).
                 elem = func.jsonb_array_elements_text(KbEmbedding.entity_scope).table_valued("value")
                 overlap = select(1).select_from(elem).where(elem.c.value.in_(ids)).exists()
-                stmt = stmt.where(or_(KbEmbedding.entity_scope.is_(None), overlap))
+                stmt = stmt.where(overlap)
             hits: list[EmbeddingHit] = []
             for doc_ref, chunk_ref, embedding, dim in session.execute(stmt).all():
                 hits.append(
@@ -196,3 +204,37 @@ class PostgresArrayEmbeddingStore(EmbeddingStore):
         finally:
             if owned:
                 session.close()
+
+
+def resolve_store_config(db: Session | None = None) -> str:
+    """Resolve the configured embedding-store backend (addendum ⑧; @架构 seq3248).
+
+    Reads ``ai.embedding_store`` via ``ConfigRuleRepository.by_key``. A missing or
+    unset value defaults to ``pg_array``; a value outside ``VALID_STORES`` raises
+    (no silent fallback). Called at startup so an invalid value fails fast.
+    """
+    if db is None:
+        return EMBEDDING_STORE_PG_ARRAY
+    from app.repositories import ConfigRuleRepository
+
+    row = ConfigRuleRepository(db).by_key(EMBEDDING_STORE_CONFIG_KEY)
+    raw = getattr(row, "rule_value", None) if row is not None else None
+    value = raw.get("value") if isinstance(raw, dict) else None
+    chosen = value or EMBEDDING_STORE_PG_ARRAY
+    if chosen not in VALID_STORES:
+        raise ValueError(
+            f"invalid {EMBEDDING_STORE_CONFIG_KEY}={chosen!r}; expected one of {VALID_STORES}"
+        )
+    return chosen
+
+
+def build_embedding_store(db: Session | None = None, value: str | None = None) -> EmbeddingStore:
+    """Construct the configured store (addendum ⑧); invalid value raises."""
+    chosen = value or resolve_store_config(db)
+    if chosen not in VALID_STORES:
+        raise ValueError(
+            f"invalid {EMBEDDING_STORE_CONFIG_KEY}={chosen!r}; expected one of {VALID_STORES}"
+        )
+    if chosen == EMBEDDING_STORE_IN_MEMORY:
+        return InMemoryEmbeddingStore()
+    return PostgresArrayEmbeddingStore(db)

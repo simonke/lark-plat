@@ -23,6 +23,7 @@ from app.core.redis_helper import close_redis, get_redis
 from app.core.response import CODE_BAD_REQUEST, CODE_SERVER_ERROR, Result
 from app.db.seed import run_seed
 from app.db.session import SessionLocal
+from app.services.embedding_store import resolve_store_config
 
 # Register all ORM models so Alembic autogenerate can see them.
 import app.db.models  # noqa: F401  (import side effects)
@@ -38,6 +39,10 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger = logging.getLogger(__name__)
         logger.exception("seed data failed; continuing startup")
+    try:
+        # addendum ⑧ (@架构 seq3248): an invalid ai.embedding_store fails startup
+        # (no silent fallback) — raises out of lifespan.
+        resolve_store_config(db)
     finally:
         db.close()
     try:

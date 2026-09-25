@@ -10,14 +10,14 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import String, and_, cast, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import NotFoundError, ValidationError
 from app.db.models import AI_ACTION_DECISIONS, AiAction, OpsEvent
 from app.services.ai_gate import require_feature
 from app.services.ai_scope import KNOWN_ENTITY_TYPES, visible_entity_ids_for
-from app.services.embedding_store import PostgresArrayEmbeddingStore, ScopeFilter
+from app.services.embedding_store import ScopeFilter, build_embedding_store
 from app.services.llm_client import EchoLLMClient, LLMClient
 
 _AI_USE = "ai:use"
@@ -36,7 +36,15 @@ def _client() -> LLMClient:
 
 
 def _scope_for(db: Session, user, entity_type: str) -> ScopeFilter | None:
-    """Build the retrieval scope as a *query input* (None for admin = all)."""
+    """Build the retrieval scope as a *query input* (None for admin = all).
+
+    The entity_type *validity* is a contract precondition checked BEFORE the admin
+    bypass (甲, @架构 seq3254): an unregistered type is fail-closed for every role
+    (including admin) => a non-None empty scope. Only a KNOWN type + admin yields
+    ``None`` (all-visible); non-admins never yield ``None``.
+    """
+    if entity_type not in KNOWN_ENTITY_TYPES:
+        return ScopeFilter(entity_type=entity_type, entity_ids=frozenset())
     if getattr(user, "is_admin", False):
         return None
     return ScopeFilter(entity_type=entity_type, entity_ids=visible_entity_ids_for(entity_type, user, db))
@@ -184,7 +192,7 @@ def _fts_hits(db: Session, q: str, scope: ScopeFilter | None, entity_type: str, 
     if scope is not None:
         if not scope.entity_ids:
             return []
-        stmt = stmt.where(KbArticle.id.in_([int(i) for i in scope.entity_ids]))
+        stmt = stmt.where(cast(KbArticle.id, String).in_([str(i) for i in scope.entity_ids]))
     rows = db.execute(stmt.order_by(KbArticle.id.desc()).limit(limit)).all()
     return [{"doc_ref": str(r[0]), "chunk_ref": f"article:{r[0]}", "title": r[1], "score": 0.0,
              "branch": "fts"} for r in rows]
@@ -198,7 +206,7 @@ def kb_semantic_search(db: Session, user, q: str, mode: str, limit: int, entity_
     if scope is not None and not scope.entity_ids:
         return {"list": [], "total": 0, "mode": mode, "fail_closed": True}
     qvec = _client().embed([q])[0]
-    store = PostgresArrayEmbeddingStore(db)
+    store = build_embedding_store(db)
     hits = store.query(qvec, scope=scope, limit=limit)
     out = [{"doc_ref": h.doc_ref, "chunk_ref": h.chunk_ref, "score": round(h.score, 6),
             "branch": "vector"} for h in hits]
@@ -219,7 +227,7 @@ def kb_answer(db: Session, user, q: str, limit: int, entity_type: str | None) ->
     if scope is not None and not scope.entity_ids:
         return {"answer": "", "citations": [], "authoritative": False, "fail_closed": True}
     qvec = _client().embed([q])[0]
-    hits = PostgresArrayEmbeddingStore(db).query(qvec, scope=scope, limit=limit)
+    hits = build_embedding_store(db).query(qvec, scope=scope, limit=limit)
     citations = [{"doc_ref": h.doc_ref, "chunk_ref": h.chunk_ref, "score": round(h.score, 6)}
                  for h in hits]
     context = "; ".join(c["chunk_ref"] for c in citations)

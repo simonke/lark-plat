@@ -286,7 +286,7 @@ IdP 回调 GET /auth/oauth/{provider}/callback?code&state → 校验 state
 - `GET /workflow-runs`、`GET /workflow-runs/{id}`（**DAG 节点状态矩阵**）、`POST /workflow-runs/{id}/cancel|retry`。
 - WS `/ws/workflow-runs/{id}`：节点状态实时推送（复刻 exec WS 帧 seq 防乱序）。
 - 权限码：`workflow:list/add/edit/del/version/rollback/run/view/cancel`（9；`/workflow-runs/{id}/retry` **复用 `workflow:run`**）；flag **`feature.workflow`**（默认 False）。
-- paths **URL 键 +9 → `len(paths)==142`**（`/workflows`·`/{id}`·`/{id}/versions`·`/{id}/rollback`·`/{id}/run` ＋ `/workflow-runs`·`/{id}`·`/{id}/cancel`·`/{id}/retry`；ops 13；WS 不入 openapi）；迁移 **+1**（4 表，rev 建议 **`a1b2c3d4e5f7`**〔实现钉最终唯一 id；与既有 `a1b2c3d4e5f6` 形近、勿混〕，parent `f2a3b4c5d6e7`、单 head）。
+- paths **URL 键 +11 → `len(paths)==144`**（`/workflows`·`/{id}`·`/{id}/versions`·`/{id}/rollback`·`/{id}/run` ＋ `/workflow-runs`·`/{id}`·`/{id}/cancel`·`/{id}/retry`·`/{id}/ws-token`·`/{run_id}/callback/{node_key}`；ops 15；WS 不入 openapi）；迁移 **+1**（4 表，rev 建议 **`a1b2c3d4e5f7`**〔实现钉最终唯一 id；与既有 `a1b2c3d4e5f6` 形近、勿混〕，parent `f2a3b4c5d6e7`、单 head）。
 
 ## 14. CI/CD 集成（三期 P3-5：发布编排段）
 
@@ -309,7 +309,7 @@ IdP 回调 GET /auth/oauth/{provider}/callback?code&state → 校验 state
 - `POST /cicd/webhooks/{provider}`（token 鉴权）。
 - `GET/POST /releases`、`GET /releases/{id}`（状态/证据链）、`POST /releases/{id}/canary|promote|rollback|cancel`。
 - 权限码：`cicd:provider:list/add/edit/del/test` ＋ `release:list/add/view/run/canary/promote/rollback/cancel`；flag **`feature.cicd`**（默认 False）。
-- paths **URL 键 +10 → `len(paths)==152`**（`/cicd/providers`·`/{id}`·`/{id}/test`·`/cicd/webhooks/{provider}` ＋ `/releases`·`/{id}`·`/{id}/canary`·`/{id}/promote`·`/{id}/rollback`·`/{id}/cancel`；ops 13）；迁移 **+1**（rev 建议 **`b2c3d4e5f6a8`**〔与既有 `b2c3d4e5f6a7` 形近、勿混〕，parent P3-4 rev、单 head）。
+- paths **URL 键 +10 → `len(paths)==154`**（基 M6 144；`/cicd/providers`·`/{id}`·`/{id}/test`·`/cicd/webhooks/{provider}` ＋ `/releases`·`/{id}`·`/{id}/canary`·`/{id}/promote`·`/{id}/rollback`·`/{id}/cancel`；ops 13）；迁移 **+1**（rev 建议 **`b2c3d4e5f6a8`**〔与既有 `b2c3d4e5f6a7` 形近、勿混〕，parent P3-4 rev、单 head）。
 - 前端：`/cicd/providers`、`/releases`（列表/状态，不引图库）。
 
 ### 14.4 与 §13 / 批次关系

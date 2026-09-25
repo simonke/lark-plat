@@ -612,3 +612,116 @@ def _make_scope(scope_cls, *, entity_type: str, ids: list[int]):
         return scope_cls(entity_type=entity_type, ids=ids)
     except TypeError:
         return scope_cls(entity_type, ids)
+
+
+# ── R0–R2: runtime gate order (offline TestClient) ───────────────────────────
+
+import app.db.session as _dbs  # noqa: E402
+from sqlalchemy import BigInteger, create_engine  # noqa: E402
+from sqlalchemy.dialects.postgresql import JSONB  # noqa: E402
+from sqlalchemy.ext.compiler import compiles  # noqa: E402
+from sqlalchemy.orm import sessionmaker  # noqa: E402
+
+
+@compiles(JSONB, "sqlite")
+def _jsonb_as_json(type_, compiler, **kw):  # noqa: ANN001
+    return "JSON"
+
+
+@compiles(BigInteger, "sqlite")
+def _bigint_as_integer(type_, compiler, **kw):  # noqa: ANN001
+    return "INTEGER"
+
+
+def _mk_tables():
+    import app.db.models  # noqa: F401,PLC0415 (register all models)
+    from app.db.base import Base  # noqa: PLC0415
+
+    tl = Base.metadata.tables
+    names = (
+        "config_rule", "sys_audit_log", "sys_user",
+        "ops_event", "kb_embedding", "ai_action", "ai_eval_case", "ai_eval_run",
+    )
+    return [tl[n] for n in names if n in tl]
+
+
+@pytest.fixture()
+def ai_client(tmp_path):
+    """Yields ``(client, set_user, set_flag)`` for the AIOps gate-order locks."""
+    from app.db.base import Base  # noqa: PLC0415
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'p4.db'}", future=True)
+    Base.metadata.create_all(engine, tables=_mk_tables())
+    maker = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, future=True)
+    session = maker()
+
+    prev_bind = getattr(_dbs.SessionLocal, "kw", {}).get("bind")
+    _dbs.SessionLocal.configure(bind=engine)
+
+    import app.main as main  # noqa: PLC0415
+    from app.api.deps import CurrentUser, get_current_user  # noqa: PLC0415
+    from app.db.session import get_db  # noqa: PLC0415
+    from starlette.testclient import TestClient  # noqa: PLC0415
+
+    main.app.dependency_overrides[get_db] = lambda: (yield session)
+
+    def set_user(perms, admin=False):
+        user = CurrentUser(
+            user_id=1, username="qa", is_admin=admin,
+            permissions=list(perms), visible_group_ids=[],
+        )
+        main.app.dependency_overrides[get_current_user] = lambda: user
+        return user
+
+    def set_flag(key: str, on: bool):
+        from app.db.models.notify import ConfigRule  # noqa: PLC0415
+
+        row = session.query(ConfigRule).filter_by(rule_key=key).one_or_none()
+        if row is None:
+            session.add(ConfigRule(rule_key=key, rule_value={"value": on}))
+        else:
+            row.rule_value = {"value": on}
+        session.commit()
+
+    try:
+        yield TestClient(main.app), set_user, set_flag
+    finally:
+        main.app.dependency_overrides.clear()
+        session.close()
+        if prev_bind is not None:
+            _dbs.SessionLocal.configure(bind=prev_bind)
+        engine.dispose()
+
+
+def test_r0_events_feature_gate_first_400(ai_client):
+    """tuple seq3212 #2: feature gate FIRST — flag off => 400 for ANY caller (even admin)."""
+    client, set_user, set_flag = ai_client
+    set_flag("ai.events", False)
+    set_user([], admin=True)
+    r = client.get("/api/v1/events")
+    assert r.status_code == 400, (
+        f"feature-first: ai.events off => 400 for any caller; got {r.status_code} {r.text}"
+    )
+
+
+def test_r1_events_missing_perm_403(ai_client):
+    """tuple seq3212 #2/#3: flag on + missing `ai:use` => 403."""
+    client, set_user, set_flag = ai_client
+    set_flag("ai.enabled", True)
+    set_flag("ai.events", True)
+    set_user([])  # authenticated but no ai:use
+    r = client.get("/api/v1/events")
+    assert r.status_code == 403, (
+        f"flag on + missing ai:use => 403; got {r.status_code} {r.text}"
+    )
+
+
+def test_r2_ai_actions_admin_only_403(ai_client):
+    """tuple seq3212 #3: `GET /ai/actions` requires `ai:admin` (not merely ai:use)."""
+    client, set_user, set_flag = ai_client
+    set_flag("ai.enabled", True)
+    set_user(["ai:use"])  # ai:use alone is insufficient
+    r = client.get("/api/v1/ai/actions")
+    assert r.status_code == 403, (
+        f"/ai/actions requires ai:admin; got {r.status_code} {r.text}"
+    )

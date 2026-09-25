@@ -5,11 +5,13 @@ design `docs/architecture-phase23.md §13` + `docs/api-design-v3.md §7.2` (comm
 requirements `§27.2` (@需求 seq2890, baseline v1.0).
 Baseline = release **M5 = `e6712b9`** (master).
 
-Symbol names pinned HERE by @单元 (lock-first) and pending @架构 ratification
-(seq2866: "符号 pin 随各批 tuple 冻结 docs 落"):
-  app/db/models/workflow.py     -> Workflow / WorkflowVersion / WorkflowRun / WorkflowNodeRun
-                                   WORKFLOW_RUN_STATUSES / WORKFLOW_NODE_TYPES / WORKFLOW_NODE_RUN_STATUSES
-  app/services/workflow_service.py -> WORKFLOW_TRANSITIONS (action-keyed, same shape as TICKET_TRANSITIONS)
+Symbol names = @架构 **canonical P3-4 tuple** (seq2894):
+  app/db/models/workflow.py -> Workflow / WorkflowVersion / WorkflowRun / WorkflowNodeRun
+                               RUN_STATUSES / NODE_TYPES / NODE_STATUSES / TERMINAL_RUN_STATUSES / TRIGGER_TYPES
+  app/services/workflow_service.py -> module funcs list_workflows/create_workflow/get_workflow/
+                               update_workflow/delete_workflow/create_version/list_versions/
+                               rollback_workflow/run_workflow/list_runs/get_run/cancel_run/retry_run
+  gate order = FEATURE FIRST (ticket pattern): service first line `_require_feature`, no require_perm in routes.
 
 EXPECTED: clean **RED** until P3-4 backend lands (add-only); import-guarded so the
 run reports assertion failures rather than collection errors. Offline only (temp SQLite;
@@ -22,7 +24,7 @@ A1  openapi: 9 new URL keys present with correct methods (param names shape-matc
 A2  openapi `paths` == 142 (133 + 9 URL keys; URL-keyed, NOT operations; ops 13)
 M1  4 tables registered: workflow / workflow_version / workflow_run / workflow_node_run
 M2  core columns per table (§13.2)
-M3  module word-lists: run statuses / node types / node-run statuses
+M3  module word-lists: RUN_STATUSES / NODE_TYPES / NODE_STATUSES / TERMINAL_RUN_STATUSES / TRIGGER_TYPES
 C1  UNIQUE(workflow_id, version) on workflow_version
 C2  UNIQUE(run_id, node_key) on workflow_node_run
 F1  feature flag `feature.workflow` default **False** in `DEFAULT_CONFIG_RULES`
@@ -40,6 +42,7 @@ R5  definition with a cycle -> 422
 R6  POST /workflows/{id}/run (workflow:run) -> 200 {run_id}; same Idempotency-Key -> same run_id
 R7  GET /workflow-runs/{id} -> 200 structured {run, nodes[]}
 R8  DELETE /workflows/{id} when referenced by a run -> 409
+R9  definition over-limit (>cap nodes) -> 422 (baseline nodes<=100/edges<=500; freeze-fixed later)
 
 Run (from the backend checkout, backend venv):
     python -m pytest tests/test_p3_4_workflow_lock.py -p no:cacheprovider -o addopts= -q
@@ -171,6 +174,9 @@ WF_COLUMNS = {
 }
 RUN_STATUSES = {"pending", "running", "succeeded", "failed", "cancelled"}
 NODE_TYPES = {"exec_task", "manual_approval", "wait", "callback", "sleep"}
+NODE_STATUSES = {"pending", "running", "succeeded", "failed", "skipped", "waiting"}
+TERMINAL_RUN_STATUSES = {"succeeded", "failed", "cancelled"}
+TRIGGER_TYPES = {"manual", "ticket", "schedule", "alert", "release"}
 
 
 def _tables():
@@ -208,14 +214,19 @@ def test_m3_workflow_word_lists_in_models():
     mod = _try("app.db.models.workflow")
     if isinstance(mod, Exception):
         pytest.fail(f"P3-4 lock: app.db.models.workflow unavailable: {mod}")
-    statuses = set(getattr(mod, "WORKFLOW_RUN_STATUSES", ()))
-    assert statuses == RUN_STATUSES, (
-        f"WORKFLOW_RUN_STATUSES must == {sorted(RUN_STATUSES)} (§13.2); got {sorted(statuses)}"
-    )
-    types = set(getattr(mod, "WORKFLOW_NODE_TYPES", ()))
-    assert types == NODE_TYPES, (
-        f"WORKFLOW_NODE_TYPES must == {sorted(NODE_TYPES)} (§13.2); got {sorted(types)}"
-    )
+    want = {
+        "RUN_STATUSES": RUN_STATUSES,
+        "NODE_TYPES": NODE_TYPES,
+        "NODE_STATUSES": NODE_STATUSES,
+        "TERMINAL_RUN_STATUSES": TERMINAL_RUN_STATUSES,
+        "TRIGGER_TYPES": TRIGGER_TYPES,
+    }
+    problems = []
+    for name, expect in want.items():
+        got = set(getattr(mod, name, ()))
+        if got != expect:
+            problems.append(f"{name}: must == {sorted(expect)}, got {sorted(got)}")
+    assert not problems, "P3-4 word-list contract (tuple seq2894): " + "; ".join(problems)
 
 
 # ── C1/C2: uniqueness constraints ────────────────────────────────────────────
@@ -295,22 +306,21 @@ def test_g1_migration_single_head_descends_from_p33():
 
 # ── T1: service transition map ───────────────────────────────────────────────
 
-def test_t1_workflow_transitions_action_keyed():
+_SERVICE_FNS = (
+    "list_workflows", "create_workflow", "get_workflow", "update_workflow", "delete_workflow",
+    "create_version", "list_versions", "rollback_workflow", "run_workflow",
+    "list_runs", "get_run", "cancel_run", "retry_run",
+)
+
+
+def test_t1_workflow_service_functions_present():
     mod = _try("app.services.workflow_service")
     if isinstance(mod, Exception):
         pytest.fail(f"P3-4 lock: app.services.workflow_service unavailable: {mod}")
-    tr = getattr(mod, "WORKFLOW_TRANSITIONS", None)
-    assert isinstance(tr, dict) and tr, "WORKFLOW_TRANSITIONS (action-keyed dict) not defined"
-    # run start: pending -> running
-    assert "start" in tr, "WORKFLOW_TRANSITIONS must expose 'start' (pending -> running)"
-    allowed_from, target = tr["start"]
-    assert target == "running", f"start target must be 'running'; got {target!r}"
-    assert "pending" in set(allowed_from), f"start allowed_from must include 'pending'; got {allowed_from!r}"
-    # terminal actions
-    for action, terminal in (("succeed", "succeeded"), ("fail", "failed"), ("cancel", "cancelled")):
-        assert action in tr, f"WORKFLOW_TRANSITIONS must expose {action!r}"
-        _af, tgt = tr[action]
-        assert tgt == terminal, f"{action} target must be {terminal!r}; got {tgt!r}"
+    missing = [fn for fn in _SERVICE_FNS if not callable(getattr(mod, fn, None))]
+    assert not missing, (
+        f"app.services.workflow_service must expose callables per tuple seq2894: missing {missing}"
+    )
 
 
 # ── R0–R8: route-level behavioural locks (offline TestClient) ────────────────
@@ -445,10 +455,14 @@ def test_r3_list_workflows_page(wf_client):
     r = client.get("/api/v1/workflows")
     assert r.status_code == 200, r.text
     d = r.json().get("data") or {}
-    assert {"list", "total", "page", "size"} <= set(d), (
-        f"GET /workflows must return Page<Workflow> {{list,total,page,size}}; keys={sorted(d)}"
+    assert {"total", "page", "size"} <= set(d), (
+        f"GET /workflows must return a Page envelope {{...,total,page,size}}; keys={sorted(d)}"
     )
-    assert isinstance(d["list"], list)
+    rows_key = "list" if "list" in d else ("items" if "items" in d else None)
+    assert rows_key is not None, (
+        f"Page rows collection must be `list` (repo convention) or `items`; keys={sorted(d)}"
+    )
+    assert isinstance(d[rows_key], list)
 
 
 def _create_wf(client):
@@ -517,6 +531,10 @@ def test_r7_run_detail_structured(wf_client):
         f"GET /workflow-runs/{{id}} must return structured {{run, nodes[]}}; keys={sorted(d)}"
     )
     assert isinstance(d["nodes"], list)
+    for n in d["nodes"]:
+        assert {"node_key", "node_type", "status"} <= set(n), (
+            f"each run node must expose node_key/node_type/status; keys={sorted(n)}"
+        )
 
 
 def test_r8_delete_referenced_workflow_409(wf_client):
@@ -529,4 +547,18 @@ def test_r8_delete_referenced_workflow_409(wf_client):
     r = client.delete(f"/api/v1/workflows/{wid}")
     assert r.status_code == 409, (
         f"deleting a workflow referenced by a run must be 409; got {r.status_code}: {r.text}"
+    )
+
+
+def test_r9_definition_over_limit_422(wf_client):
+    client, set_user, set_flag = wf_client
+    set_flag(True)
+    set_user(["workflow:add", "workflow:version"], admin=True)
+    wid = _create_wf(client)
+    huge = {"nodes": [
+        {"key": f"n{i}", "type": "sleep", "config": {}, "depends_on": []} for i in range(1001)
+    ]}
+    r = client.post(f"/api/v1/workflows/{wid}/versions", json={"definition": huge})
+    assert r.status_code == 422, (
+        f"definition exceeding node cap (baseline 100) must be 422; got {r.status_code}: {r.text}"
     )

@@ -1288,7 +1288,7 @@ def _seed_release_linked_to_run(session, run_id: int, status: str = "canary") ->
     return rel.id
 
 
-def _seed_release_triggered_run(session, definition) -> int:
+def _seed_release_triggered_run(session, definition, trigger_type: str = "release") -> int:
     from app.db.models.workflow import (  # noqa: PLC0415
         Workflow, WorkflowNodeRun, WorkflowRun, WorkflowVersion,
     )
@@ -1299,7 +1299,7 @@ def _seed_release_triggered_run(session, definition) -> int:
     session.add(WorkflowVersion(workflow_id=wf.id, version=1, definition=definition))
     run = WorkflowRun(
         workflow_id=wf.id, workflow_version=1, status="pending",
-        trigger_type="release", trigger_ref={},
+        trigger_type=trigger_type, trigger_ref={},
     )
     session.add(run)
     session.flush()
@@ -1345,6 +1345,49 @@ def test_b21_release_run_failed_flips_linked_release(env, monkeypatch):
     session.expire_all()
     assert session.get(Release, rel_id).status == "failed", (
         "P3-6 ①: reaction must be a terminal no-op (idempotent on a failed release)"
+    )
+
+
+def test_b21b_release_seam_gated_by_trigger_type_and_success(env, monkeypatch):
+    """① negatives (@代码reviewer seq3155): the seam is gated, not "any failed run flips a release".
+
+    (a) a NON-release run reaching `failed` must NOT touch a linked release;
+    (b) a release run reaching `succeeded` must NOT flip its release (promote收口).
+    """
+    session, set_flag = env
+    _set_config(session, "feature.cicd", True)
+    eng = _try("app.services.workflow_engine")
+    if isinstance(eng, Exception):
+        pytest.fail(f"P3-6 lock: workflow_engine unavailable: {eng}")
+    monkeypatch.setattr(eng, "DRIVER_AUTOSTART", False, raising=False)
+    from app.db.models.cicd import Release  # noqa: PLC0415
+
+    # (a) non-release run -> failed; the release it points at must stay `canary`
+    fail_def = {
+        "nodes": [
+            {"key": "e", "type": "exec_task", "config": {"host_ids": [1], "command": "true"}, "depends_on": []}
+        ]
+    }
+    rid_a = _seed_release_triggered_run(session, fail_def, trigger_type="manual")
+    rel_a = _seed_release_linked_to_run(session, rid_a, status="canary")
+    _force_run_running(session, rid_a)
+    _force_node(session, rid_a, "e", status="running", exec_task_id=987654321)
+    eng.recover_runs()
+    assert _step_until_done(session, rid_a) == "failed", "non-release run must still reach failed"
+    session.expire_all()
+    assert session.get(Release, rel_a).status == "canary", (
+        "P3-6 ①: a NON-release run (`trigger_type!='release'`) reaching `failed` must NOT "
+        "flip a release — else any failed run would mutate releases (false-green)"
+    )
+
+    # (b) release run -> succeeded; release must NOT auto-change (still `promote`收口)
+    rid_b = _seed_release_triggered_run(session, {"nodes": [_sleep("s")]})
+    rel_b = _seed_release_linked_to_run(session, rid_b, status="canary")
+    assert _step_until_done(session, rid_b) == "succeeded", "release run must succeed here"
+    session.expire_all()
+    assert session.get(Release, rel_b).status == "canary", (
+        "P3-6 ①: a release run reaching `succeeded` must NOT auto-flip the release "
+        "(only `promote`收口)"
     )
 
 

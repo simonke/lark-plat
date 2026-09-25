@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.models.ai import KbEmbedding
 
 # Named config symbol + enum values (E8/ADR#2 store selection; @架构 seq3230).
@@ -212,6 +213,11 @@ def resolve_store_config(db: Session | None = None) -> str:
     Reads ``ai.embedding_store`` via ``ConfigRuleRepository.by_key``. A missing or
     unset value defaults to ``pg_array``; a value outside ``VALID_STORES`` raises
     (no silent fallback). Called at startup so an invalid value fails fast.
+
+    Addendum ⑩ (@架构 seq3265/3269): ``in_memory`` is forbidden when
+    ``settings.app_env == "prod"`` (production must resolve to the PG store; no
+    silent in-memory fallback). The gate lives here only — the selector seam — so
+    ``build_embedding_store`` stays a pure value dispatcher.
     """
     if db is None:
         return EMBEDDING_STORE_PG_ARRAY
@@ -224,6 +230,11 @@ def resolve_store_config(db: Session | None = None) -> str:
     if chosen not in VALID_STORES:
         raise ValueError(
             f"invalid {EMBEDDING_STORE_CONFIG_KEY}={chosen!r}; expected one of {VALID_STORES}"
+        )
+    if settings.app_env == "prod" and chosen == EMBEDDING_STORE_IN_MEMORY:
+        raise ValueError(
+            f"{EMBEDDING_STORE_CONFIG_KEY}={chosen!r} is not allowed when "
+            "app_env=='prod' (no in-memory store in production)"
         )
     return chosen
 

@@ -165,6 +165,21 @@ const routes: RouteRecordRaw[] = [
         name: 'workflow-run-detail',
         component: () => import('../views/workflow/WorkflowRunDetailView.vue'),
       },
+      {
+        path: 'cicd/providers',
+        name: 'cicd-providers',
+        component: () => import('../views/cicd/ProvidersView.vue'),
+      },
+      {
+        path: 'releases',
+        name: 'releases',
+        component: () => import('../views/releases/ReleasesView.vue'),
+      },
+      {
+        path: 'releases/:id',
+        name: 'release-detail',
+        component: () => import('../views/releases/ReleaseDetailView.vue'),
+      },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/' },

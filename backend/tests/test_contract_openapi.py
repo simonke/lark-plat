@@ -9,6 +9,8 @@ stage-4 terminal scope: 66 + 5 terminal paths frozen 2026-09-05).
 
 from __future__ import annotations
 
+from tests.openapi_baseline import M6_P3_4_KEYS
+
 # Contract error-code table (api-design v2.1 §1)
 EXPECTED_CODES = {0, 400, 401, 403, 404, 409, 422, 429, 500, 1001}
 
@@ -142,7 +144,21 @@ def test_path_count_stable(openapi_spec):
     # 142 -> 144: P3-4b adds 2 more URL keys (/workflow-runs/{id}/ws-token,
     # /workflow-runs/{id}/callback/{node_key}; @架构 engine tuple v1.1/v1.2,
     # add-only; WS itself is NOT in openapi).
-    assert len(paths) == 144
+    # 144 -> 154: P3-5 adds 10 CI/CD URL keys (5 /cicd/providers·/{id}·/{id}/test·
+    # /cicd/webhooks/{provider} + 5 /releases·/{id}·/{id}/canary·/{id}/promote·
+    # /{id}/rollback·/{id}/cancel; @架构 seq3043 tuple v1.0, base M6 144, add-only).
+    # NOTE: the stale "152" was the old 142 base (@后端 seq3042 / @架构 seq3043).
+    assert len(paths) == 154
+    # layer-④ committed face (@架构 seq3057 / seq3063, option (a)): the frozen M6
+    # key set must not shrink — defeats a "net-zero substitution" (delete 1
+    # unnamed P3/P3-3 key + add 1 extra new key keeps len==154 while silently
+    # regressing the M6 surface). Complements the live-face layer-④ in
+    # test_p3_4_engine_lock / test_p3_4_workflow_lock / test_p3_5_cicd_lock.
+    removed = set(M6_P3_4_KEYS) - set(paths)
+    assert not removed, (
+        f"committed docs/openapi.json dropped frozen M6 keys {sorted(removed)}; "
+        "P3-5 is add-only over the M6 144-key baseline (@架构 seq3057/seq3063)"
+    )
 
 
 def test_stage4_terminal_paths_present(openapi_spec):

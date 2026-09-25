@@ -21,14 +21,18 @@ Scope of THIS lock (name-stable surface)
 ----------------------------------------
 P1  9 permission codes ∈ seed `PERMISSION_TREE`; `workflow:retry` reuses `workflow:run` (NOT a code)
 A1  openapi: 9 new URL keys present with correct methods (param names shape-matched)
-A2  openapi `paths` == 144 (133 + 9 P3-4 keys + 2 P3-4b keys; URL-keyed, NOT operations)
+A2  openapi `paths` **>= 144** (133 + 9 P3-4 keys + 2 P3-4b keys; URL-keyed, NOT
+    operations) + no-shrink (`removed == []`); the EXACT current value is pinned only
+    by `test_contract_openapi.py` (@架构 seq3051/seq3053)
 M1  4 tables registered: workflow / workflow_version / workflow_run / workflow_node_run
 M2  core columns per table (§13.2)
 M3  module word-lists: RUN_STATUSES / NODE_TYPES / NODE_STATUSES / TERMINAL_RUN_STATUSES / TRIGGER_TYPES
 C1  UNIQUE(workflow_id, version) on workflow_version
 C2  UNIQUE(run_id, node_key) on workflow_node_run
 F1  feature flag `feature.workflow` default **False** in `DEFAULT_CONFIG_RULES`
-G1  migration: single head descending from `f2a3b4c5d6e7` (suggested rev `a1b2c3d4e5f7`)
+G1  migration: P3-4 edge (`a1b2c3d4e5f7` descends from `f2a3b4c5d6e7`) + single head
+    that **descends from** `a1b2c3d4e5f7` (a later add-only batch may extend the chain;
+    @架构 seq3051/seq3053)
 T1  `WORKFLOW_TRANSITIONS` action-keyed: run start/succeed/fail/cancel allowed_from/target
 
 Route-level behavioural locks (in-process TestClient, offline SQLite) — HTTP status / shape is
@@ -54,6 +58,8 @@ import importlib
 import re
 
 import pytest
+
+from tests.openapi_baseline import M6_P3_4_KEYS
 
 
 def _try(mod: str):
@@ -150,18 +156,25 @@ def test_a1_p3_4_paths_present_with_methods():
     assert not problems, "P3-4 openapi surface incomplete: " + "; ".join(problems)
 
 
-def test_a2_paths_count_144():
+def test_a2_paths_count_at_least_144():
+    """P3-4/P3-4b landed 144; later add-only batches (P3-5) may add keys.
+
+    Batch lock pins the LOWER BOUND (@架构 seq3051/seq3053) and the global contract
+    test pins the EXACT current value. No-shrink: every committed docs/openapi.json
+    key must still be present at runtime (`removed == []`).
+    """
     paths = _openapi_paths()
-    # Superseded by P3-4b (engine/WS): the batch adds 2 further URL keys
-    # (GET …/ws-token + POST …/callback/{node_key}) => 142 + 2 == 144.
-    # Lock-owner decision (@单元 seq2954): keep EXACT equality, NOT a monotonic
-    # `>=`, so a future accidental 145 still fails. The 9 P3-4 keys stay pinned by A1.
-    assert len(paths) == 144, (
-        f"P3-4/P3-4b paths must be exactly 144 (133 + 9 P3-4 + 2 P3-4b); got {len(paths)}. "
+    assert len(paths) >= 144, (
+        f"P3-4/P3-4b paths must be at least 144 (133 + 9 P3-4 + 2 P3-4b); got {len(paths)}. "
         "OpenAPI `paths` is URL-keyed; /workflows·/{id}·/{id}/versions·/{id}/rollback·/{id}/run "
         "· /workflow-runs·/{id}·/{id}/cancel·/{id}/retry = 9 keys, 13 ops; P3-4b adds "
         "GET /api/v1/workflow-runs/{id}/ws-token + POST …/callback/{node_key} "
         "(the WS endpoint itself is NOT in openapi)."
+    )
+    removed = set(M6_P3_4_KEYS) - set(paths)
+    assert not removed, (
+        f"openapi keys must not shrink below the M6 baseline (@架构 seq3057): "
+        f"removed={sorted(removed)}"
     )
 
 
@@ -284,6 +297,7 @@ def test_f1_feature_workflow_default_false():
 
 _VERSIONS_DIR = __import__("pathlib").Path(__file__).resolve().parents[1] / "alembic" / "versions"
 _P33_HEAD = "f2a3b4c5d6e7"
+_P34_REV = "a1b2c3d4e5f7"
 
 
 def _revision_graph() -> dict[str, str | None]:
@@ -297,16 +311,35 @@ def _revision_graph() -> dict[str, str | None]:
     return revs
 
 
-def test_g1_migration_single_head_descends_from_p33():
+def _descends(rev: str | None, ancestor: str, revs: dict[str, str | None]) -> bool:
+    seen: set[str] = set()
+    while rev and rev not in seen:
+        seen.add(rev)
+        if rev == ancestor:
+            return True
+        rev = revs.get(rev)
+    return False
+
+
+def test_g1_migration_edge_p34_descends_from_p33_single_head():
+    """Pin the P3-4 EDGE + require the single head to descend from it.
+
+    The old form used a global head proxy (`revs[head] == P3-3`), which a later
+    add-only batch (P3-5) legitimately breaks (@架构 seq3051/seq3053).
+    """
     revs = _revision_graph()
     assert _P33_HEAD in revs, f"P3-3 head {_P33_HEAD} missing from versions dir"
+    assert _P34_REV in revs, f"P3-4 rev {_P34_REV} missing from versions dir"
+    assert revs.get(_P34_REV) == _P33_HEAD, (
+        f"P3-4 edge: {_P34_REV} must descend directly from {_P33_HEAD}; "
+        f"got {revs.get(_P34_REV)!r}"
+    )
     downs = {v for v in revs.values() if v}
     heads = sorted(r for r in revs if r not in downs)
     assert len(heads) == 1, f"migration must keep a single head; got {heads}"
-    head = heads[0]
-    assert revs[head] == _P33_HEAD, (
-        f"P3-4 head must descend directly from {_P33_HEAD} "
-        f"(suggested rev `a1b2c3d4e5f7`); head={head} parent={revs[head]}"
+    assert _descends(heads[0], _P34_REV, revs), (
+        f"head {heads[0]!r} must descend from the P3-4 rev {_P34_REV} "
+        "(a later add-only batch may extend the chain)"
     )
 
 

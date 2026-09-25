@@ -178,6 +178,13 @@ def exec_dispatch(task_id: int) -> dict:
                 broadcast_sync(th.id, {"type": "status", "data": {"status": "running"}})
                 if not dispatched:
                     _execute_via_mock(task, th, content, task.timeout_sec, task.params)
+                    # OBS-1 (@架构 seq3038/seq3051): the mock branch finalises the
+                    # host row in a SEPARATE session, so `th` is stale here; refresh
+                    # before broadcasting or the WS frame reports the pre-mock
+                    # `running/None` instead of the terminal `success`. The ssh
+                    # branch above already refreshes (cf. `_run_ssh_executor`).
+                    if hasattr(db, "refresh"):
+                        db.refresh(th)
                     broadcast_sync(th.id, {"type": "status", "data": {"status": th.status, "exit_code": th.exit_code}})
             finally:
                 release_semaphore(f"exec:host:{th.host_id}")

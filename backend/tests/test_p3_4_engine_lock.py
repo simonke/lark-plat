@@ -22,9 +22,12 @@ Scope of THIS lock
 K1  engine module symbols + DRIVER_AUTOSTART default True
 K2  workflow_ws.broadcast_sync present; WS route present; WS NOT in openapi
 K3  timeout beat task `scan_workflow_timeouts` registered
-A1  openapi `paths` == 144 (142 + ws-token + callback)
+A1  openapi `paths` **>= 144** (142 + ws-token + callback) + no-shrink (`removed == []`);
+    later add-only batches (P3-5) may extend the count — the EXACT current value is
+    pinned only by `test_contract_openapi.py` (@架构 seq3051/seq3053)
 A2  ws-token + callback URL keys present with correct methods
-G1  migration: single head, still descending from P3-3 (`a1b2c3d4e5f7`; no new rev)
+G1  migration: P3-4 edge (`a1b2c3d4e5f7` descends from `f2a3b4c5d6e7`) + single head
+    that **descends from** `a1b2c3d4e5f7` (P3-5 may extend the chain; @架构 seq3051)
 F1  feature gate FIRST on run + callback (flag off -> 400 for any caller)
 
 Behavioural locks (direct `workflow_engine.step`, offline SQLite):
@@ -93,10 +96,19 @@ Run (backend checkout, backend venv):
 from __future__ import annotations
 
 import importlib
+import itertools
 import re
 import time
 
 import pytest
+
+from tests.openapi_baseline import M6_P3_4_KEYS
+
+# R-FLAKE-1 (@架构 seq3043): `_seed_run` must NOT derive the workflow name from
+# `id(definition)` — the address of a discarded inline dict literal can be reused
+# by the next literal (GC-timing), colliding on the UNIQUE `workflow.name`. A
+# process-local monotonic counter is deterministic and reproducible.
+_WF_NAME_SEQ = itertools.count(1)
 
 
 def _try(mod: str):
@@ -186,11 +198,23 @@ def _openapi_paths() -> dict:
     return app.openapi().get("paths", {})
 
 
-def test_a1_paths_count_144():
+def test_a1_paths_count_at_least_144():
+    """P3-4b landed 144; later add-only batches (P3-5) may add keys.
+
+    Pin the LOWER BOUND here (batch lock, @架构 seq3051/seq3053) and keep the EXACT
+    current value in `test_contract_openapi.py`. No-shrink against the FROZEN M6
+    baseline key set (@架构 seq3057 layer ④) — NOT the current committed file, else a
+    net-zero substitution would slip through.
+    """
     paths = _openapi_paths()
-    assert len(paths) == 144, (
-        f"P3-4b adds 2 URL keys (ws-token + callback) => paths must be 144 (142 + 2); "
+    assert len(paths) >= 144, (
+        f"P3-4b adds 2 URL keys (ws-token + callback) => paths >= 144 (142 + 2); "
         f"got {len(paths)}. WS itself is NOT in openapi."
+    )
+    removed = set(M6_P3_4_KEYS) - set(paths)
+    assert not removed, (
+        f"openapi keys must not shrink below the M6 baseline (@架构 seq3057): "
+        f"removed={sorted(removed)}"
     )
 
 
@@ -232,17 +256,35 @@ def _revision_graph() -> dict[str, str | None]:
     return revs
 
 
-def test_g1_migration_single_head_reuses_p34_rev():
+def _descends(rev: str | None, ancestor: str, revs: dict[str, str | None]) -> bool:
+    seen: set[str] = set()
+    while rev and rev not in seen:
+        seen.add(rev)
+        if rev == ancestor:
+            return True
+        rev = revs.get(rev)
+    return False
+
+
+def test_g1_migration_edge_p34_descends_from_p33_single_head():
+    """Pin the P3-4 EDGE and require the single head to descend from it.
+
+    The old form asserted the head IS `a1b2c3d4e5f7` (global head proxy), which a
+    later add-only batch (P3-5) legitimately breaks. Batch locks pin their own edge;
+    the next batch's rev is pinned by its own lock (@架构 seq3051/seq3053).
+    """
     revs = _revision_graph()
     assert _P34_REV in revs, f"P3-4 rev {_P34_REV} missing from versions dir"
     assert revs.get(_P34_REV) == _P33_REV, (
-        f"{_P34_REV} must descend from {_P33_REV}; got {revs.get(_P34_REV)!r}"
+        f"P3-4 edge: {_P34_REV} must descend directly from {_P33_REV}; "
+        f"got {revs.get(_P34_REV)!r}"
     )
     downs = {v for v in revs.values() if v}
     heads = sorted(r for r in revs if r not in downs)
     assert len(heads) == 1, f"migration must keep a single head; got {heads}"
-    assert heads[0] == _P34_REV, (
-        f"P3-4b adds NO migration (tuple H) => head must remain {_P34_REV}; got {heads[0]}"
+    assert _descends(heads[0], _P34_REV, revs), (
+        f"head {heads[0]!r} must descend from the P3-4 rev {_P34_REV} "
+        "(a later add-only batch may extend the chain)"
     )
 
 
@@ -346,7 +388,7 @@ def _seed_run(session, definition) -> int:
     """Insert Workflow + Version + a `pending` Run + `pending` NodeRuns; return run_id."""
     from app.db.models.workflow import Workflow, WorkflowNodeRun, WorkflowRun, WorkflowVersion  # noqa: PLC0415
 
-    wf = Workflow(name=f"wf-{id(definition)}", current_version=1, enabled=1)
+    wf = Workflow(name=f"wf-{next(_WF_NAME_SEQ)}", current_version=1, enabled=1)
     session.add(wf)
     session.flush()
     session.add(WorkflowVersion(workflow_id=wf.id, version=1, definition=definition))

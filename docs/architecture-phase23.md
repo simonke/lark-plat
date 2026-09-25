@@ -286,7 +286,7 @@ IdP 回调 GET /auth/oauth/{provider}/callback?code&state → 校验 state
 - `GET /workflow-runs`、`GET /workflow-runs/{id}`（**DAG 节点状态矩阵**）、`POST /workflow-runs/{id}/cancel|retry`。
 - WS `/ws/workflow-runs/{id}`：节点状态实时推送（复刻 exec WS 帧 seq 防乱序）。
 - 权限码：`workflow:list/add/edit/del/version/rollback/run/view/cancel`（9；`/workflow-runs/{id}/retry` **复用 `workflow:run`**）；flag **`feature.workflow`**（默认 False）。
-- paths **URL 键 +9 → `len(paths)==142`**（`/workflows`·`/{id}`·`/{id}/versions`·`/{id}/rollback`·`/{id}/run` ＋ `/workflow-runs`·`/{id}`·`/{id}/cancel`·`/{id}/retry`；ops 13；WS 不入 openapi）；迁移 **+1**（4 表，rev 建议 **`a1b2c3d4e5f7`**〔实现钉最终唯一 id；与既有 `a1b2c3d4e5f6` 形近、勿混〕，parent `f2a3b4c5d6e7`、单 head）。
+- paths **URL 键 +11 → `len(paths)==144`**（`/workflows`·`/{id}`·`/{id}/versions`·`/{id}/rollback`·`/{id}/run` ＋ `/workflow-runs`·`/{id}`·`/{id}/cancel`·`/{id}/retry`·`/{id}/ws-token`·`/{run_id}/callback/{node_key}`；ops 15；WS 不入 openapi）；迁移 **+1**（4 表，rev 建议 **`a1b2c3d4e5f7`**〔实现钉最终唯一 id；与既有 `a1b2c3d4e5f6` 形近、勿混〕，parent `f2a3b4c5d6e7`、单 head）。
 
 ## 14. CI/CD 集成（三期 P3-5：发布编排段）
 
@@ -296,6 +296,7 @@ IdP 回调 GET /auth/oauth/{provider}/callback?code&state → 校验 state
 - **Provider 对接**：`gitlab|jenkins|generic`，配置化接入（密钥密文）；出站触发/拉取产物走 provider API，**测试用 stub/mock**。
 - **入站事件**：`POST /cicd/webhooks/{provider}` 归一化「构建完成/产物就绪」事件（provider token 鉴权、**非 session**）；可触发 release 或 workflow。
 - **发布编排**：release 状态机 `pending→deploying→canary→succeeded`（异常 `failed→rolled_back`）；灰度＝分批放量＋健康检查（复用 exec_task 部署）；回滚＝回退上一版本。
+- **动作门（`action ← 允许源 → to`；非法源 ⇒ 409）**：`canary←{pending,deploying}→canary`、`promote←{canary}→succeeded`、`rollback←{deploying,canary,failed}→rolled_back`、`cancel←{pending,deploying,canary}→cancelled`。**残余**：`deploy`/`fail` 已声明但**无 API 入口**（`deploying`/`failed` 服务端不可达）；「run 失败 ⇒ release `failed`」＝后置 add-only 残余（owner @后端）。
 - **审计**：发布/灰度/回滚均记 `sys_audit_log`，关联 `workflow_run`/exec_task 证据。
 - **边界（非目标）**：**不含源码→构建→测试**（属 GitLab CI/Jenkins）。
 
@@ -308,8 +309,8 @@ IdP 回调 GET /auth/oauth/{provider}/callback?code&state → 校验 state
 - `GET/POST /cicd/providers`、`PUT/DELETE /cicd/providers/{id}`、`POST /cicd/providers/{id}/test`。
 - `POST /cicd/webhooks/{provider}`（token 鉴权）。
 - `GET/POST /releases`、`GET /releases/{id}`（状态/证据链）、`POST /releases/{id}/canary|promote|rollback|cancel`。
-- 权限码：`cicd:provider:list/add/edit/del/test` ＋ `release:list/add/view/run/canary/promote/rollback/cancel`；flag **`feature.cicd`**（默认 False）。
-- paths **URL 键 +10 → `len(paths)==152`**（`/cicd/providers`·`/{id}`·`/{id}/test`·`/cicd/webhooks/{provider}` ＋ `/releases`·`/{id}`·`/{id}/canary`·`/{id}/promote`·`/{id}/rollback`·`/{id}/cancel`；ops 13）；迁移 **+1**（rev 建议 **`b2c3d4e5f6a8`**〔与既有 `b2c3d4e5f6a7` 形近、勿混〕，parent P3-4 rev、单 head）。
+- 权限码：`cicd:provider:list/add/edit/del/test` ＋ `release:list/add/view/canary/promote/rollback/cancel`；flag **`feature.cicd`**（默认 False）。
+- paths **URL 键 +10 → `len(paths)==154`**（基 M6 144；`/cicd/providers`·`/{id}`·`/{id}/test`·`/cicd/webhooks/{provider}` ＋ `/releases`·`/{id}`·`/{id}/canary`·`/{id}/promote`·`/{id}/rollback`·`/{id}/cancel`；ops 13）；迁移 **+1**（rev 建议 **`b2c3d4e5f6a8`**〔与既有 `b2c3d4e5f6a7` 形近、勿混〕，parent P3-4 rev、单 head）。
 - 前端：`/cicd/providers`、`/releases`（列表/状态，不引图库）。
 
 ### 14.4 与 §13 / 批次关系

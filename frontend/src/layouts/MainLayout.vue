@@ -57,6 +57,14 @@
           <el-menu-item index="/workflows" v-if="auth.hasPerm('workflow:list')">编排 Playbook</el-menu-item>
           <el-menu-item index="/workflow-runs" v-if="auth.hasPerm('workflow:view')">运行记录</el-menu-item>
         </el-sub-menu>
+        <el-sub-menu index="release" v-if="auth.hasPerm('cicd:provider:list') || auth.hasPerm('release:list')">
+          <template #title>
+            <el-icon><Upload /></el-icon>
+            <span>发布中心</span>
+          </template>
+          <el-menu-item index="/cicd/providers" v-if="auth.hasPerm('cicd:provider:list')">CI/CD 凭据</el-menu-item>
+          <el-menu-item index="/releases" v-if="auth.hasPerm('release:list')">发布管理</el-menu-item>
+        </el-sub-menu>
         <el-sub-menu index="monitoring" v-if="auth.hasPerm('monitor:metric:view') || auth.hasPerm('monitor:alert:list') || auth.hasPerm('monitor:rule:list')">
           <template #title>
             <el-icon><DataLine /></el-icon>
@@ -114,7 +122,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { DataBoard, Setting, ArrowDown, Monitor, Promotion, Finished, DataLine, Share } from '@element-plus/icons-vue'
+import { DataBoard, Setting, ArrowDown, Monitor, Promotion, Finished, DataLine, Share, Upload } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 import { changePassword } from '../api/auth'
 import { extractError } from '../api/http'

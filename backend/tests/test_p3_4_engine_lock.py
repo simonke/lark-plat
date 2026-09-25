@@ -38,10 +38,12 @@ B7  recover_runs(): running run resumes; running exec_task w/o row -> failed(eng
 B8  DRIVER_AUTOSTART False path: run stays pending (driver NOT started), step drives it
 B9  waiting timeout: callback node w/ config.timeout_sec -> failed(reason=timeout) (never hangs)
 B10 callback payload > 65536 B -> 422 `callback_payload_too_large` (not silently truncated)
-B11 `exec_task` node (R-复用): REAL exec_task row built + node.exec_task_id stored;
+B11 `exec_task` node (R-复用): REAL exec_task row built + node.exec_task_id stored
+    (+ spy: 一期 exec 原语 called >=1, direct proof §27.2);
     row `success` -> node succeeded -> run succeeded
 B12 `exec_task` node non-success terminal -> node failed -> `on_failure` branch; run failed
-B13 `manual_approval` (R-复用): REAL approval_request built + node -> `waiting`;
+B13 `manual_approval` (R-复用): REAL approval_request built + node -> `waiting`
+    (+ spy: 一期 approval 原语 called >=1);
     approved -> succeeded (resumes); rejected -> failed + `on_failure`
 B14 cancel propagates to a node whose一期 exec_task is still `running`
     (exec_task cancelled via the一期 primitive; node -> skipped; run cancelled)
@@ -712,12 +714,49 @@ def _exec_task_definition(host_id: int, *, on_failure=None) -> dict:
     return {"nodes": [node, _sleep("after-ok", deps=["e"]), _sleep("after-fail")]}
 
 
+def _counting(fn, counts: dict, key: str):
+    def _wrapped(*args, **kwargs):
+        counts[key] = counts.get(key, 0) + 1
+        return fn(*args, **kwargs)
+
+    return _wrapped
+
+
+def _install_reuse_spy(monkeypatch, eng) -> dict:
+    """Count calls into the一期 exec/approval primitives (R-复用 direct proof).
+
+    The 43ac527 lock only proved reuse *indirectly* (real row + build_executor);
+    @需求 seq2944 upgraded "directly provable" to a §27.2 hard gate. Patching the
+    *module-level* primitives survives a ``from … import y`` in the engine (the
+    primitive body resolves these globals at call time). Counts only; call-through
+    is preserved, so behaviour is unchanged.
+    """
+    counts: dict[str, int] = {"exec": 0, "approval": 0}
+    targets = (
+        ("app.services.exec_service", {
+            "_task_no": "exec", "_kick_off_exec": "exec",
+            "create_task": "exec", "_approval_no": "approval",
+        }),
+        ("app.services.approval_service", {"_approval_no": "approval"}),
+    )
+    for modname, names in targets:
+        mod = _try(modname)
+        if isinstance(mod, Exception):
+            continue
+        for name, key in names.items():
+            fn = getattr(mod, name, None)
+            if callable(fn):
+                monkeypatch.setattr(mod, name, _counting(fn, counts, key), raising=False)
+    return counts
+
+
 def test_b11_exec_task_node_builds_and_waits(env, monkeypatch):
     session, _ = env
     _fake_executor(monkeypatch)
     eng = _try("app.services.workflow_engine")
     if isinstance(eng, Exception):
         pytest.fail(f"P3-4b lock: workflow_engine unavailable: {eng}")
+    reuse = _install_reuse_spy(monkeypatch, eng)
     host_id = _seed_host(session)
     rid = _seed_run(session, _exec_task_definition(host_id))
     node = _step_until_node_running(session, eng, rid, "e")
@@ -728,6 +767,10 @@ def test_b11_exec_task_node_builds_and_waits(env, monkeypatch):
     assert _exec_task_row(session, node.exec_task_id) is not None, (
         "R-复用 hard gate: engine must build a REAL exec_task row, not copy exec logic "
         f"(no row for exec_task_id={node.exec_task_id})"
+    )
+    assert reuse["exec"] >= 1, (
+        "R-复用 direct proof (§27.2, @需求 seq2944): engine must CALL the一期 exec "
+        "primitive (exec_service.create_task/_kick_off_exec/_task_no); none observed"
     )
     _terminalize_exec_task(session, node.exec_task_id, "success")
     assert _step_until_done(session, rid) == "succeeded", "exec success must drive run to succeeded"
@@ -793,11 +836,12 @@ def _approval_definition(*, on_failure=None) -> dict:
     return {"nodes": [node, _sleep("after-ok", deps=["ap"]), _sleep("after-fail")]}
 
 
-def test_b13_manual_approval_blocks_then_releases(env):
+def test_b13_manual_approval_blocks_then_releases(env, monkeypatch):
     session, _ = env
     eng = _try("app.services.workflow_engine")
     if isinstance(eng, Exception):
         pytest.fail(f"P3-4b lock: workflow_engine unavailable: {eng}")
+    reuse = _install_reuse_spy(monkeypatch, eng)
     # (i) approve -> node succeeded, run resumes downstream
     rid = _seed_run(session, _approval_definition())
     node = _step_until_node_waiting(session, eng, rid, "ap")
@@ -807,6 +851,10 @@ def test_b13_manual_approval_blocks_then_releases(env):
     assert node.approval_id, "manual_approval must store approval_id (reuse一期 primitive)"
     assert _approval_row(session, node.approval_id) is not None, (
         "R-复用 hard gate: engine must build a REAL approval_request row, not copy approval logic"
+    )
+    assert reuse["approval"] >= 1, (
+        "R-复用 direct proof (§27.2, @需求 seq2944): engine must CALL the一期 approval "
+        "primitive (its `_approval_no`); none observed"
     )
     _decide_approval(session, node.approval_id, "approved")
     assert _step_until_done(session, rid) == "succeeded", "approval must release the node"

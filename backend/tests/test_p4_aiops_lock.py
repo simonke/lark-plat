@@ -540,14 +540,24 @@ def _event_service_modules() -> list:
 
 
 def _no_bypass_ops_event_insert() -> bool:
-    """Grep `app/services` for `OpsEvent(` construction outside event_service."""
+    """Grep root `app/` for `OpsEvent(` construction outside the write-seam whitelist.
+
+    Frozen judge scope (⑦, @架构 seq3240/seq3242): root `app/` + regex
+    `\\bOpsEvent\\s*\\(` + whitelist {`app/services/event_service.py`,
+    `app/db/models/ops_event.py`}. Scanning only `app/services` would假绿 a bypass
+    from `app/api/*` (e.g. `endpoints/ops_event.py`).
+    """
     try:
-        import app.services  # noqa: PLC0415
+        import app  # noqa: PLC0415
     except Exception:  # noqa: BLE001
         return False
-    pkg = pathlib.Path(app.services.__file__).resolve().parent
-    for py in pkg.rglob("*.py"):
-        if py.name == "event_service.py":
+    root = pathlib.Path(app.__file__).resolve().parent
+    whitelist = {
+        (root / "services" / "event_service.py").resolve(),
+        (root / "db" / "models" / "ops_event.py").resolve(),
+    }
+    for py in root.rglob("*.py"):
+        if py.resolve() in whitelist:
             continue
         try:
             txt = py.read_text(encoding="utf-8")
@@ -882,20 +892,27 @@ class _AdminActor:
 
 
 def test_b3b_dispatcher_unknown_entity_type_fails_closed():
-    """US-03 (@需求 seq3235 gap-fill): the *dispatcher* — not a hand-built empty
-    scope — must fail closed for an unregistered entity_type. A fail-open
+    """US-03 ⑥ (@架构 seq3242 / @需求 seq3235): the *dispatcher* — not a hand-built
+    empty scope — must fail closed for an unregistered entity_type. A fail-open
     dispatcher (unknown => 全量 ids) MUST fail HERE.
 
-    Positive control: with the same admin actor + db, a registered entity_type
-    (`host`) returns a non-empty set, so the negative below is non-vacuous.
-    Rejecting (raising) is also accepted as fail-closed.
+    Non-vacuity sanity: with the SAME admin actor + stub session, a *known*
+    entity_type (`host`) must return a non-empty visible set ⇒ proves fail-closed is
+    per-type, not merely «this actor has no visible domain». Rejecting (raising) for
+    the unknown type is also accepted as fail-closed.
+
+    Degradation note (⑦-adjacent, @架构 seq3242): if the dispatcher exposes only
+    `(entity_type, actor)` with no `db`, the offline positive control cannot be
+    constructed here; in that case this case proves ONLY «unknown => empty» and does
+    NOT prove the actor's visible domain.
     """
     fn = _require("visible_entity_ids_for")
     actor = _AdminActor()
     db = _StubHostSession()
 
     params = list(inspect.signature(fn).parameters)
-    if len(params) >= 3:
+    can_control_db = len(params) >= 3
+    if can_control_db:
         def call(et):
             return fn(et, actor, db)
     else:
@@ -906,8 +923,13 @@ def test_b3b_dispatcher_unknown_entity_type_fails_closed():
     try:
         positive = set(call("host") or ())
     except Exception:  # noqa: BLE001
-        # Arity/shape mismatch: positive control unavailable; still run negative.
         positive = set()
+    if can_control_db:
+        assert positive, (
+            "US-03 non-vacuity sanity: a known entity_type (`host`) must yield a "
+            "non-empty visible set for this actor/db, else the fail-closed check below "
+            "is vacuous"
+        )
 
     try:
         unknown = call("__unregistered__")
@@ -917,7 +939,6 @@ def test_b3b_dispatcher_unknown_entity_type_fails_closed():
     assert not unknown_ids, (
         "US-03 fail-closed: dispatcher must return the empty set for an unregistered "
         f"entity_type, not widen to visible ids; got {sorted(unknown_ids)}"
-        + ("" if positive else " (positive-control could not be established)")
     )
 
 

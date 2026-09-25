@@ -693,28 +693,41 @@ def test_b5_aggregate_window_key_is_type_entity_rule(monkeypatch):
     )
 
 
-def test_b6_aggregate_count_and_true_max_severity(monkeypatch):
-    """w3 (same window N events => 1 bucket `count=N`) + w4 (repeated call stable)
-    + w6 (`max_severity` = TRUE max over the `MON_LEVELS` single source)."""
+def test_b6_aggregate_window_count_max_and_no_swallow(monkeypatch):
+    """Strict w3/w4/w6 (@需求 3356): with SIBLING windows present, the target window
+    `(host, h1, 10)` must be exactly ONE bucket `count=3` (N events not over-split,
+    siblings not swallowed) with `max_severity` = TRUE max over the `MON_LEVELS` single
+    source; and repeated calls are stable (idempotent)."""
     alerts = [
         _AggAlert(1, "host", "h1", 10, "warning"),
-        _AggAlert(2, "host", "h1", 10, "critical"),  # same window triple
+        _AggAlert(2, "host", "h1", 10, "critical"),  # target window
         _AggAlert(3, "host", "h1", 10, "info"),
+        _AggAlert(4, "host", "h1", 11, "warning"),   # sibling: diff rule, same entity
+        _AggAlert(5, "app", "h1", 10, "warning"),    # sibling: diff type, same rule
     ]
     out = _run_aggregate(monkeypatch, alerts)
     rows = out["list"]
-    assert len(rows) == 1, f"one window triple => one bucket; got {len(rows)}"
-    bucket = rows[0]
-    assert bucket["count"] == 3, f"bucket must count all 3 alerts; got {bucket['count']}"
+    by_key = {(r.get("entity_type"), r.get("entity_id"), r.get("rule")): r for r in rows}
+    assert len(rows) == 3, (
+        f"target + 2 sibling windows => 3 buckets; got {len(rows)}: {sorted(by_key)}"
+    )
+    tgt = by_key.get(("host", "h1", "10"))
+    assert tgt is not None, f"target window (host, h1, 10) missing; got {sorted(by_key)}"
+    assert tgt["count"] == 3, (
+        "target window must hold exactly N=3 (not over-split by severity/alert_id); "
+        f"got {tgt['count']}"
+    )
     levels = _mon_levels()
     rank = {lvl: i for i, lvl in enumerate(levels)}
     expected = max(["warning", "critical", "info"], key=lambda s: rank[s])
-    assert bucket["max_severity"] == expected, (
+    assert tgt["max_severity"] == expected, (
         f"max_severity must be the true max over MON_LEVELS={levels}; got "
-        f"{bucket['max_severity']!r} (expected {expected!r}) — first-non-null yields 'warning'"
+        f"{tgt['max_severity']!r} (expected {expected!r}) — first-non-null yields 'warning'"
     )
+    assert by_key[("host", "h1", "11")]["count"] == 1, "sibling (diff rule) must not be swallowed"
+    assert by_key[("app", "h1", "10")]["count"] == 1, "sibling (diff type) must not be swallowed"
     out2 = _run_aggregate(monkeypatch, alerts)
-    assert out2["list"] == rows, "aggregate must be stable/idempotent across repeated calls"
+    assert out2["list"] == rows, "aggregate must be stable/idempotent (multi-window fixture)"
 
 
 def test_b7_aggregate_rule_fallback_and_none_severity(monkeypatch):

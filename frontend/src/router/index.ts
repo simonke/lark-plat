@@ -61,6 +61,16 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/assets/CredentialsView.vue'),
       },
       {
+        path: 'assets/cmdb',
+        name: 'assets-cmdb',
+        component: () => import('../views/assets/RelationsView.vue'),
+      },
+      {
+        path: 'assets/cmdb/topology',
+        name: 'assets-cmdb-topology',
+        component: () => import('../views/assets/CmdbTopologyView.vue'),
+      },
+      {
         path: 'scripts',
         name: 'scripts',
         component: () => import('../views/scripts/ScriptsView.vue'),

@@ -73,9 +73,9 @@ def test_w2_smoke_and_lock_declare_identical_allowlist_sets():
 def test_w2_closeout_rev_is_sole_forbidden_member_in_both_homes():
     smoke = _smoke()
     lock = _lock()
-    expected = {lock.CLOSEOUT_REV, lock.P3_REV, lock.P3X_REV}
+    expected = {lock.CLOSEOUT_REV, lock.P3_REV, lock.P3X_REV, lock.P3_3_REV}
     assert lock.MIGRATION_LIVE_FORBIDDEN == expected, (
-        f"C must be exactly {{{lock.CLOSEOUT_REV}, {lock.P3_REV}, {lock.P3X_REV}}}; "
+        f"C must be exactly {{{lock.CLOSEOUT_REV}, {lock.P3_REV}, {lock.P3X_REV}, {lock.P3_3_REV}}}; "
         f"got {sorted(lock.MIGRATION_LIVE_FORBIDDEN)}"
     )
     assert smoke.MIGRATION_LIVE_FORBIDDEN == expected, (

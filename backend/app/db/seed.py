@@ -69,6 +69,18 @@ PERMISSION_TREE: list[tuple[str, str, str, str, str, list[tuple[str, str, str, s
         ],
     ),
     (
+        "asset:relation:list",
+        "CMDB 关系",
+        "menu",
+        "/assets/cmdb",
+        "Share",
+        [
+            ("asset:relation:add", "新增关系", "button", "", "Plus"),
+            ("asset:relation:del", "删除关系", "button", "", "Delete"),
+            ("asset:topo:view", "拓扑/影响分析", "button", "", "Share"),
+        ],
+    ),
+    (
         "exec:task:list",
         "命令执行",
         "menu",
@@ -526,6 +538,7 @@ DEFAULT_CONFIG_RULES: dict[str, dict] = {
     # P3 feature flags (never overwrite existing; default off)
     "feature.ticket": {"value": False},
     "feature.kb": {"value": False},
+    "feature.cmdb_topology": {"value": False},
 }
 
 _CONFIG_RULE_REMARKS: dict[str, str] = {
@@ -536,6 +549,7 @@ _CONFIG_RULE_REMARKS: dict[str, str] = {
     "executor.ssh_fallback": "P2-SS ssh 降级路由默认关闭",
     "feature.ticket": "P3-1 工单功能默认关闭",
     "feature.kb": "P3-2 知识库功能默认关闭",
+    "feature.cmdb_topology": "P3-3 CMDB 深化（关系/拓扑/影响分析）默认关闭",
 }
 
 

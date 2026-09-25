@@ -153,3 +153,19 @@ class HostStats(BaseModel):
 class ImportResult(BaseModel):
     success: int
     failed: list[dict]
+
+
+class RelationCreate(BaseModel):
+    """P3-3: directed CI edge `src --rel_type--> dst`.
+
+    UNIQUE(src_type,src_id,dst_type,dst_id,rel_type) dedups directed edges, so
+    POST is idempotent (repeat returns the existing row, not 409).
+    """
+
+    src_type: str = Field(min_length=1, max_length=32)
+    src_id: int
+    dst_type: str = Field(min_length=1, max_length=32)
+    dst_id: int
+    rel_type: str = Field(min_length=1, max_length=32)
+    properties: dict | None = None
+    remark: str = ""

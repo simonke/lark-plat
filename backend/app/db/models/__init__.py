@@ -7,6 +7,7 @@ from app.db.models.system import (
     UserRole,
 )
 from app.db.models.asset import AssetGroup, Host, HostCredential
+from app.db.models.cmdb import ENTITY_TYPES, REL_TYPES, EntityRelation
 from app.db.models.auth_provider import AUTH_PROVIDER_TYPES, AUTH_SOURCES, AuthProvider
 from app.db.models.script import Script, ScriptVersion
 from app.db.models.exec import ExecLog, ExecTask, ExecTaskHost
@@ -72,6 +73,9 @@ __all__ = [
     "AssetGroup",
     "Host",
     "HostCredential",
+    "EntityRelation",
+    "ENTITY_TYPES",
+    "REL_TYPES",
     "AuthProvider",
     "AUTH_PROVIDER_TYPES",
     "AUTH_SOURCES",

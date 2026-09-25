@@ -25,6 +25,8 @@
           <el-menu-item index="/assets/hosts" v-if="auth.hasPerm('asset:host:list')">主机管理</el-menu-item>
           <el-menu-item index="/assets/groups" v-if="auth.hasPerm('asset:group:list')">分组管理</el-menu-item>
           <el-menu-item index="/assets/credentials" v-if="auth.hasPerm('asset:cred:list')">凭据管理</el-menu-item>
+          <el-menu-item index="/assets/cmdb" v-if="auth.hasPerm('asset:relation:list')">CMDB 关系</el-menu-item>
+          <el-menu-item index="/assets/cmdb/topology" v-if="auth.hasPerm('asset:topo:view')">拓扑与影响</el-menu-item>
         </el-sub-menu>
         <el-sub-menu index="exec-center">
           <template #title>

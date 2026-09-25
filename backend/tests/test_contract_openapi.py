@@ -132,7 +132,10 @@ def test_path_count_stable(openapi_spec):
     # PUT /assets/hosts/{id}/connector (add-only).
     # 109 -> 129: P3 adds 12 ticket URL keys + 8 knowledge-base URL keys
     # (@架构 seq2581/seq2589, add-only; OpenAPI `paths` is URL-keyed).
-    assert len(paths) == 129
+    # 129 -> 133: P3-3 adds 4 CMDB URL keys (/assets/relations [get+post],
+    # /assets/relations/{id}, /assets/cmdb/topology, /assets/cmdb/impact;
+    # @架构 seq2817, add-only).
+    assert len(paths) == 133
 
 
 def test_stage4_terminal_paths_present(openapi_spec):

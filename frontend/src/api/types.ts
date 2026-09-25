@@ -1373,4 +1373,64 @@ export interface KbArticleQuery {
   size?: number
 }
 
+export type RelationEntityType = 'host' | 'host_group'
+export type CmdbRelType = 'depends_on' | 'runs_on' | 'connects_to' | 'member_of' | 'hosts'
+export type TopoNodeRole = 'root' | 'up' | 'down'
+
+export interface EntityRelation {
+  id: number
+  src_type: RelationEntityType
+  src_id: number
+  dst_type: RelationEntityType
+  dst_id: number
+  rel_type: CmdbRelType
+  properties: Record<string, unknown> | null
+  remark: string
+  created_by: number | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface EntityRelationCreate {
+  src_type: RelationEntityType
+  src_id: number
+  dst_type: RelationEntityType
+  dst_id: number
+  rel_type: CmdbRelType
+  properties?: Record<string, unknown> | null
+  remark?: string
+}
+
+export interface TopoNode {
+  type: RelationEntityType
+  id: number
+  label: string
+  role: TopoNodeRole
+}
+
+export interface TopoEdge {
+  src: { type: RelationEntityType; id: number }
+  dst: { type: RelationEntityType; id: number }
+  rel_type: CmdbRelType
+}
+
+export interface Topology {
+  nodes: TopoNode[]
+  edges: TopoEdge[]
+  truncated: boolean
+}
+
+export interface ImpactEntity {
+  type: RelationEntityType
+  id: number
+  label?: string
+}
+
+export interface CmdbImpact {
+  root: ImpactEntity
+  affected: ImpactEntity[]
+  count: number
+  truncated: boolean
+}
+
 

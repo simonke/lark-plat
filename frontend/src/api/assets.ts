@@ -1,5 +1,5 @@
 import http from './http'
-import type { Result, Page, HostOut, HostCreate, HostUpdate, GroupOut, GroupCreate, GroupUpdate, CredentialOut, CredentialCreate, CredentialUpdate, HostStats, ConnectionResult, OptionsOut } from './types'
+import type { Result, Page, HostOut, HostCreate, HostUpdate, GroupOut, GroupCreate, GroupUpdate, CredentialOut, CredentialCreate, CredentialUpdate, HostStats, ConnectionResult, OptionsOut, EntityRelation, EntityRelationCreate, Topology, CmdbImpact } from './types'
 
 export async function getHosts(params?: {
   hostname?: string
@@ -95,5 +95,49 @@ export async function getHostStats(): Promise<HostStats> {
 
 export async function getOptions(): Promise<OptionsOut> {
   const { data } = await http.get<Result<OptionsOut>>('/assets/options')
+  return data.data
+}
+
+export async function getRelations(params?: {
+  src_type?: string
+  src_id?: number
+  dst_type?: string
+  dst_id?: number
+  rel_type?: string
+  page?: number
+  size?: number
+}): Promise<Page<EntityRelation>> {
+  const { data } = await http.get<Result<Page<EntityRelation>>>('/assets/relations', { params })
+  return data.data
+}
+
+export async function createRelation(payload: EntityRelationCreate): Promise<EntityRelation> {
+  const { data } = await http.post<Result<EntityRelation>>('/assets/relations', payload)
+  return data.data
+}
+
+export async function deleteRelation(id: number): Promise<void> {
+  await http.delete<Result<void>>(`/assets/relations/${id}`)
+}
+
+export async function getTopology(params: {
+  entity_type: string
+  entity_id: number
+  direction?: 'up' | 'down' | 'both'
+  depth?: number
+  rel_types?: string[]
+}): Promise<Topology> {
+  const { data } = await http.get<Result<Topology>>('/assets/cmdb/topology', { params })
+  return data.data
+}
+
+export async function getImpact(params: {
+  entity_type: string
+  entity_id: number
+  direction?: 'up' | 'down' | 'both'
+  depth?: number
+  rel_types?: string[]
+}): Promise<CmdbImpact> {
+  const { data } = await http.get<Result<CmdbImpact>>('/assets/cmdb/impact', { params })
   return data.data
 }

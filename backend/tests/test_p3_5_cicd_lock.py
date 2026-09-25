@@ -130,16 +130,18 @@ def test_p1b_operation_code_binding_1to1_no_release_run():
 
 
 def test_p1c_seed_menu_button_counts():
-    """P3-6 ② counting lock (@架构 seq3147): +2 release buttons; menus unchanged (26)."""
+    """P3-6 ② counting lock (@架构 seq3147), advanced by P4 tuple v1 (seq3203):
+    P3-6 => 26 menus / 110 buttons; P4 adds top menu `ai` + shared `ai:use`/`ai:admin`.
+    """
     seed = _try("app.db.seed")
     if isinstance(seed, Exception):
         pytest.fail(f"P3-6 lock: app.db.seed unavailable: {seed}")
     tree = getattr(seed, "PERMISSION_TREE", [])
     menus = [node[0] for node in tree]
     buttons = [child[0] for node in tree for child in node[5]]
-    assert len(menus) == 26, f"menus must stay 26 (no new menu); got {len(menus)}"
-    assert len(buttons) == 110, (
-        f"buttons must be 110 (108 + release:deploy/fail); got {len(buttons)}"
+    assert len(menus) == 27, f"menus must be 27 (26 + P4 `ai`); got {len(menus)}"
+    assert len(buttons) == 112, (
+        f"buttons must be 112 (110 + P4 ai:use/ai:admin); got {len(buttons)}"
     )
 
 
@@ -279,6 +281,8 @@ def test_f1_feature_cicd_default_false():
 _VERSIONS_DIR = __import__("pathlib").Path(__file__).resolve().parents[1] / "alembic" / "versions"
 _P34_HEAD = "a1b2c3d4e5f7"
 _P35_REV = "b2c3d4e5f6a8"
+# P4 (AIOps, @架构 tuple v1 seq3203): add-only rev on top of the P3-5 head.
+_P4_REV = "e9d8c7b6a5f4"
 # 形近陷阱: `b2c3d4e5f6a7` is the EXISTING P2-1 transfer-table rev (docs §14.3) — must NOT be reused.
 _P21_TRANSFER_REV = "b2c3d4e5f6a7"
 
@@ -303,11 +307,17 @@ def test_g1_migration_single_head_descends_from_p34():
     heads = sorted(r for r in revs if r not in downs)
     assert len(heads) == 1, f"migration must keep a single head; got {heads}"
     head = heads[0]
-    assert head == _P35_REV, (
-        f"P3-5 head must be the suggested rev `{_P35_REV}`; got {head}"
+    # P4 (@架构 tuple v1 seq3203) advances the single head to the AIOps rev; the
+    # P3-5 head-only assertion is superseded, but the P3-5 → P3-4 ancestry is kept.
+    assert head == _P4_REV, (
+        f"P4 head must be the suggested rev `{_P4_REV}`; got {head}"
     )
-    assert revs[head] == _P34_HEAD, (
-        f"P3-5 head must descend directly from P3-4 rev {_P34_HEAD}; got parent {revs[head]!r}"
+    assert revs[head] == _P35_REV, (
+        f"P4 head must descend directly from P3-5 rev {_P35_REV}; got parent {revs[head]!r}"
+    )
+    assert revs.get(_P35_REV) == _P34_HEAD, (
+        f"P3-5 rev must descend directly from P3-4 rev {_P34_HEAD}; "
+        f"got parent {revs.get(_P35_REV)!r}"
     )
 
 

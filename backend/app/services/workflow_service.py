@@ -27,8 +27,6 @@ from app.core.exceptions import (
 )
 from app.db.models.workflow import (
     NODE_TYPES,
-    RUN_STATUSES,
-    TERMINAL_RUN_STATUSES,
     TRIGGER_TYPES,
     Workflow,
     WorkflowNodeRun,
@@ -40,6 +38,15 @@ from app.schemas import workflow as sch
 
 _MAX_NODES = 100
 _MAX_EDGES = 500
+
+# action -> (allowed_from, target_status) — mirrors TICKET_TRANSITIONS (action-keyed).
+# run: pending -> running -> (succeeded|failed|cancelled); cancel only pre-terminal.
+WORKFLOW_TRANSITIONS = {
+    "start": (("pending",), "running"),
+    "succeed": (("running",), "succeeded"),
+    "fail": (("running",), "failed"),
+    "cancel": (("pending", "running"), "cancelled"),
+}
 
 
 # ---------------------------------------------------------------- helpers
@@ -205,6 +212,14 @@ def _validate_definition(definition: dict | None) -> dict:
         raise ValidationError(f"definition exceeds edge cap {_MAX_EDGES}")
     _assert_acyclic(keys, edges)
     return definition
+
+
+def _apply_run_transition(run: WorkflowRun, action: str) -> str:
+    allowed_from, target = WORKFLOW_TRANSITIONS[action]
+    if run.status not in allowed_from:
+        raise ConflictError(f"cannot {action} run in status '{run.status}'")
+    run.status = target
+    return target
 
 
 def _start_run(
@@ -453,9 +468,7 @@ def cancel_run(db: Session, user, run_id: int) -> dict:
     run = db.get(WorkflowRun, run_id)
     if run is None:
         raise NotFoundError("workflow run not found")
-    if run.status in TERMINAL_RUN_STATUSES:
-        raise ConflictError(f"cannot cancel run in terminal status '{run.status}'")
-    run.status = "cancelled"
+    _apply_run_transition(run, "cancel")
     run.finished_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(run)

@@ -91,11 +91,19 @@ def test_p1_ai_permission_codes_registered():
 
 
 def test_p1b_p4_permission_total_16():
-    """tuple F: shared `ai:use`/`ai:admin` (14 -> 16 named endpoint codes)."""
+    """tuple F: shared `ai:use`/`ai:admin` (14 -> 16 named endpoint codes).
+
+    @架构 seq3220 ②: assert the seeded endpoint-code universe is exactly 16.
+    """
     assert _P36_OP_CODES | P4_PERMS == _P36_OP_CODES | {"ai:use", "ai:admin"}
     assert len(_P36_OP_CODES | P4_PERMS) == 16, "14 (P3-6) + 2 (ai:use/ai:admin) == 16"
     codes = _perm_codes()
     assert P4_PERMS <= codes, f"ai perms not seeded: {sorted(P4_PERMS - codes)}"
+    seeded_endpoint_codes = (_P36_OP_CODES | P4_PERMS) & codes
+    assert len(seeded_endpoint_codes) == 16, (
+        f"seeded endpoint-code set must be exactly 16; got {len(seeded_endpoint_codes)}: "
+        f"{sorted(seeded_endpoint_codes)}"
+    )
 
 
 def test_p1c_seed_menu_button_counts():
@@ -232,6 +240,22 @@ def test_m2_p4_core_columns():
         if miss:
             problems.append(f"{name}: missing columns {sorted(miss)}")
     assert not problems, "P4 column contract: " + "; ".join(problems)
+
+
+def test_m2b_eval_tables_core_columns():
+    """@架构 seq3220 ③: `ai_eval_case`/`ai_eval_run` must at least carry `id`.
+
+    (Column sets beyond `id` were not pinned in tuple v1; tighten if @架构 names them.)
+    """
+    tables = _tables()
+    problems = []
+    for name in ("ai_eval_case", "ai_eval_run"):
+        t = tables.get(name)
+        if t is None:
+            problems.append(f"{name}: table missing")
+        elif "id" not in set(t.columns.keys()):
+            problems.append(f"{name}: missing `id`")
+    assert not problems, "P4 eval-table contract: " + "; ".join(problems)
 
 
 def test_m3_ops_event_indexes():
@@ -818,4 +842,99 @@ def test_b3_unknown_entity_type_fails_closed():
         pytest.fail(f"P4 lock: query() raised for unknown entity_type: {exc}")
     assert not _hit_refs(hits), (
         "US-03 fail-closed: unknown entity_type must yield 0 results, not放行"
+    )
+
+
+# ── B4: PG query-layer filter is structural (offline, no real PG) ────────────
+
+class _FakeResult:
+    def all(self):
+        return []
+
+    def scalars(self):
+        return self
+
+    def mappings(self):
+        return self
+
+    def fetchall(self):
+        return []
+
+    def first(self):
+        return None
+
+    def __iter__(self):
+        return iter(())
+
+    def __len__(self):
+        return 0
+
+
+class _FakeSession:
+    def __init__(self):
+        self.statements = []
+
+    def execute(self, statement, *args, **kwargs):
+        self.statements.append(statement)
+        return _FakeResult()
+
+    def scalar(self, *args, **kwargs):
+        return None
+
+    def close(self):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+def test_b4_pg_store_filters_in_query_layer():
+    """@架构 seq3222 (ADR#3 PG 查层判据): `PostgresArrayEmbeddingStore` must inject a
+    `session_factory`, and `_candidates` must emit a SELECT carrying an
+    `entity_scope` IN/ANY predicate — proving query-time filtering (not post-filter).
+
+    Offline: a fake session captures the executed statement, compiled with the
+    PostgreSQL dialect. No real PG/extension needed.
+    """
+    cls = _require("PostgresArrayEmbeddingStore")
+    scope_cls = _require("ScopeFilter")
+    fake = _FakeSession()
+    try:
+        store = cls(session_factory=lambda: fake)
+    except TypeError as exc:
+        pytest.fail(
+            "PostgresArrayEmbeddingStore must accept `session_factory` injection "
+            f"(@架构 seq3222): {exc}"
+        )
+    scope = _make_scope(scope_cls, entity_type="host", ids=[7, 8])
+    try:
+        store._candidates(query_vector=[1.0, 0.0, 0.0], scope=scope, limit=10)
+    except Exception as exc:  # noqa: BLE001
+        pytest.fail(f"P4 lock: PG _candidates raised against the fake session: {exc}")
+    assert fake.statements, (
+        "PG `_candidates` did not execute a statement via session_factory "
+        "(query-layer filter unobservable)"
+    )
+    from sqlalchemy.dialects import postgresql  # noqa: PLC0415
+
+    dialect = postgresql.dialect()
+    compiled = []
+    for st in fake.statements:
+        try:
+            compiled.append(str(st.compile(dialect=dialect, compile_kwargs={"literal_binds": True})))
+        except Exception:  # noqa: BLE001
+            try:
+                compiled.append(str(st.compile(dialect=dialect)))
+            except Exception:  # noqa: BLE001
+                continue
+    joined = " ".join(compiled).lower()
+    assert "entity_scope" in joined, (
+        "PG query-layer filter missing: compiled statement has no `entity_scope` predicate "
+        f"(retrieve-then-filter?); compiled={joined[:400]}"
+    )
+    assert (" in " in joined) or ("= any" in joined) or ("any(" in joined), (
+        f"PG filter must be an IN/ANY predicate on entity_scope; compiled={joined[:400]}"
     )

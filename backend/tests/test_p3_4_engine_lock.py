@@ -212,7 +212,7 @@ def test_g1_migration_single_head_reuses_p34_rev():
 # ── offline SQLite harness ───────────────────────────────────────────────────
 
 import app.db.session as _dbs  # noqa: E402
-from sqlalchemy import BigInteger, create_engine  # noqa: E402
+from sqlalchemy import BigInteger, create_engine, event  # noqa: E402
 from sqlalchemy.dialects.postgresql import JSONB  # noqa: E402
 from sqlalchemy.ext.compiler import compiles  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
@@ -263,6 +263,20 @@ def env(tmp_path):
     from app.db.base import Base  # noqa: PLC0415
 
     engine = create_engine(f"sqlite:///{tmp_path / 'p34e.db'}", future=True)
+    # Offline PG sequences: exec_service._task_no / _approval_no call
+    # `SELECT nextval('seq_…')`, which SQLite lacks. Provide a test-internal,
+    # per-engine monotonic nextval (semantically equivalent; production ID
+    # generation untouched) — @架构 seq2940 裁定③.
+    _seq: dict[str, int] = {}
+
+    def _nextval(name: str) -> int:
+        _seq[name] = _seq.get(name, 0) + 1
+        return _seq[name]
+
+    def _register_nextval(dbapi_conn, _record) -> None:
+        dbapi_conn.create_function("nextval", 1, _nextval)
+
+    event.listen(engine, "connect", _register_nextval)
     Base.metadata.create_all(engine, tables=_core_tables())
     maker = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, future=True)
     session = maker()

@@ -92,6 +92,57 @@ def test_p1_cicd_permission_codes_registered():
     assert not missing, f"P3-5 permission codes missing from PERMISSION_TREE: {sorted(missing)}"
 
 
+# P3-6 ② (@架构 seq3147 / @需求 seq3146/seq3148): "端点↔权限 1:1" is OPERATION-level
+# (method+path), NOT URL-level. release = 9 operations ↔ 9 codes (/releases carries
+# list+add ⇒ 8 URL keys); provider = 5 operations ↔ 5 codes (3 URL keys). Total 14↔14.
+
+_RELEASE_OP_CODE = {
+    ("GET", "/releases"): "release:list",
+    ("POST", "/releases"): "release:add",
+    ("GET", "/releases/{id}"): "release:view",
+    ("POST", "/releases/{id}/canary"): "release:canary",
+    ("POST", "/releases/{id}/promote"): "release:promote",
+    ("POST", "/releases/{id}/rollback"): "release:rollback",
+    ("POST", "/releases/{id}/cancel"): "release:cancel",
+    ("POST", "/releases/{id}/deploy"): "release:deploy",
+    ("POST", "/releases/{id}/fail"): "release:fail",
+}
+_CICD_OP_CODE = {
+    ("GET", "/cicd/providers"): "cicd:provider:list",
+    ("POST", "/cicd/providers"): "cicd:provider:add",
+    ("PUT", "/cicd/providers/{id}"): "cicd:provider:edit",
+    ("DELETE", "/cicd/providers/{id}"): "cicd:provider:del",
+    ("POST", "/cicd/providers/{id}/test"): "cicd:provider:test",
+}
+
+
+def test_p1b_operation_code_binding_1to1_no_release_run():
+    """P3-6 ②: 14 operations ↔ 14 permission codes, 1:1; `release:run` must NOT exist."""
+    codes = _perm_codes()
+    op_codes = set(_RELEASE_OP_CODE.values()) | set(_CICD_OP_CODE.values())
+    assert len(_RELEASE_OP_CODE) == 9 and len(_CICD_OP_CODE) == 5
+    assert len(op_codes) == 14, f"expected 14 distinct operation codes; got {len(op_codes)}"
+    assert op_codes == set(CICD_PERMS), "operation→code map must equal the CICD_PERMS set"
+    missing = op_codes - codes
+    assert not missing, f"P3-6 operation codes not seeded: {sorted(missing)}"
+    assert "release:run" not in codes, "`release:run` must NOT be seeded (no such operation)"
+    assert "release:run" not in CICD_PERMS
+
+
+def test_p1c_seed_menu_button_counts():
+    """P3-6 ② counting lock (@架构 seq3147): +2 release buttons; menus unchanged (26)."""
+    seed = _try("app.db.seed")
+    if isinstance(seed, Exception):
+        pytest.fail(f"P3-6 lock: app.db.seed unavailable: {seed}")
+    tree = getattr(seed, "PERMISSION_TREE", [])
+    menus = [node[0] for node in tree]
+    buttons = [child[0] for node in tree for child in node[5]]
+    assert len(menus) == 26, f"menus must stay 26 (no new menu); got {len(menus)}"
+    assert len(buttons) == 110, (
+        f"buttons must be 110 (108 + release:deploy/fail); got {len(buttons)}"
+    )
+
+
 # ── A1/A2: openapi runtime surface ───────────────────────────────────────────
 
 _CICD = r"/api/v1/cicd"

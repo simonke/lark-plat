@@ -180,6 +180,21 @@ const routes: RouteRecordRaw[] = [
         name: 'release-detail',
         component: () => import('../views/releases/ReleaseDetailView.vue'),
       },
+      {
+        path: 'ops/incidents',
+        name: 'ops-incidents',
+        component: () => import('../views/ops/IncidentsView.vue'),
+      },
+      {
+        path: 'ai/kb',
+        name: 'ai-kb',
+        component: () => import('../views/ai/KbAssistantView.vue'),
+      },
+      {
+        path: 'ai/actions',
+        name: 'ai-actions',
+        component: () => import('../views/ai/AiActionsView.vue'),
+      },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/' },

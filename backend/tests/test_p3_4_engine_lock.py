@@ -1186,9 +1186,10 @@ def test_b18_unknown_biz_type_approve_is_fail_closed(env):
 # tie to `biz_type`, and the exec fall-through resolves the task by `biz_id` alone.
 # So an UNKNOWN biz_type whose `biz_id` collides with a real `awaiting_approval`
 # exec_task could advance/cancel that unrelated task. P3-6 ④ forbids cross-domain
-# links: `approve`/`reject`/`cancel` must raise (404/403) and leave the colliding
-# task byte-for-byte unchanged (fail-closed; a catch-all no-op is ALSO rejected by
-# B18). Compliant arrange (@代码reviewer seq3136 / @需求 seq3138): `biz_id` is
+# links: `approve`/`reject`/`cancel` must raise **404** (code unified — @架构 seq3139
+# B.4) and leave the colliding task byte-for-byte unchanged (fail-closed; a catch-all
+# no-op is ALSO rejected by B18). Compliant arrange (@代码reviewer seq3136 / @需求
+# seq3138): `biz_id` is
 # unique, so seed ONE colliding approval per task (biz_type='mystery', biz_id=T.id)
 # and do NOT create an exec-domain approval for T; three verbs need three
 # independent (task, approval) pairs (a decided approval cannot be reused).
@@ -1213,9 +1214,9 @@ def _seed_colliding_mystery_approval(session, tag: str) -> tuple[int, int]:
 
 
 def test_b20_cross_domain_biz_type_biz_id_isolation(env, monkeypatch):
-    """④: approve/reject/cancel on a biz_type/biz_id mismatch => raise (404/403), advance nothing."""
+    """④: approve/reject/cancel on a biz_type/biz_id mismatch => 404, advance nothing."""
     session, _set_flag = env
-    from app.core.exceptions import ForbiddenError, NotFoundError  # noqa: PLC0415
+    from app.core.exceptions import NotFoundError  # noqa: PLC0415
     from app.db.models.exec import ExecTask  # noqa: PLC0415
     from app.db.models.schedule import ApprovalRequest  # noqa: PLC0415
     from unittest.mock import MagicMock  # noqa: PLC0415
@@ -1237,7 +1238,7 @@ def test_b20_cross_domain_biz_type_biz_id_isolation(env, monkeypatch):
         tid, aid = _seed_colliding_mystery_approval(session, verb)
         before = session.get(ExecTask, tid)
         st0, v0 = before.status, before.version
-        with pytest.raises((NotFoundError, ForbiddenError)):
+        with pytest.raises(NotFoundError):
             call(aid)
         session.expire_all()
         after = session.get(ExecTask, tid)

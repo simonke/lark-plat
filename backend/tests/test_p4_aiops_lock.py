@@ -1258,3 +1258,128 @@ def test_b6_null_entity_scope_fail_closed():
         "⑨ fail-closed: PG predicate must not treat NULL entity_scope as global "
         f"(no `entity_scope IS NULL` pass branch); compiled={sql[:300]}"
     )
+
+
+class _CaptureSession:
+    """Captures `session.add(obj)` so the PG write path is observable offline."""
+
+    def __init__(self):
+        self.added = []
+
+    def add(self, obj):
+        self.added.append(obj)
+
+    def flush(self):
+        pass
+
+    def close(self):
+        pass
+
+    def execute(self, *a, **k):
+        return _FakeResult()
+
+
+def test_b6b_entity_scope_write_normalized_and_admin_read():
+    """⑨ (@架构 seq3252): a falsy scope is WRITTEN as `[]` (NOT NULL); a no-scope
+    record stays visible ONLY to `scope=None` (admin all-visible), never to a
+    non-empty scope (the read-side fail-closed is pinned by b6)."""
+    pg_cls = _require("PostgresArrayEmbeddingStore")
+    cap = _CaptureSession()
+    store = pg_cls(cap)
+    try:
+        store.upsert([{"doc_ref": "w", "chunk_ref": "w#0", "embedding": [1.0], "dim": 1}])
+    except Exception as exc:  # noqa: BLE001
+        pytest.fail(f"P4 lock ⑨: PG upsert (write path) raised: {exc}")
+    assert cap.added, "⑨: PG upsert must construct a KbEmbedding row"
+    written = getattr(cap.added[0], "entity_scope", "MISSING")
+    assert written is not None and written != "MISSING", (
+        "⑨ write-path: a falsy/absent scope must be normalized to [] (NOT NULL), "
+        f"not None; got {written!r}"
+    )
+    assert list(written) == [], f"⑨ write-path: falsy scope must store [] (got {written!r})"
+
+    inmem = _require("InMemoryEmbeddingStore")
+    store2 = inmem()
+    store2.upsert([
+        _make_record(doc_ref="g", chunk_ref="g#0", embedding=[1.0, 0.0],
+                     entity_scope=None, dim=2),
+    ])
+    admin_hits = store2.query([1.0, 0.0], scope=None, limit=10)
+    assert ("g", "g#0") in _hit_refs(admin_hits), (
+        "⑨ read-path: `scope=None` (admin all-visible) must STILL return a no-scope "
+        "record — do not fail-close the admin bypass"
+    )
+
+
+# ── ⑨/甲 service-layer scope dispatch (@架构 seq3252/3254) ───────────────────
+
+class _AdminActor2:
+    is_admin = True
+    id = 1
+    visible_group_ids = [1]
+
+
+class _PlainActor:
+    is_admin = False
+    id = 2
+    visible_group_ids = []
+
+
+def test_b7_scope_for_failclosed_and_admin_bypass():
+    """(甲) @架构 seq3254: `_scope_for` validates entity_type BEFORE the admin bypass —
+    unknown type => non-None EMPTY scope for ALL roles (fail-closed); known + admin =>
+    None (all-visible); non-admin must NEVER yield None (fail-open guard)."""
+    svc = _try("app.services.ai_service")
+    if isinstance(svc, Exception):
+        pytest.fail(f"P4 lock ⑨/甲: app.services.ai_service unavailable: {svc}")
+    scope_for = getattr(svc, "_scope_for", None)
+    if scope_for is None:
+        pytest.fail("P4 lock ⑨/甲: ai_service._scope_for missing")
+    db = _FakeSession()
+
+    admin_unknown = scope_for(db, _AdminActor2(), "__unregistered__")
+    assert admin_unknown is not None, (
+        "甲 fail-closed: admin + unknown entity_type must NOT be None/all-visible"
+    )
+    assert not set(admin_unknown.entity_ids), (
+        "甲 fail-closed: admin + unknown entity_type must yield an EMPTY scope"
+    )
+
+    user_unknown = scope_for(db, _PlainActor(), "__unregistered__")
+    assert user_unknown is not None and not set(user_unknown.entity_ids), (
+        "甲 fail-closed: non-admin + unknown entity_type must yield a non-None empty scope"
+    )
+
+    assert scope_for(db, _AdminActor2(), "audit") is None, (
+        "甲: known entity_type + admin must remain all-visible (scope=None)"
+    )
+
+    user_known = scope_for(db, _PlainActor(), "audit")
+    assert user_known is not None, (
+        "⑨ @架构 seq3252: a non-admin call must NEVER produce scope=None (fail-open guard)"
+    )
+
+
+# ── ④ FTS scope comparison must be str-cast (@架构 seq3250/3252) ─────────────
+
+def test_s10_fts_scope_uses_str_cast():
+    """④: `_fts_hits` must compare scope ids as strings — no `int()` (host ip/hostname
+    enter the scope) and no `integer = text` PG error."""
+    svc = _try("app.services.ai_service")
+    if isinstance(svc, Exception):
+        pytest.fail(f"P4 lock ④: app.services.ai_service unavailable: {svc}")
+    fts = getattr(svc, "_fts_hits", None)
+    if fts is None:
+        pytest.fail("P4 lock ④: ai_service._fts_hits missing")
+    assert "int(" not in inspect.getsource(fts), (
+        "④: `_fts_hits` must not coerce scope ids with int() (v1.2: all str; host "
+        "ip/hostname are non-numeric)"
+    )
+
+    scope_cls = _require("ScopeFilter")
+    scope = _make_scope(scope_cls, entity_type="kb", ids=["10.0.0.1", "web-01"])
+    try:
+        out = fts(_FakeSession(), "q", scope, "kb", 5)
+    except Exception as exc:  # noqa: BLE001
+        pytest.fail(f"④: `_fts_hits` must not raise on non-numeric scope ids: {exc}")
+    assert isinstance(out, list)

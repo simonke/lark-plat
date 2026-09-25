@@ -12,7 +12,7 @@ Pinned surface (tuple seq3043):
                         POST /cicd/providers/{id}/test ; POST /cicd/webhooks/{provider} (token, NOT session) ;
                         GET/POST /releases ; GET /releases/{id} ;
                         POST /releases/{id}/canary|promote|rollback|cancel
-  perms (14)          : cicd:provider:{list,add,edit,del,test} ; release:{list,add,view,run,canary,promote,rollback,cancel}
+  perms (13)          : cicd:provider:{list,add,edit,del,test} ; release:{list,add,view,run,canary,promote,rollback,cancel}
   flag                : `feature.cicd` default False (feature gate FIRST)
   state machine       : release pending->deploying->canary->succeeded / failed->rolled_back /
                         terminal cancelled (cancel from pending|deploying|canary; already-terminal => 409)
@@ -63,9 +63,10 @@ CICD_PERMS = {
     "release:rollback",
     "release:cancel",
 }
-# NOTE (open point): tuple seq3043/§14.3 say "14 码" but the ENUMERATED set is
-# 13 (cicd:provider:* = 5, release:* = 8). Lock pins the enumerated 13; the 14th
-# (if any) is a decision request to @架构 (see lock report).
+# NOTE (resolved): @架构 seq3059 ruled the count = 13 (the seq3043 tuple's "14"
+# was a 5+8 arithmetic slip; no 14th code). Enumeration here (cicd:provider:* = 5,
+# release:* = 8) matches the ruling and the design source (architecture-phase23
+# §14.3 / api-design-v3:291).
 
 
 def _perm_codes() -> set[str]:

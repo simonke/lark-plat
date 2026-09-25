@@ -1,0 +1,528 @@
+r"""P3-5 CI/CD 集成（发布编排段）contract locks — @单元测试工程师 (lock-first, add-only).
+
+Frozen contract: @架构 **P3-5 tuple v1.0** (seq3043, base = M6 `a0131456`);
+design `docs/architecture-phase23.md §14`; requirements `§27.3` (@需求 seq3041/seq3042).
+
+Base = release **M6 = `a0131456`** (master).
+
+Pinned surface (tuple seq3043):
+  tables (add-only)  : cicd_provider / release  (+ contract `artifact_manifest`)
+  migration          : +1, rev `b2c3d4e5f6a8`, parent P3-4 rev `a1b2c3d4e5f7`, single head, in C
+  interfaces          : GET/POST /cicd/providers ; PUT/DELETE /cicd/providers/{id} ;
+                        POST /cicd/providers/{id}/test ; POST /cicd/webhooks/{provider} (token, NOT session) ;
+                        GET/POST /releases ; GET /releases/{id} ;
+                        POST /releases/{id}/canary|promote|rollback|cancel
+  perms (14)          : cicd:provider:{list,add,edit,del,test} ; release:{list,add,view,run,canary,promote,rollback,cancel}
+  flag                : `feature.cicd` default False (feature gate FIRST)
+  state machine       : release pending->deploying->canary->succeeded / failed->rolled_back /
+                        terminal cancelled (cancel from pending|deploying|canary; already-terminal => 409)
+  R-复用 (§14.4)      : release 编排 REUSES §13 workflow (release == 1 `workflow_run`, trigger_type=release)
+
+EXPECTED: clean **RED** until P3-5 backend lands (add-only); import-guarded so the run
+reports assertion failures rather than collection errors. Offline only (temp SQLite;
+no live PG/Redis; no migrations applied).
+
+paths note: base 144 (P3-4 收口 @ M6) + 10 URL keys == **154** (NOT the stale 152 = old 142 base;
+@后端 seq3042 / @架构 seq3043 裁 (a)). `docs/openapi.json` is URL-keyed; ops 13.
+
+Run (backend checkout, backend venv):
+    python -m pytest tests/test_p3_5_cicd_lock.py -p no:cacheprovider -o addopts= -q
+"""
+
+from __future__ import annotations
+
+import importlib
+import re
+
+import pytest
+
+
+def _try(mod: str):
+    try:
+        return importlib.import_module(mod)
+    except Exception as exc:  # noqa: BLE001
+        return exc
+
+
+# ── P1: permission codes (seed PERMISSION_TREE) ──────────────────────────────
+
+CICD_PERMS = {
+    "cicd:provider:list",
+    "cicd:provider:add",
+    "cicd:provider:edit",
+    "cicd:provider:del",
+    "cicd:provider:test",
+    "release:list",
+    "release:add",
+    "release:view",
+    "release:run",
+    "release:canary",
+    "release:promote",
+    "release:rollback",
+    "release:cancel",
+}
+# NOTE (open point): tuple seq3043/§14.3 say "14 码" but the ENUMERATED set is
+# 13 (cicd:provider:* = 5, release:* = 8). Lock pins the enumerated 13; the 14th
+# (if any) is a decision request to @架构 (see lock report).
+
+
+def _perm_codes() -> set[str]:
+    seed = _try("app.db.seed")
+    if isinstance(seed, Exception):
+        pytest.fail(f"P3-5 lock: app.db.seed unavailable: {seed}")
+    acc: set[str] = set()
+
+    def walk(nodes):
+        for node in nodes or []:
+            acc.add(node[0])
+            walk(node[5] if len(node) > 5 else [])
+
+    walk(getattr(seed, "PERMISSION_TREE", []))
+    return acc
+
+
+def test_p1_cicd_permission_codes_registered():
+    codes = _perm_codes()
+    missing = CICD_PERMS - codes
+    assert not missing, f"P3-5 permission codes missing from PERMISSION_TREE: {sorted(missing)}"
+
+
+# ── A1/A2: openapi runtime surface ───────────────────────────────────────────
+
+_CICD = r"/api/v1/cicd"
+_REL = r"/api/v1/releases"
+
+
+def _cicd_paths() -> dict[str, set[str]]:
+    return {
+        _CICD + r"/providers": {"get", "post"},
+        _CICD + r"/providers/\{[^}]+\}": {"put", "delete"},
+        _CICD + r"/providers/\{[^}]+\}/test": {"post"},
+        _CICD + r"/webhooks/\{[^}]+\}": {"post"},
+        _REL: {"get", "post"},
+        _REL + r"/\{[^}]+\}": {"get"},
+        _REL + r"/\{[^}]+\}/canary": {"post"},
+        _REL + r"/\{[^}]+\}/promote": {"post"},
+        _REL + r"/\{[^}]+\}/rollback": {"post"},
+        _REL + r"/\{[^}]+\}/cancel": {"post"},
+    }
+
+
+_METHODS = {"get", "post", "put", "delete", "patch"}
+
+
+def _openapi_paths() -> dict:
+    try:
+        from app.main import app  # noqa: PLC0415
+    except Exception as exc:  # noqa: BLE001
+        pytest.fail(f"P3-5 lock: app.main unavailable: {exc}")
+    return app.openapi().get("paths", {})
+
+
+def test_a1_p3_5_paths_present_with_methods():
+    paths = _openapi_paths()
+    problems = []
+    for pat, want in _cicd_paths().items():
+        rx = re.compile(rf"^{pat}$")
+        hits = [k for k in paths if rx.match(k)]
+        if not hits:
+            problems.append(f"missing {pat}")
+            continue
+        have = {m for k in hits for m in paths[k] if m in _METHODS}
+        miss = want - have
+        if miss:
+            problems.append(f"{pat} missing methods {sorted(miss)} (have {sorted(have)})")
+    assert not problems, "P3-5 openapi surface incomplete: " + "; ".join(problems)
+
+
+def test_a2_paths_count_154():
+    paths = _openapi_paths()
+    # Base == M6 (`a0131456`), P3-4 收口 == 144 (the earlier "152" was the stale
+    # 142 base; @后端 seq3042 / @架构 seq3043 裁 (a) canonical 154). EXACT equality
+    # (NOT `>=`): a future accidental 155 must still fail.
+    assert len(paths) == 154, (
+        f"P3-5 paths must be exactly 154 (M6 144 + 10 cicd/release URL keys); got {len(paths)}. "
+        "OpenAPI `paths` is URL-keyed; the 10 keys are /cicd/providers·/{id}·/{id}/test·"
+        "/cicd/webhooks/{provider} + /releases·/{id}·/{id}/canary·/{id}/promote·/{id}/rollback·"
+        "/{id}/cancel (13 ops)."
+    )
+
+
+# ── M1/M2: SQLAlchemy tables & core columns ──────────────────────────────────
+
+CICD_TABLES = ("cicd_provider", "release")
+PROVIDER_COLS = {
+    "id", "type", "name", "endpoint", "config_enc", "enabled", "status",
+    "last_heartbeat", "created_by", "created_at", "updated_at",
+}
+RELEASE_COLS = {
+    "id", "provider_id", "app", "env", "status", "workflow_run_id",
+    "target_host_ids", "rolled_back_from", "created_by", "created_at", "updated_at",
+}
+
+
+def _tables():
+    try:
+        import app.db.models  # noqa: F401,PLC0415  (register all models)
+        from app.db.base import Base  # noqa: PLC0415
+    except Exception as exc:  # noqa: BLE001
+        pytest.fail(f"P3-5 lock: app.db.base/models unavailable: {exc}")
+    return Base.metadata.tables
+
+
+def test_m1_cicd_tables_registered():
+    tables = _tables()
+    missing = [t for t in CICD_TABLES if t not in tables]
+    assert not missing, f"P3-5 must define {list(CICD_TABLES)} (§14.2); missing {missing}"
+
+
+def test_m2_cicd_core_columns():
+    tables = _tables()
+    problems = []
+    for name, want in (("cicd_provider", PROVIDER_COLS), ("release", RELEASE_COLS)):
+        t = tables.get(name)
+        if t is None:
+            problems.append(f"{name}: table missing")
+            continue
+        miss = want - set(t.columns.keys())
+        if miss:
+            problems.append(f"{name}: missing columns {sorted(miss)}")
+    r = tables.get("release")
+    if r is not None:
+        cols = set(r.columns.keys())
+        if not ({"version", "artifact_ref"} & cols):
+            problems.append("release: must carry `version` or `artifact_ref` (§14.2)")
+    assert not problems, "P3-5 column contract: " + "; ".join(problems)
+
+
+# ── F1: feature flag default off ─────────────────────────────────────────────
+
+def test_f1_feature_cicd_default_false():
+    seed = _try("app.db.seed")
+    if isinstance(seed, Exception):
+        pytest.fail(f"P3-5 lock: app.db.seed unavailable: {seed}")
+    entry = getattr(seed, "DEFAULT_CONFIG_RULES", {}).get("feature.cicd")
+    assert entry is not None, "feature.cicd not seeded in DEFAULT_CONFIG_RULES"
+    assert entry.get("value") is False, (
+        f"feature.cicd default must be False; got {entry.get('value')!r}"
+    )
+
+
+# ── G1: migration single head descending from the P3-4 rev ───────────────────
+
+_VERSIONS_DIR = __import__("pathlib").Path(__file__).resolve().parents[1] / "alembic" / "versions"
+_P34_HEAD = "a1b2c3d4e5f7"
+_P35_REV = "b2c3d4e5f6a8"
+# 形近陷阱: `b2c3d4e5f6a7` is the EXISTING P2-1 transfer-table rev (docs §14.3) — must NOT be reused.
+_P21_TRANSFER_REV = "b2c3d4e5f6a7"
+
+
+def _revision_graph() -> dict[str, str | None]:
+    revs: dict[str, str | None] = {}
+    for p in _VERSIONS_DIR.glob("*.py"):
+        txt = p.read_text(encoding="utf-8")
+        m = re.search(r'^revision\s*=\s*["\']([^"\']+)["\']', txt, re.M)
+        d = re.search(r'^down_revision\s*=\s*["\']([^"\']+)["\']', txt, re.M)
+        if m:
+            revs[m.group(1)] = d.group(1) if d else None
+    return revs
+
+
+def test_g1_migration_single_head_descends_from_p34():
+    revs = _revision_graph()
+    assert _P34_HEAD in revs, f"P3-4 head {_P34_HEAD} missing from versions dir"
+    assert _P21_TRANSFER_REV in revs, f"existing P2-1 rev {_P21_TRANSFER_REV} expected (sanity)"
+    assert _P35_REV != _P21_TRANSFER_REV, "P3-5 rev must not collide with P2-1 transfer rev"
+    downs = {v for v in revs.values() if v}
+    heads = sorted(r for r in revs if r not in downs)
+    assert len(heads) == 1, f"migration must keep a single head; got {heads}"
+    head = heads[0]
+    assert head == _P35_REV, (
+        f"P3-5 head must be the suggested rev `{_P35_REV}`; got {head}"
+    )
+    assert revs[head] == _P34_HEAD, (
+        f"P3-5 head must descend directly from P3-4 rev {_P34_HEAD}; got parent {revs[head]!r}"
+    )
+
+
+# ── R0–R8: route-level behavioural locks (offline TestClient) ────────────────
+
+import app.db.session as _dbs  # noqa: E402
+from sqlalchemy import BigInteger, create_engine  # noqa: E402
+from sqlalchemy.dialects.postgresql import JSONB  # noqa: E402
+from sqlalchemy.ext.compiler import compiles  # noqa: E402
+from sqlalchemy.orm import sessionmaker  # noqa: E402
+
+_WF_TABLES = ("workflow", "workflow_version", "workflow_run", "workflow_node_run")
+_CORE_TABLES = (
+    "config_rule", "sys_audit_log", "sys_user", "exec_task", "exec_task_host",
+    "approval_request", "approval_rule", "approval_record",
+    *CICD_TABLES, *_WF_TABLES,
+)
+
+
+@compiles(JSONB, "sqlite")
+def _jsonb_as_json(type_, compiler, **kw):  # noqa: ANN001
+    return "JSON"
+
+
+@compiles(BigInteger, "sqlite")
+def _bigint_as_integer(type_, compiler, **kw):  # noqa: ANN001
+    return "INTEGER"
+
+
+def _core_tables():
+    import app.db.models  # noqa: F401,PLC0415 (register all models)
+    from app.db.base import Base  # noqa: PLC0415
+
+    tl = Base.metadata.tables
+    return [tl[name] for name in _CORE_TABLES if name in tl]
+
+
+@pytest.fixture()
+def cicd_client(tmp_path):
+    """Yields ``(client, set_user, set_flag)``."""
+    from app.db.base import Base  # noqa: PLC0415
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'p35.db'}", future=True)
+    Base.metadata.create_all(engine, tables=_core_tables())
+    maker = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, future=True)
+    session = maker()
+
+    prev_bind = getattr(_dbs.SessionLocal, "kw", {}).get("bind")
+    _dbs.SessionLocal.configure(bind=engine)
+
+    import app.main as main  # noqa: PLC0415
+    from app.api.deps import CurrentUser, get_current_user  # noqa: PLC0415
+    from app.db.session import get_db  # noqa: PLC0415
+    from starlette.testclient import TestClient  # noqa: PLC0415
+
+    main.app.dependency_overrides[get_db] = lambda: (yield session)
+
+    def set_user(perms, admin=False):
+        user = CurrentUser(
+            user_id=1, username="qa", is_admin=admin,
+            permissions=list(perms), visible_group_ids=[],
+        )
+        main.app.dependency_overrides[get_current_user] = lambda: user
+        return user
+
+    def set_flag(on: bool):
+        try:
+            from app.db.models.notify import ConfigRule  # noqa: PLC0415
+
+            row = session.query(ConfigRule).filter_by(rule_key="feature.cicd").one_or_none()
+            if row is None:
+                session.add(ConfigRule(rule_key="feature.cicd", rule_value={"value": on}))
+            else:
+                row.rule_value = {"value": on}
+            session.commit()
+        except Exception:  # noqa: BLE001
+            pass
+
+    try:
+        yield TestClient(main.app), set_user, set_flag, session
+    finally:
+        main.app.dependency_overrides.clear()
+        session.close()
+        if prev_bind is not None:
+            _dbs.SessionLocal.configure(bind=prev_bind)
+        engine.dispose()
+
+
+def test_r0_feature_gate_runs_first_400_for_any_caller(cicd_client):
+    client, set_user, set_flag, _ = cicd_client
+    set_flag(False)
+    # admin (would pass any perm gate) still gets 400 because the FEATURE gate is first
+    set_user([], admin=True)
+    for path in ("/api/v1/cicd/providers", "/api/v1/releases"):
+        r = client.get(path)
+        assert r.status_code == 400, (
+            f"flag off + admin must be 400 `feature disabled` (feature gate FIRST) on {path}; "
+            f"got {r.status_code}: {r.text}"
+        )
+        assert r.json().get("code") == 400
+    # no-perm caller also gets 400 (NOT 403) — proves feature-before-permission order
+    set_user([], admin=False)
+    r2 = client.get("/api/v1/cicd/providers")
+    assert r2.status_code == 400, (
+        f"flag off + no-perm caller must be 400, NOT 403 (feature gate FIRST); "
+        f"got {r2.status_code}: {r2.text}"
+    )
+
+
+def test_r1_flag_on_missing_perm_403(cicd_client):
+    client, set_user, set_flag, _ = cicd_client
+    set_flag(True)
+    set_user([], admin=False)
+    r = client.get("/api/v1/cicd/providers")
+    assert r.status_code == 403, (
+        f"flag on + missing cicd:provider:list must be 403; got {r.status_code}: {r.text}"
+    )
+
+
+def test_r2_provider_create_and_invalid_type_422(cicd_client):
+    client, set_user, set_flag, _ = cicd_client
+    set_flag(True)
+    set_user(["cicd:provider:add", "cicd:provider:list"], admin=True)
+    r = client.post(
+        "/api/v1/cicd/providers",
+        json={"type": "gitlab", "name": "gl", "endpoint": "https://gitlab.example.com"},
+    )
+    assert r.status_code == 200, r.text
+    d = r.json().get("data") or {}
+    assert {"id", "type", "name"} <= set(d), (
+        f"created provider must expose id/type/name; keys={sorted(d)}"
+    )
+    bad = client.post(
+        "/api/v1/cicd/providers",
+        json={"type": "bogus", "name": "x", "endpoint": "https://x"},
+    )
+    assert bad.status_code == 422, (
+        f"provider type must be ∈ {{gitlab,jenkins,generic}}, bad type -> 422; "
+        f"got {bad.status_code}: {bad.text}"
+    )
+
+
+def test_r3_provider_list_page(cicd_client):
+    client, set_user, set_flag, _ = cicd_client
+    set_flag(True)
+    set_user(["cicd:provider:list"], admin=True)
+    r = client.get("/api/v1/cicd/providers")
+    assert r.status_code == 200, r.text
+    d = r.json().get("data") or {}
+    assert {"list", "total", "page", "size"} <= set(d), (
+        f"GET /cicd/providers must return Page {{list,total,page,size}}; keys={sorted(d)}"
+    )
+    assert isinstance(d["list"], list)
+
+
+def test_r4_provider_secret_not_echoed_plaintext(cicd_client):
+    client, set_user, set_flag, _ = cicd_client
+    set_flag(True)
+    set_user(["cicd:provider:add", "cicd:provider:list"], admin=True)
+    secret = "s3cr3t-token-XYZ"
+    r = client.post(
+        "/api/v1/cicd/providers",
+        json={
+            "type": "jenkins", "name": "jk", "endpoint": "https://jk.example.com",
+            "config": {"token": secret},
+        },
+    )
+    assert r.status_code == 200, r.text
+    pid = (r.json().get("data") or {}).get("id")
+    fresh = client.get("/api/v1/cicd/providers")
+    assert fresh.status_code == 200, fresh.text
+    assert secret not in fresh.text, (
+        "§14.2: provider config_enc 密钥逐值密文; the plaintext secret must NOT be echoed"
+    )
+    assert pid is not None
+
+
+def test_r5_releases_create_and_invalid_env_422(cicd_client):
+    client, set_user, set_flag, _ = cicd_client
+    set_flag(True)
+    set_user(
+        ["cicd:provider:add", "release:add", "release:view", "release:list"], admin=True
+    )
+    prov = client.post(
+        "/api/v1/cicd/providers",
+        json={"type": "generic", "name": "g", "endpoint": "https://g"},
+    )
+    assert prov.status_code == 200, prov.text
+    pid = (prov.json().get("data") or {}).get("id")
+    r = client.post(
+        "/api/v1/releases",
+        json={"provider_id": pid, "app": "svc-a", "version": "1.0.0", "env": "dev"},
+    )
+    assert r.status_code == 200, r.text
+    d = r.json().get("data") or {}
+    assert {"id", "status"} <= set(d), f"created release must expose id/status; keys={sorted(d)}"
+    assert d["status"] == "pending", (
+        f"new release status must be `pending` (§14.1 state machine); got {d['status']!r}"
+    )
+    bad = client.post(
+        "/api/v1/releases",
+        json={"provider_id": pid, "app": "svc-a", "version": "1.0.0", "env": "bogus"},
+    )
+    assert bad.status_code == 422, (
+        f"release env must be ∈ {{dev,test,prod}}, bad env -> 422; got {bad.status_code}: {bad.text}"
+    )
+
+
+def test_r6_release_cancel_from_pending_then_terminal_409(cicd_client):
+    client, set_user, set_flag, _ = cicd_client
+    set_flag(True)
+    set_user(
+        ["cicd:provider:add", "release:add", "release:view", "release:cancel"], admin=True
+    )
+    prov = client.post(
+        "/api/v1/cicd/providers",
+        json={"type": "generic", "name": "g2", "endpoint": "https://g"},
+    )
+    assert prov.status_code == 200, prov.text
+    pid = (prov.json().get("data") or {}).get("id")
+    created = client.post(
+        "/api/v1/releases",
+        json={"provider_id": pid, "app": "svc-b", "version": "1.0.0", "env": "test"},
+    )
+    assert created.status_code == 200, created.text
+    rid = (created.json().get("data") or {}).get("id")
+    c1 = client.post(f"/api/v1/releases/{rid}/cancel")
+    assert c1.status_code == 200, (
+        f"cancel from `pending` must be allowed (§14.1); got {c1.status_code}: {c1.text}"
+    )
+    c2 = client.post(f"/api/v1/releases/{rid}/cancel")
+    assert c2.status_code == 409, (
+        f"cancel on an already-terminal release must be 409 (§14.1); got {c2.status_code}: {c2.text}"
+    )
+
+
+def test_r7_webhook_token_gate_not_session_401(cicd_client):
+    client, set_user, set_flag, _ = cicd_client
+    set_flag(True)
+    set_user([], admin=False)
+    # inbound webhook uses a provider token, NOT a session/perm: no credentials -> 401
+    r = client.post("/api/v1/cicd/webhooks/gitlab", json={})
+    assert r.status_code == 401, (
+        f"POST /cicd/webhooks/{{provider}} is provider-token guarded (NOT session/perm); "
+        f"missing token must be 401; got {r.status_code}: {r.text}"
+    )
+
+
+def test_r8_release_reuses_section13_workflow_run(cicd_client):
+    """§14.4: a release IS one §13 `workflow_run` (trigger_type="release").
+
+    Implementation-neutral proof of R-复用: once a release is triggered, a REAL
+    `workflow_run` row linked to the release must exist (no re-implementation of
+    the orchestrator).
+    """
+    client, set_user, set_flag, session = cicd_client
+    set_flag(True)
+    set_user(
+        ["cicd:provider:add", "release:add", "release:view", "release:run", "release:canary"],
+        admin=True,
+    )
+    prov = client.post(
+        "/api/v1/cicd/providers",
+        json={"type": "generic", "name": "g3", "endpoint": "https://g"},
+    )
+    assert prov.status_code == 200, prov.text
+    pid = (prov.json().get("data") or {}).get("id")
+    created = client.post(
+        "/api/v1/releases",
+        json={"provider_id": pid, "app": "svc-c", "version": "1.0.0", "env": "dev"},
+    )
+    assert created.status_code == 200, created.text
+    rid = (created.json().get("data") or {}).get("id")
+    client.post(f"/api/v1/releases/{rid}/canary")
+
+    from sqlalchemy import text  # noqa: PLC0415
+
+    rows = session.execute(
+        text("SELECT COUNT(*) FROM workflow_run WHERE trigger_type = 'release'")
+    ).scalar()
+    assert rows and rows >= 1, (
+        "§14.4: triggering a release must create a REAL §13 workflow_run "
+        "(trigger_type='release'); none found — release must NOT re-implement the orchestrator"
+    )

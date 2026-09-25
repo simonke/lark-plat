@@ -13,6 +13,7 @@ import type {
   WorkflowRunDetail,
   WorkflowRunIn,
   WorkflowRunId,
+  WsTokenOut,
 } from './types'
 
 export async function listWorkflows(params?: {
@@ -90,6 +91,11 @@ export async function listWorkflowRuns(params?: {
 export async function getWorkflowRun(id: number): Promise<WorkflowRunDetail> {
   const { data } = await http.get<Result<WorkflowRunDetail>>(`/workflow-runs/${id}`)
   return data.data
+}
+
+export async function getWorkflowRunWsToken(id: number): Promise<string> {
+  const { data } = await http.get<Result<WsTokenOut>>(`/workflow-runs/${id}/ws-token`)
+  return data.data.token
 }
 
 export async function cancelWorkflowRun(id: number): Promise<WorkflowRun> {

@@ -11,6 +11,7 @@ import {
   runWorkflow,
   listWorkflowRuns,
   getWorkflowRun,
+  getWorkflowRunWsToken,
   cancelWorkflowRun,
   retryWorkflowRun,
 } from '../src/api/workflow'
@@ -137,6 +138,13 @@ describe('workflow Playbook API (P3-4)', () => {
     expect(http.get).toHaveBeenCalledWith('/workflow-runs/9')
     expect(result.run.id).toBe(9)
     expect(result.nodes[0].node_key).toBe('a')
+  })
+
+  it('fetches the run ws-token (P3-4b engine tuple §A)', async () => {
+    vi.mocked(http.get).mockResolvedValue(ok({ token: 'jwt-xyz' }))
+    const result = await getWorkflowRunWsToken(9)
+    expect(http.get).toHaveBeenCalledWith('/workflow-runs/9/ws-token')
+    expect(result).toBe('jwt-xyz')
   })
 
   it('cancels a run -> run out', async () => {

@@ -9,6 +9,7 @@
             <el-tag v-if="run" :type="runStatusTag(run.status)" size="small">
               {{ runStatusLabel(run.status) }}
             </el-tag>
+            <el-tag v-if="connected" type="success" size="small" effect="plain">实时</el-tag>
           </div>
           <div>
             <el-button :loading="loading" @click="load">刷新</el-button>
@@ -56,6 +57,15 @@
           <el-table-column label="结束" width="170">
             <template #default="{ row }">{{ formatTime(row.finished_at) }}</template>
           </el-table-column>
+          <el-table-column label="输出/回调" min-width="240">
+            <template #default="{ row }">
+              <template v-if="callbackOutput(row.output)">
+                <div class="cb-url">{{ callbackOutput(row.output)?.url }}</div>
+                <div class="sub">有效期至 {{ formatTime(callbackOutput(row.output)?.expires_at) }}</div>
+              </template>
+              <span v-else>-</span>
+            </template>
+          </el-table-column>
           <el-table-column label="错误" min-width="160" show-overflow-tooltip>
             <template #default="{ row }">{{ row.error || '-' }}</template>
           </el-table-column>
@@ -72,8 +82,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getWorkflowRun, cancelWorkflowRun, retryWorkflowRun } from '../../api/workflow'
 import { extractError } from '../../api/http'
+import { useWorkflowRunRealtime } from '../../composables/useWorkflowRunRealtime'
 import type { WorkflowNodeRun, WorkflowRun } from '../../api/types'
-import { formatTime, nodeStatusLabel, nodeStatusTag, nodeTypeLabel, runStatusLabel, runStatusTag, triggerLabel } from './helpers'
+import { callbackOutput, formatTime, nodeStatusLabel, nodeStatusTag, nodeTypeLabel, runStatusLabel, runStatusTag, triggerLabel } from './helpers'
 
 const route = useRoute()
 const router = useRouter()
@@ -82,20 +93,26 @@ const runId = Number(route.params.id)
 const loading = ref(false)
 const run = ref<WorkflowRun | null>(null)
 const nodes = ref<WorkflowNodeRun[]>([])
-let timer: number | undefined
+const TERMINAL = new Set(['succeeded', 'failed', 'cancelled'])
 
 const canCancel = computed(() => run.value?.status === 'pending' || run.value?.status === 'running')
 
-function scheduleRefresh() {
-  if (timer) {
-    window.clearInterval(timer)
-    timer = undefined
-  }
-  const status = run.value?.status
-  if (status === 'pending' || status === 'running') {
-    timer = window.setInterval(load, 4000)
-  }
+function upsertNode(node: WorkflowNodeRun) {
+  const idx = nodes.value.findIndex((n) => n.node_key === node.node_key)
+  if (idx >= 0) nodes.value[idx] = node
+  else nodes.value.push(node)
 }
+
+const { connected, start: startRealtime, stop: stopRealtime } = useWorkflowRunRealtime({
+  runId,
+  onRun: (r) => {
+    run.value = r
+  },
+  onNode: (n) => {
+    upsertNode(n)
+  },
+  isTerminal: (r) => TERMINAL.has(r.status),
+})
 
 async function load() {
   loading.value = true
@@ -107,7 +124,6 @@ async function load() {
     ElMessage.error(extractError(e))
   } finally {
     loading.value = false
-    scheduleRefresh()
   }
 }
 
@@ -140,10 +156,11 @@ function goBack() {
   router.push('/workflow-runs')
 }
 
-onMounted(load)
-onUnmounted(() => {
-  if (timer) window.clearInterval(timer)
+onMounted(async () => {
+  await load()
+  startRealtime()
 })
+onUnmounted(() => stopRealtime())
 </script>
 
 <style scoped>
@@ -165,5 +182,14 @@ onUnmounted(() => {
 .empty {
   color: var(--el-text-color-secondary);
   padding: 8px 0;
+}
+.cb-url {
+  word-break: break-all;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+.sub {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 </style>

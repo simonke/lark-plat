@@ -90,6 +90,21 @@ export function formatDefinition(def: WorkflowDefinition | null | undefined): st
   return JSON.stringify(def ?? { nodes: [] }, null, 2)
 }
 
+export interface CallbackOutput {
+  token?: string
+  url?: string
+  expires_at?: string
+}
+
+/** node.output.callback = {token,url,expires_at} for a `waiting` callback node (engine tuple §K). */
+export function callbackOutput(
+  output: Record<string, unknown> | null | undefined,
+): CallbackOutput | null {
+  const cb = output?.callback
+  if (cb && typeof cb === 'object') return cb as CallbackOutput
+  return null
+}
+
 export function parseDefinition(text: string): WorkflowDefinition {
   let parsed: unknown
   try {

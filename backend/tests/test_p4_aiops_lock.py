@@ -207,6 +207,11 @@ AI_ACTION_COLS = {
 OPS_EVENT_INDEXES = {"ix_ops_event_source_ts", "ix_ops_event_entity_ts", "ix_ops_event_refs_gin"}
 AI_ACTION_DECISIONS = {"adopted", "rejected", "auto"}
 OPS_EVENT_SOURCES = {"monitor", "exec", "audit", "ticket", "kb"}
+# E8 (a)-min columns (@架构 seq3230 / @需求 seq3231).
+AI_EVAL_CASE_COLS = {"id", "name", "input", "expected", "is_neg_control", "created_at"}
+AI_EVAL_RUN_COLS = {
+    "id", "case_id", "model_name", "model_version", "actual", "passed", "report", "created_at",
+}
 
 
 def _tables():
@@ -243,18 +248,17 @@ def test_m2_p4_core_columns():
 
 
 def test_m2b_eval_tables_core_columns():
-    """@架构 seq3220 ③: `ai_eval_case`/`ai_eval_run` must at least carry `id`.
-
-    (Column sets beyond `id` were not pinned in tuple v1; tighten if @架构 names them.)
-    """
+    """@架构 seq3230 / @需求 seq3231: pinned eval column sets (E8 (a)-min)."""
     tables = _tables()
     problems = []
-    for name in ("ai_eval_case", "ai_eval_run"):
+    for name, want in (("ai_eval_case", AI_EVAL_CASE_COLS), ("ai_eval_run", AI_EVAL_RUN_COLS)):
         t = tables.get(name)
         if t is None:
             problems.append(f"{name}: table missing")
-        elif "id" not in set(t.columns.keys()):
-            problems.append(f"{name}: missing `id`")
+            continue
+        miss = want - set(t.columns.keys())
+        if miss:
+            problems.append(f"{name}: missing columns {sorted(miss)}")
     assert not problems, "P4 eval-table contract: " + "; ".join(problems)
 
 
@@ -891,16 +895,23 @@ class _FakeSession:
         return False
 
 
-def test_b4_pg_store_filters_in_query_layer():
-    """@架构 seq3222 (ADR#3 PG 查层判据): `PostgresArrayEmbeddingStore` must inject a
-    `session_factory`, and `_candidates` must emit a SELECT carrying an
-    `entity_scope` IN/ANY predicate — proving query-time filtering (not post-filter).
+def _compiled_sql(fake) -> str:
+    from sqlalchemy.dialects import postgresql  # noqa: PLC0415
 
-    Offline: a fake session captures the executed statement, compiled with the
-    PostgreSQL dialect. No real PG/extension needed.
-    """
-    cls = _require("PostgresArrayEmbeddingStore")
-    scope_cls = _require("ScopeFilter")
+    dialect = postgresql.dialect()
+    out = []
+    for st in fake.statements:
+        try:
+            out.append(str(st.compile(dialect=dialect, compile_kwargs={"literal_binds": True})))
+        except Exception:  # noqa: BLE001
+            try:
+                out.append(str(st.compile(dialect=dialect)))
+            except Exception:  # noqa: BLE001
+                continue
+    return " ".join(out).lower()
+
+
+def _run_pg_candidates(cls, scope_cls, ids: list[int]) -> str:
     fake = _FakeSession()
     try:
         store = cls(session_factory=lambda: fake)
@@ -909,7 +920,7 @@ def test_b4_pg_store_filters_in_query_layer():
             "PostgresArrayEmbeddingStore must accept `session_factory` injection "
             f"(@架构 seq3222): {exc}"
         )
-    scope = _make_scope(scope_cls, entity_type="host", ids=[7, 8])
+    scope = _make_scope(scope_cls, entity_type="host", ids=ids)
     try:
         store._candidates(query_vector=[1.0, 0.0, 0.0], scope=scope, limit=10)
     except Exception as exc:  # noqa: BLE001
@@ -918,23 +929,62 @@ def test_b4_pg_store_filters_in_query_layer():
         "PG `_candidates` did not execute a statement via session_factory "
         "(query-layer filter unobservable)"
     )
-    from sqlalchemy.dialects import postgresql  # noqa: PLC0415
+    return _compiled_sql(fake)
 
-    dialect = postgresql.dialect()
-    compiled = []
-    for st in fake.statements:
-        try:
-            compiled.append(str(st.compile(dialect=dialect, compile_kwargs={"literal_binds": True})))
-        except Exception:  # noqa: BLE001
-            try:
-                compiled.append(str(st.compile(dialect=dialect)))
-            except Exception:  # noqa: BLE001
-                continue
-    joined = " ".join(compiled).lower()
-    assert "entity_scope" in joined, (
+
+def test_b4_pg_store_filters_in_query_layer():
+    """@架构 seq3222/seq3230 (ADR#3 PG 查层判据): `PostgresArrayEmbeddingStore` must
+    inject a `session_factory`, and `_candidates` must emit a SELECT whose compiled
+    PostgreSQL carries an `entity_scope` **predicate** (IN/ANY) with the ACTUAL
+    `scope.entity_ids` bound — and the bound set must DIFFER across scopes
+    (defeats empty-`IN` / hardcoded-id structural false-greens).
+
+    Offline: a fake session captures the executed statement. No real PG/extension.
+    """
+    cls = _require("PostgresArrayEmbeddingStore")
+    scope_cls = _require("ScopeFilter")
+
+    joined_a = _run_pg_candidates(cls, scope_cls, [700001, 700002])
+    assert "entity_scope" in joined_a, (
         "PG query-layer filter missing: compiled statement has no `entity_scope` predicate "
-        f"(retrieve-then-filter?); compiled={joined[:400]}"
+        f"(retrieve-then-filter?); compiled={joined_a[:400]}"
     )
-    assert (" in " in joined) or ("= any" in joined) or ("any(" in joined), (
-        f"PG filter must be an IN/ANY predicate on entity_scope; compiled={joined[:400]}"
+    assert (" in " in joined_a) or ("= any" in joined_a) or ("any(" in joined_a), (
+        f"PG filter must be an IN/ANY predicate on entity_scope; compiled={joined_a[:400]}"
+    )
+    assert ("700001" in joined_a) and ("700002" in joined_a), (
+        "PG filter must BIND the actual scope.entity_ids values (literal_binds / params); "
+        f"compiled={joined_a[:400]}"
+    )
+
+    joined_b = _run_pg_candidates(cls, scope_cls, [900001])
+    assert "900001" in joined_b, (
+        f"second scope's entity_ids must be bound too; compiled={joined_b[:400]}"
+    )
+    assert "900001" not in joined_a and "700001" not in joined_b, (
+        "IN bound values must VARY with scope (defeats empty-IN/hardcoded-id false-greens)"
+    )
+
+
+def test_b5_embedding_store_config_key_symbols():
+    """@架构 seq3230 / @需求 seq3231: named config symbol + enum values + default
+    `pg_array`, seeded in DEFAULT_CONFIG_RULES (add-only; NOT an ai.* flag)."""
+    mod = _try("app.services.embedding_store")
+    if isinstance(mod, Exception):
+        pytest.fail(f"P4 lock: app.services.embedding_store unavailable: {mod}")
+    key = getattr(mod, "EMBEDDING_STORE_CONFIG_KEY", None)
+    pg = getattr(mod, "EMBEDDING_STORE_PG_ARRAY", None)
+    mem = getattr(mod, "EMBEDDING_STORE_IN_MEMORY", None)
+    assert key == "ai.embedding_store", f"EMBEDDING_STORE_CONFIG_KEY must be 'ai.embedding_store'; got {key!r}"
+    assert pg and mem and pg != mem, f"enum values must be defined and distinct; pg={pg!r} in_memory={mem!r}"
+    assert key not in AI_FLAGS, "`ai.embedding_store` is an enum, not one of the ai.* flags"
+
+    seed = _try("app.db.seed")
+    if isinstance(seed, Exception):
+        pytest.fail(f"P4 lock: app.db.seed unavailable: {seed}")
+    rules = getattr(seed, "DEFAULT_CONFIG_RULES", {})
+    entry = rules.get(key)
+    assert entry is not None, f"`{key}` must be seeded in DEFAULT_CONFIG_RULES (add-only)"
+    assert entry.get("value") == pg, (
+        f"`{key}` default must be `pg_array` ({pg!r}); got {entry.get('value')!r}"
     )

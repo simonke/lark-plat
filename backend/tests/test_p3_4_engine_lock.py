@@ -45,8 +45,12 @@ B12 `exec_task` node non-success terminal -> node failed -> `on_failure` branch;
 B13 `manual_approval` (R-复用): REAL approval_request built + node -> `waiting`
     (+ spy: 一期 approval 原语 called >=1);
     approved -> succeeded (resumes); rejected -> failed + `on_failure`
-B14 cancel propagates to a node whose一期 exec_task is still `running`
-    (exec_task cancelled via the一期 primitive; node -> skipped; run cancelled)
+B14 cancel propagates to a node whose一期 exec_task is still `running` (D3):
+    exec_task CANONICAL `canceled` (single l) via the perm-free一期 core +
+    every `exec_task_host` row `canceled` (+ finished_at); node -> skipped; run cancelled
+B14b cancel propagates to a sensitive `awaiting_approval` exec_task (D1/D3):
+    exec_task -> `canceled` and its pending exec approval closed (no orphan);
+    node -> skipped; run cancelled
 B15 `exec_task` sensitive command is gated (fail-closed, @架构 seq2957): a sensitive
     `command` -> REAL exec_task row with `sensitive_flag`/`approve_required`=1 +
     `awaiting_approval` + linked pending `exec` approval_request (never silently
@@ -701,6 +705,12 @@ def _exec_task_row(session, task_id: int):
     return session.get(ExecTask, task_id)
 
 
+def _exec_task_host_rows(session, task_id: int):
+    from app.db.models.exec import ExecTaskHost  # noqa: PLC0415
+
+    return list(session.query(ExecTaskHost).filter_by(exec_task_id=task_id).all())
+
+
 def _step_until_node_running(session, eng, rid: int, key: str, tries: int = 15):
     for _ in range(tries):
         session.expire_all()
@@ -1104,6 +1114,13 @@ def test_b18_unknown_biz_type_approve_is_fail_closed(env):
     )
 
 
+# D3 (@架构 seq2986 / @代码reviewer seq2988): cancel must reuse a perm-free一期 exec
+# core (mirroring `exec_service.stop_task`'s writable status domain
+# ⊇ {created, running, awaiting_approval}); canonical status is `"canceled"`
+# (single l — `"cancelled"` is NO LONGER tolerated), every `exec_task_host` row is
+# marked `canceled` (+ finished_at), and a pending exec approval on an
+# `awaiting_approval` task is closed (not orphaned).
+
 def test_b14_cancel_propagates_to_running_exec_task(env, monkeypatch):
     session, set_flag = env
     set_flag(True)
@@ -1125,9 +1142,66 @@ def test_b14_cancel_propagates_to_running_exec_task(env, monkeypatch):
         "cancel must propagate: running node -> skipped"
     )
     row = _exec_task_row(session, node.exec_task_id)
-    assert row is not None and row.status in {"canceled", "cancelled"}, (
-        "cancel must cancel the running一期 exec_task via the primitive (not orphan it); "
+    assert row is not None and row.status == "canceled", (
+        "cancel must set the一期 exec_task to canonical `canceled` via the perm-free "
+        "一期 core (single l; `cancelled` NOT accepted — D3 @架构 seq2986); got "
+        f"{None if row is None else row.status!r}"
+    )
+    assert row.finished_at is not None, "cancel must stamp exec_task.finished_at"
+    host_rows = _exec_task_host_rows(session, node.exec_task_id)
+    assert host_rows and all(h.status == "canceled" for h in host_rows), (
+        "cancel must mark every `exec_task_host` row `canceled` (D3); got "
+        f"{[(h.id, h.status) for h in host_rows]}"
+    )
+    assert all(h.finished_at is not None for h in host_rows), (
+        "cancel must stamp finished_at on cancelled `exec_task_host` rows"
+    )
+
+
+def test_b14b_cancel_awaiting_approval_exec_task_closes_pending_approval(env, monkeypatch):
+    session, set_flag = env
+    set_flag(True)
+    _fake_executor(monkeypatch)
+    svc = _try("app.services.workflow_service")
+    eng = _try("app.services.workflow_engine")
+    if isinstance(svc, Exception) or isinstance(eng, Exception):
+        pytest.fail(f"P3-4b lock: services unavailable: {svc if isinstance(svc, Exception) else eng}")
+    from app.db.models.schedule import ApprovalRequest  # noqa: PLC0415
+
+    host_id = _seed_host(session)
+    _seed_sensitive_word(session, "rm -rf")
+    rid = _seed_run(session, _sensitive_exec_definition(host_id))
+    node = _step_until_node_waiting(session, eng, rid, "e")
+    assert node is not None and node.exec_task_id, (
+        f"sensitive exec_task node must reach `waiting` with an exec_task; "
+        f"got {node and node.status!r}/{node and node.exec_task_id!r}"
+    )
+    row = _exec_task_row(session, node.exec_task_id)
+    assert row is not None and row.status == "awaiting_approval", (
+        f"sensitive exec_task must be `awaiting_approval` before cancel; "
         f"got {None if row is None else row.status!r}"
+    )
+    ap = (
+        session.query(ApprovalRequest)
+        .filter_by(biz_type="exec", biz_id=row.id, status="pending")
+        .one_or_none()
+    )
+    assert ap is not None, "sensitive exec_task must hold a pending exec approval before cancel"
+    ap_id = ap.id
+    svc.cancel_run(session, _U(), rid)
+    session.expire_all()
+    assert _run_status(session, rid) == "cancelled", "cancel must drive the run to cancelled"
+    assert _node(session, rid, "e").status == "skipped", "cancel must skip the waiting node"
+    row = _exec_task_row(session, node.exec_task_id)
+    assert row is not None and row.status == "canceled", (
+        "cancel must also cancel an `awaiting_approval` exec_task (D1 writable status "
+        f"domain ⊇ {{created,running,awaiting_approval}}); got "
+        f"{None if row is None else row.status!r}"
+    )
+    ap = _approval_row(session, ap_id)
+    assert ap is not None and ap.status == "canceled", (
+        "cancelling an awaiting_approval exec_task must close its pending approval "
+        f"(reuse `_close_orphan_approval`, no orphan); got {None if ap is None else ap.status!r}"
     )
 
 

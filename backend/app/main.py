@@ -153,6 +153,7 @@ def health() -> Result:
 # ---------------------------------------------------------------- routers
 
 from app.api.v1.endpoints import (  # noqa: E402
+    ai,
     approval,
     asset,
     auth,
@@ -162,6 +163,7 @@ from app.api.v1.endpoints import (  # noqa: E402
     kb,
     monitor,
     notify,
+    ops_event,
     schedule,
     script,
     system,
@@ -189,11 +191,15 @@ for router in (
     kb.router,
     workflow.router,
     cicd.router,
+    ops_event.router,
+    ai.router,
 ):
     app.include_router(router, prefix=settings.api_prefix)
 
 app.include_router(workflow.run_router, prefix=settings.api_prefix)
 app.include_router(cicd.release_router, prefix=settings.api_prefix)
+app.include_router(ai.ticket_router, prefix=settings.api_prefix)
+app.include_router(ai.kb_router, prefix=settings.api_prefix)
 
 app.include_router(exec_ws.router, prefix=settings.api_prefix)
 app.include_router(transfer_ws.router, prefix=settings.api_prefix)

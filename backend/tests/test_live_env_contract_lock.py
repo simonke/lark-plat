@@ -6,12 +6,12 @@
 - **A `LIVE_REV_ALLOWED`** = `{d4e5f6a7b8c9, c3d4e5f6a7b8}` —— live `alembic_version` **合法性/允许停留值**
   （`code-required` 上界由 **B** 推导，见 @后端 seq2381；**A ≠ B，禁互换**）。
 - **B `MIGRATION_LIVE_APPLICABLE`** = 11 版（`…→c3d4e5f6a7b8`，可被应用的迁移全集）。
-- **C `MIGRATION_LIVE_FORBIDDEN`** = `{e8a1b2c3d4f5, c9e3f1a2b4d6, e1f2a3b4c5d7, f2a3b4c5d6e7, a1b2c3d4e5f7}`（禁落共享库；close-out、P3、P3.x、P3.3 与 P3.4 迁移含哨兵常量）。
+- **C `MIGRATION_LIVE_FORBIDDEN`** = `{e8a1b2c3d4f5, c9e3f1a2b4d6, e1f2a3b4c5d7, f2a3b4c5d6e7, a1b2c3d4e5f7, b2c3d4e5f6a8}`（禁落共享库；close-out、P3、P3.x、P3.3、P3.4 与 P3.5 迁移含哨兵常量）。
 
 断言（离线）：
 - **S1 理由守卫**：close-out 迁移以**稳定哨兵常量** `SHARED_LIVE_DB_FORBIDDEN = True` 声明「禁落共享库」
   （**不**绑散文；`import` 迁移模块读**同一对象**，needs req seq2356-2）。
-- **S2 完备性（用 B∪C，非 A∪C）**：`链 == B ∪ C`、`B ∩ C == ∅`、`16 == 11 + 5`（零空洞）、
+- **S2 完备性（用 B∪C，非 A∪C）**：`链 == B ∪ C`、`B ∩ C == ∅`、`17 == 11 + 6`（零空洞）、
   单头且 `head ∈ B ∪ C`（已分类）。
 - **S3 可停留性（用 A）**：`A ⊆ B`，且 A 在链上**连续**（下界→上界紧邻）；close-out 紧邻 A 上界。
 - **S4 常量入图**：A 成员 ∈ 迁移图（防拼写漂移）。
@@ -55,7 +55,11 @@ P3X_REV = "e1f2a3b4c5d7"
 P3_3_REV = "f2a3b4c5d6e7"
 # P3-4 workflow migration (descends from the P3-3 head) -> also forbidden on shared live.
 P3_4_REV = "a1b2c3d4e5f7"
-MIGRATION_LIVE_FORBIDDEN = {CLOSEOUT_REV, P3_REV, P3X_REV, P3_3_REV, P3_4_REV}
+# P3-5 CI/CD migration (descends from the P3-4 head) -> also forbidden on shared live.
+# NB: `b2c3d4e5f6a8` is one char from the B-set rev `b2c3d4e5f6a7` — do NOT inline the
+# literal into C (reference the named symbol; @架构 seq3053 item 1).
+P3_5_REV = "b2c3d4e5f6a8"
+MIGRATION_LIVE_FORBIDDEN = {CLOSEOUT_REV, P3_REV, P3X_REV, P3_3_REV, P3_4_REV, P3_5_REV}
 SENTINEL_NAME = "SHARED_LIVE_DB_FORBIDDEN"
 
 
@@ -108,9 +112,11 @@ def test_s1_closeout_migration_declares_shared_db_forbidden_sentinel():
 
 
 def test_s1b_forbidden_set_exactly_closeout_p3_and_p3x_disjoint_from_allowed():
-    assert MIGRATION_LIVE_FORBIDDEN == {CLOSEOUT_REV, P3_REV, P3X_REV, P3_3_REV, P3_4_REV}, (
-        f"C must be exactly {{{CLOSEOUT_REV}, {P3_REV}, {P3X_REV}, {P3_3_REV}, {P3_4_REV}}}; "
-        f"got {sorted(MIGRATION_LIVE_FORBIDDEN)}"
+    assert MIGRATION_LIVE_FORBIDDEN == {
+        CLOSEOUT_REV, P3_REV, P3X_REV, P3_3_REV, P3_4_REV, P3_5_REV,
+    }, (
+        f"C must be exactly {{{CLOSEOUT_REV}, {P3_REV}, {P3X_REV}, {P3_3_REV}, "
+        f"{P3_4_REV}, {P3_5_REV}}}; got {sorted(MIGRATION_LIVE_FORBIDDEN)}"
     )
     assert CLOSEOUT_REV not in LIVE_REV_ALLOWED, (
         f"{CLOSEOUT_REV} (close-out) MUST NOT be in A LIVE_REV_ALLOWED (seq2140)"
@@ -118,7 +124,10 @@ def test_s1b_forbidden_set_exactly_closeout_p3_and_p3x_disjoint_from_allowed():
     assert CLOSEOUT_REV not in MIGRATION_LIVE_APPLICABLE, (
         f"{CLOSEOUT_REV} (close-out) MUST NOT be in B MIGRATION_LIVE_APPLICABLE"
     )
-    for rev, label in ((P3_REV, "P3"), (P3X_REV, "P3.x"), (P3_3_REV, "P3.3"), (P3_4_REV, "P3.4")):
+    for rev, label in (
+        (P3_REV, "P3"), (P3X_REV, "P3.x"), (P3_3_REV, "P3.3"),
+        (P3_4_REV, "P3.4"), (P3_5_REV, "P3.5"),
+    ):
         assert rev not in LIVE_REV_ALLOWED and rev not in MIGRATION_LIVE_APPLICABLE, (
             f"{rev} ({label}) MUST NOT be in A/B: it descends from the close-out and is "
             "forbidden on the shared live DB"
@@ -139,8 +148,8 @@ def test_s2_sets_are_complete_and_disjoint():
         f"only-in-chain={sorted(chain - (MIGRATION_LIVE_APPLICABLE | MIGRATION_LIVE_FORBIDDEN))}, "
         f"only-in-classification={sorted((MIGRATION_LIVE_APPLICABLE | MIGRATION_LIVE_FORBIDDEN) - chain)}"
     )
-    assert len(chain) == 16 and len(MIGRATION_LIVE_APPLICABLE) == 11 and len(MIGRATION_LIVE_FORBIDDEN) == 5, (
-        f"16 == 11 + 5 expected; got chain={len(chain)}, B={len(MIGRATION_LIVE_APPLICABLE)}, "
+    assert len(chain) == 17 and len(MIGRATION_LIVE_APPLICABLE) == 11 and len(MIGRATION_LIVE_FORBIDDEN) == 6, (
+        f"17 == 11 + 6 expected; got chain={len(chain)}, B={len(MIGRATION_LIVE_APPLICABLE)}, "
         f"C={len(MIGRATION_LIVE_FORBIDDEN)}"
     )
     downs = {d for _, d in revs if d}

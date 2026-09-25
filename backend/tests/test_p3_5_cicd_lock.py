@@ -245,6 +245,34 @@ def test_g1_migration_single_head_descends_from_p34():
     )
 
 
+def test_g2_forbidden_set_includes_p35_rev_and_is_disjoint():
+    """Naming-collision guard (@架构 seq3053 item 2).
+
+    The P3-5 rev must enter C via the NAMED symbol `P3_5_REV` (no inline literal),
+    C ∩ B must stay empty, and the look-alike rev `b2c3d4e5f6a7` must belong to B.
+    """
+    import importlib.util  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    p = Path(__file__).resolve().parent / "test_live_env_contract_lock.py"
+    spec = importlib.util.spec_from_file_location("_p35_live_contract_lock", p)
+    if spec is None or spec.loader is None:
+        pytest.fail("P3-5 lock: cannot load test_live_env_contract_lock.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert getattr(mod, "P3_5_REV", None) == _P35_REV, (
+        "test_live_env_contract_lock.py must expose the named symbol "
+        f"P3_5_REV == {_P35_REV!r} (C must reference it, not an inline literal)"
+    )
+    assert _P35_REV in mod.MIGRATION_LIVE_FORBIDDEN, f"{_P35_REV} must be a member of C"
+    assert mod.MIGRATION_LIVE_APPLICABLE & mod.MIGRATION_LIVE_FORBIDDEN == set(), (
+        "B ∩ C must stay empty (a migration cannot be both applicable and forbidden)"
+    )
+    assert _P21_TRANSFER_REV in mod.MIGRATION_LIVE_APPLICABLE, (
+        f"the look-alike rev {_P21_TRANSFER_REV} belongs to B (applicable), NOT C"
+    )
+
+
 # ── R0–R8: route-level behavioural locks (offline TestClient) ────────────────
 
 import app.db.session as _dbs  # noqa: E402

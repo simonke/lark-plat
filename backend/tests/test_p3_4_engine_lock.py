@@ -22,9 +22,12 @@ Scope of THIS lock
 K1  engine module symbols + DRIVER_AUTOSTART default True
 K2  workflow_ws.broadcast_sync present; WS route present; WS NOT in openapi
 K3  timeout beat task `scan_workflow_timeouts` registered
-A1  openapi `paths` == 144 (142 + ws-token + callback)
+A1  openapi `paths` **>= 144** (142 + ws-token + callback) + no-shrink (`removed == []`);
+    later add-only batches (P3-5) may extend the count — the EXACT current value is
+    pinned only by `test_contract_openapi.py` (@架构 seq3051/seq3053)
 A2  ws-token + callback URL keys present with correct methods
-G1  migration: single head, still descending from P3-3 (`a1b2c3d4e5f7`; no new rev)
+G1  migration: P3-4 edge (`a1b2c3d4e5f7` descends from `f2a3b4c5d6e7`) + single head
+    that **descends from** `a1b2c3d4e5f7` (P3-5 may extend the chain; @架构 seq3051)
 F1  feature gate FIRST on run + callback (flag off -> 400 for any caller)
 
 Behavioural locks (direct `workflow_engine.step`, offline SQLite):
@@ -193,11 +196,30 @@ def _openapi_paths() -> dict:
     return app.openapi().get("paths", {})
 
 
-def test_a1_paths_count_144():
+def _committed_openapi_paths() -> dict:
+    import json  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    p = Path(__file__).resolve().parents[2] / "docs" / "openapi.json"
+    return json.loads(p.read_text(encoding="utf-8")).get("paths", {})
+
+
+def test_a1_paths_count_at_least_144():
+    """P3-4b landed 144; later add-only batches (P3-5) may add keys.
+
+    Pin the LOWER BOUND here (batch lock, @架构 seq3051/seq3053) and keep the EXACT
+    current value in `test_contract_openapi.py`. No-shrink: every committed
+    docs/openapi.json key must still be present at runtime (`removed == []`).
+    """
     paths = _openapi_paths()
-    assert len(paths) == 144, (
-        f"P3-4b adds 2 URL keys (ws-token + callback) => paths must be 144 (142 + 2); "
+    assert len(paths) >= 144, (
+        f"P3-4b adds 2 URL keys (ws-token + callback) => paths >= 144 (142 + 2); "
         f"got {len(paths)}. WS itself is NOT in openapi."
+    )
+    removed = set(_committed_openapi_paths()) - set(paths)
+    assert not removed, (
+        f"openapi keys must not shrink (later add-only batches may add, never remove): "
+        f"removed={sorted(removed)}"
     )
 
 
@@ -239,17 +261,35 @@ def _revision_graph() -> dict[str, str | None]:
     return revs
 
 
-def test_g1_migration_single_head_reuses_p34_rev():
+def _descends(rev: str | None, ancestor: str, revs: dict[str, str | None]) -> bool:
+    seen: set[str] = set()
+    while rev and rev not in seen:
+        seen.add(rev)
+        if rev == ancestor:
+            return True
+        rev = revs.get(rev)
+    return False
+
+
+def test_g1_migration_edge_p34_descends_from_p33_single_head():
+    """Pin the P3-4 EDGE and require the single head to descend from it.
+
+    The old form asserted the head IS `a1b2c3d4e5f7` (global head proxy), which a
+    later add-only batch (P3-5) legitimately breaks. Batch locks pin their own edge;
+    the next batch's rev is pinned by its own lock (@架构 seq3051/seq3053).
+    """
     revs = _revision_graph()
     assert _P34_REV in revs, f"P3-4 rev {_P34_REV} missing from versions dir"
     assert revs.get(_P34_REV) == _P33_REV, (
-        f"{_P34_REV} must descend from {_P33_REV}; got {revs.get(_P34_REV)!r}"
+        f"P3-4 edge: {_P34_REV} must descend directly from {_P33_REV}; "
+        f"got {revs.get(_P34_REV)!r}"
     )
     downs = {v for v in revs.values() if v}
     heads = sorted(r for r in revs if r not in downs)
     assert len(heads) == 1, f"migration must keep a single head; got {heads}"
-    assert heads[0] == _P34_REV, (
-        f"P3-4b adds NO migration (tuple H) => head must remain {_P34_REV}; got {heads[0]}"
+    assert _descends(heads[0], _P34_REV, revs), (
+        f"head {heads[0]!r} must descend from the P3-4 rev {_P34_REV} "
+        "(a later add-only batch may extend the chain)"
     )
 
 

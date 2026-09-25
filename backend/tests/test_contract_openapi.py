@@ -142,7 +142,11 @@ def test_path_count_stable(openapi_spec):
     # 142 -> 144: P3-4b adds 2 more URL keys (/workflow-runs/{id}/ws-token,
     # /workflow-runs/{id}/callback/{node_key}; @架构 engine tuple v1.1/v1.2,
     # add-only; WS itself is NOT in openapi).
-    assert len(paths) == 144
+    # 144 -> 154: P3-5 adds 10 CI/CD URL keys (5 /cicd/providers·/{id}·/{id}/test·
+    # /cicd/webhooks/{provider} + 5 /releases·/{id}·/{id}/canary·/{id}/promote·
+    # /{id}/rollback·/{id}/cancel; @架构 seq3043 tuple v1.0, base M6 144, add-only).
+    # NOTE: the stale "152" was the old 142 base (@后端 seq3042 / @架构 seq3043).
+    assert len(paths) == 154
 
 
 def test_stage4_terminal_paths_present(openapi_spec):

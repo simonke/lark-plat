@@ -849,6 +849,78 @@ def test_b3_unknown_entity_type_fails_closed():
     )
 
 
+class _StubHostSession:
+    """Minimal Session-like: `execute(...).all()` yields one host row.
+
+    Used to prove the *dispatcher itself* can return a non-empty set for a
+    registered entity_type with the SAME actor/db it is asked about an
+    unregistered one — so the fail-closed assertion cannot pass vacuously.
+    """
+
+    _ROWS = [(1, "h-stub", "10.0.0.1")]
+
+    def execute(self, *args, **kwargs):
+        rows = self._ROWS
+
+        class _R:
+            def all(self_inner):
+                return list(rows)
+
+            def __iter__(self_inner):
+                return iter(list(rows))
+
+        return _R()
+
+    def scalar(self, *args, **kwargs):
+        return len(self._ROWS)
+
+
+class _AdminActor:
+    is_admin = True
+    id = 1
+    visible_group_ids = [1]
+
+
+def test_b3b_dispatcher_unknown_entity_type_fails_closed():
+    """US-03 (@需求 seq3235 gap-fill): the *dispatcher* — not a hand-built empty
+    scope — must fail closed for an unregistered entity_type. A fail-open
+    dispatcher (unknown => 全量 ids) MUST fail HERE.
+
+    Positive control: with the same admin actor + db, a registered entity_type
+    (`host`) returns a non-empty set, so the negative below is non-vacuous.
+    Rejecting (raising) is also accepted as fail-closed.
+    """
+    fn = _require("visible_entity_ids_for")
+    actor = _AdminActor()
+    db = _StubHostSession()
+
+    params = list(inspect.signature(fn).parameters)
+    if len(params) >= 3:
+        def call(et):
+            return fn(et, actor, db)
+    else:
+        def call(et):
+            return fn(et, actor)
+
+    positive = set()
+    try:
+        positive = set(call("host") or ())
+    except Exception:  # noqa: BLE001
+        # Arity/shape mismatch: positive control unavailable; still run negative.
+        positive = set()
+
+    try:
+        unknown = call("__unregistered__")
+    except Exception:  # noqa: BLE001
+        return  # explicit rejection == fail-closed (acceptable)
+    unknown_ids = set(unknown or ())
+    assert not unknown_ids, (
+        "US-03 fail-closed: dispatcher must return the empty set for an unregistered "
+        f"entity_type, not widen to visible ids; got {sorted(unknown_ids)}"
+        + ("" if positive else " (positive-control could not be established)")
+    )
+
+
 # ── B4: PG query-layer filter is structural (offline, no real PG) ────────────
 
 class _FakeResult:

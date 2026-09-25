@@ -11,19 +11,20 @@ Pinned surface (tuple seq3043):
   interfaces          : GET/POST /cicd/providers ; PUT/DELETE /cicd/providers/{id} ;
                         POST /cicd/providers/{id}/test ; POST /cicd/webhooks/{provider} (token, NOT session) ;
                         GET/POST /releases ; GET /releases/{id} ;
-                        POST /releases/{id}/canary|promote|rollback|cancel
-  perms (12)          : cicd:provider:{list,add,edit,del,test} ; release:{list,add,view,canary,promote,rollback,cancel}
+                        POST /releases/{id}/canary|promote|rollback|cancel|deploy|fail
+  perms (14)          : cicd:provider:{list,add,edit,del,test} ; release:{list,add,view,canary,promote,rollback,cancel,deploy,fail}
   flag                : `feature.cicd` default False (feature gate FIRST)
   state machine       : release pending->deploying->canary->succeeded / failed->rolled_back /
-                        terminal cancelled (cancel from pending|deploying|canary; already-terminal => 409)
+                        terminal cancelled (deploy from pending; fail from deploying|canary;
+                        cancel from pending|deploying|canary; already-terminal => 409)
   R-复用 (§14.4)      : release 编排 REUSES §13 workflow (release == 1 `workflow_run`, trigger_type=release)
 
-EXPECTED: clean **RED** until P3-5 backend lands (add-only); import-guarded so the run
+EXPECTED: clean **RED** until P3-6 backend lands (add-only); import-guarded so the run
 reports assertion failures rather than collection errors. Offline only (temp SQLite;
 no live PG/Redis; no migrations applied).
 
-paths note: base 144 (P3-4 收口 @ M6) + 10 URL keys == **154** (NOT the stale 152 = old 142 base;
-@后端 seq3042 / @架构 seq3043 裁 (a)). `docs/openapi.json` is URL-keyed; ops 13.
+paths note: base 144 (P3-4 收口 @ M6) + 10 URL keys == 154 (P3-5) + 2 == **156** (P3-6:
+/releases/{id}/deploy·/fail; @架构 P3-6 tuple v1). `docs/openapi.json` is URL-keyed.
 
 Run (backend checkout, backend venv):
     python -m pytest tests/test_p3_5_cicd_lock.py -p no:cacheprovider -o addopts= -q
@@ -61,12 +62,13 @@ CICD_PERMS = {
     "release:promote",
     "release:rollback",
     "release:cancel",
+    "release:deploy",
+    "release:fail",
 }
-# NOTE (resolved): count = 12. @架构 seq3059 established 13 = 5+8. @需求 seq3065
-# then ruled (A) delete `release:run`: it had NO bound endpoint (the 10 URL keys
-# carry 12 session ops; `POST /releases/{id}/run` does not exist), so the frozen
-# coordinate has 12 endpoints : 12 permission codes 1:1. Enumeration here =
-# cicd:provider:* (5) + release:{list,add,view,canary,promote,rollback,cancel} (7).
+# NOTE: count = 14 (@架构 P3-6 tuple v1). P3-5 frozen 12 (after @需求 seq3065 (A)
+# deleted `release:run`, which had NO bound endpoint). P3-6 adds `release:deploy`
+# / `release:fail` for the two new session endpoints (12->14 endpoints : 14 codes
+# 1:1). `release:run` MUST NOT reappear.
 
 
 def _perm_codes() -> set[str]:
@@ -108,6 +110,8 @@ def _cicd_paths() -> dict[str, set[str]]:
         _REL + r"/\{[^}]+\}/promote": {"post"},
         _REL + r"/\{[^}]+\}/rollback": {"post"},
         _REL + r"/\{[^}]+\}/cancel": {"post"},
+        _REL + r"/\{[^}]+\}/deploy": {"post"},
+        _REL + r"/\{[^}]+\}/fail": {"post"},
     }
 
 
@@ -138,16 +142,15 @@ def test_a1_p3_5_paths_present_with_methods():
     assert not problems, "P3-5 openapi surface incomplete: " + "; ".join(problems)
 
 
-def test_a2_paths_count_154():
+def test_a2_paths_count_156():
     paths = _openapi_paths()
-    # Base == M6 (`a0131456`), P3-4 收口 == 144 (the earlier "152" was the stale
-    # 142 base; @后端 seq3042 / @架构 seq3043 裁 (a) canonical 154). EXACT equality
-    # (NOT `>=`): a future accidental 155 must still fail.
-    assert len(paths) == 154, (
-        f"P3-5 paths must be exactly 154 (M6 144 + 10 cicd/release URL keys); got {len(paths)}. "
-        "OpenAPI `paths` is URL-keyed; the 10 keys are /cicd/providers·/{id}·/{id}/test·"
-        "/cicd/webhooks/{provider} + /releases·/{id}·/{id}/canary·/{id}/promote·/{id}/rollback·"
-        "/{id}/cancel (13 ops)."
+    # Base == M6 (`a0131456`), P3-4 收口 == 144, P3-5 == 154, P3-6 收尾批 == 156
+    # (@架构 P3-6 tuple v1: +/releases/{id}/deploy·/fail). EXACT equality (NOT
+    # `>=`): a future accidental 157 must still fail.
+    assert len(paths) == 156, (
+        f"P3-6 paths must be exactly 156 (P3-5 154 + 2 deploy/fail URL keys); got {len(paths)}. "
+        "OpenAPI `paths` is URL-keyed; the 2 new keys are /releases/{id}/deploy and "
+        "/releases/{id}/fail."
     )
     # layer ④ (@架构 seq3057): no-shrink against the FROZEN M6 baseline key set — a
     # net-zero substitution (drop 1 old key, add 1 extra new key, still ==154) would
@@ -325,6 +328,8 @@ _ACTION_PERMS = [
     "release:canary",
     "release:promote",
     "release:rollback",
+    "release:deploy",
+    "release:fail",
 ]
 
 
@@ -645,11 +650,10 @@ def test_r11_action_gate_rollback_from_succeeded_409(cicd_client):
 
 
 def test_r12_release_transitions_exact_source_sets():
-    """§27.3 ③ (@架构 seq3077 amend): pin RELEASE_TRANSITIONS action->source sets.
+    """§14.1 state machine (@架构 P3-6 tuple v1): pin RELEASE_TRANSITIONS action->source sets.
 
-    Constant-level assertion (no DB, no unreachable-state construction). `deploy`/
-    `fail` are retained as reserved keys but have NO route (residual, owner @后端)
-    and are intentionally not asserted here.
+    Constant-level assertion (no DB). `deploy`/`fail` are no longer reserved: P3-6
+    adds their routes, so all SIX actions are pinned exactly.
     """
     mod = _try("app.services.cicd_service")
     if isinstance(mod, Exception):
@@ -657,16 +661,18 @@ def test_r12_release_transitions_exact_source_sets():
     t = getattr(mod, "RELEASE_TRANSITIONS", None)
     assert isinstance(t, dict), "app.services.cicd_service.RELEASE_TRANSITIONS missing (§14.1)"
     expected = {
+        "deploy": (("pending",), "deploying"),
         "canary": (("pending", "deploying"), "canary"),
         "promote": (("canary",), "succeeded"),
+        "fail": (("deploying", "canary"), "failed"),
         "rollback": (("deploying", "canary", "failed"), "rolled_back"),
         "cancel": (("pending", "deploying", "canary"), "cancelled"),
     }
     for action, exp in expected.items():
-        assert action in t, f"RELEASE_TRANSITIONS missing action {action!r} (§27.3 ③)"
+        assert action in t, f"RELEASE_TRANSITIONS missing action {action!r} (§14.1)"
         assert t[action] == exp, (
             f"RELEASE_TRANSITIONS[{action!r}] must be exactly {exp!r} "
-            f"(§27.3 ③ @架构 seq3077); got {t[action]!r}"
+            f"(§14.1 / @架构 P3-6 tuple v1); got {t[action]!r}"
         )
 
 
@@ -685,3 +691,93 @@ def test_r13_rollback_from_canary_200_rolled_back(cicd_client):
     )
     st = (rb.json().get("data") or {}).get("status")
     assert st == "rolled_back", f"rollback target must be `rolled_back`; got {st!r}"
+
+
+# ── R14–R19: P3-6 `deploy`/`fail` action endpoints (@架构 P3-6 tuple v1) ───────
+
+
+def test_r14_deploy_from_pending_200_deploying(cicd_client):
+    """P3-6: `POST /releases/{id}/deploy` makes `deploying` reachable (source `pending`)."""
+    client, set_user, set_flag, _ = cicd_client
+    set_flag(True)
+    set_user(_ACTION_PERMS, admin=True)
+    rid = _seed_release(client, app="svc-k")
+    r = client.post(f"/api/v1/releases/{rid}/deploy")
+    assert r.status_code == 200, (
+        f"deploy from `pending` must be allowed (source set = {{pending}}); got "
+        f"{r.status_code}: {r.text}"
+    )
+    st = (r.json().get("data") or {}).get("status")
+    assert st == "deploying", f"deploy target must be `deploying`; got {st!r}"
+
+
+def test_r15_deploy_from_canary_409(cicd_client):
+    """deploy source = `pending` only; from `canary` -> 409."""
+    client, set_user, set_flag, _ = cicd_client
+    set_flag(True)
+    set_user(_ACTION_PERMS, admin=True)
+    rid = _seed_release(client, app="svc-l")
+    assert client.post(f"/api/v1/releases/{rid}/canary").status_code == 200
+    r = client.post(f"/api/v1/releases/{rid}/deploy")
+    assert r.status_code == 409, (
+        f"deploy from `canary` must be 409 (deploy source = {{pending}}); "
+        f"got {r.status_code}: {r.text}"
+    )
+
+
+def test_r16_fail_from_canary_200_failed(cicd_client):
+    """`POST /releases/{id}/fail` makes `failed` reachable (source `deploying|canary`)."""
+    client, set_user, set_flag, _ = cicd_client
+    set_flag(True)
+    set_user(_ACTION_PERMS, admin=True)
+    rid = _seed_release(client, app="svc-m")
+    assert client.post(f"/api/v1/releases/{rid}/canary").status_code == 200
+    r = client.post(f"/api/v1/releases/{rid}/fail")
+    assert r.status_code == 200, (
+        f"fail from `canary` must be allowed (source set = {{deploying,canary}}); got "
+        f"{r.status_code}: {r.text}"
+    )
+    st = (r.json().get("data") or {}).get("status")
+    assert st == "failed", f"fail target must be `failed`; got {st!r}"
+
+
+def test_r17_fail_from_pending_409(cicd_client):
+    """fail source = {deploying, canary}; from `pending` -> 409."""
+    client, set_user, set_flag, _ = cicd_client
+    set_flag(True)
+    set_user(_ACTION_PERMS, admin=True)
+    rid = _seed_release(client, app="svc-n")
+    r = client.post(f"/api/v1/releases/{rid}/fail")
+    assert r.status_code == 409, (
+        f"fail from `pending` must be 409 (fail source = {{deploying,canary}}); "
+        f"got {r.status_code}: {r.text}"
+    )
+
+
+def test_r18_deploy_requires_release_deploy_perm_403(cicd_client):
+    """New endpoint binds `release:deploy` (endpoint↔perm 1:1); missing perm -> 403."""
+    client, set_user, set_flag, _ = cicd_client
+    set_flag(True)
+    set_user(_ACTION_PERMS, admin=True)
+    rid = _seed_release(client, app="svc-o")
+    set_user(["release:view"], admin=False)  # flag on, but no release:deploy
+    r = client.post(f"/api/v1/releases/{rid}/deploy")
+    assert r.status_code == 403, (
+        f"deploy with flag on but no `release:deploy` must be 403; got {r.status_code}: {r.text}"
+    )
+
+
+def test_r19_feature_gate_before_perm_on_deploy_fail(cicd_client):
+    """Feature gate FIRST also holds for the new deploy/fail routes (flag off + admin -> 400)."""
+    client, set_user, set_flag, _ = cicd_client
+    set_flag(True)
+    set_user(_ACTION_PERMS, admin=True)
+    rid = _seed_release(client, app="svc-p")
+    set_flag(False)
+    set_user([], admin=True)
+    for path in (f"/api/v1/releases/{rid}/deploy", f"/api/v1/releases/{rid}/fail"):
+        r = client.post(path)
+        assert r.status_code == 400, (
+            f"flag off + admin must be 400 `feature disabled` (feature gate FIRST) on {path}; "
+            f"got {r.status_code}: {r.text}"
+        )

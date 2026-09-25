@@ -147,8 +147,10 @@ def test_path_count_stable(openapi_spec):
     # 144 -> 154: P3-5 adds 10 CI/CD URL keys (5 /cicd/providers·/{id}·/{id}/test·
     # /cicd/webhooks/{provider} + 5 /releases·/{id}·/{id}/canary·/{id}/promote·
     # /{id}/rollback·/{id}/cancel; @架构 seq3043 tuple v1.0, base M6 144, add-only).
-    # NOTE: the stale "152" was the old 142 base (@后端 seq3042 / @架构 seq3043).
-    assert len(paths) == 154
+    # 154 -> 156: P3-6 收尾批 adds 2 CI/CD URL keys (/releases/{id}/deploy,
+    # /releases/{id}/fail; @架构 P3-6 tuple v1, add-only). NOTE: the stale "152"
+    # was the old 142 base (@后端 seq3042 / @架构 seq3043).
+    assert len(paths) == 156
     # layer-④ committed face (@架构 seq3057 / seq3063, option (a)): the frozen M6
     # key set must not shrink — defeats a "net-zero substitution" (delete 1
     # unnamed P3/P3-3 key + add 1 extra new key keeps len==154 while silently

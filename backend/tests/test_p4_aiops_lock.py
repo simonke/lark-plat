@@ -1383,3 +1383,94 @@ def test_s10_fts_scope_uses_str_cast():
     except Exception as exc:  # noqa: BLE001
         pytest.fail(f"④: `_fts_hits` must not raise on non-numeric scope ids: {exc}")
     assert isinstance(out, list)
+
+
+# ── ⑩ prod + in_memory must fail fast (@架构 seq3265/3267) ───────────────────
+
+def _patch_store_value(monkeypatch, value: str) -> None:
+    repo = _try("app.repositories")
+    cls = None if isinstance(repo, Exception) else getattr(repo, "ConfigRuleRepository", None)
+    if cls is None or not hasattr(cls, "by_key"):
+        pytest.fail("P4 lock ⑩: ConfigRuleRepository.by_key unavailable to drive store value")
+
+    class _Row:
+        rule_value = {"value": value}
+
+    monkeypatch.setattr(cls, "by_key", lambda self, *a, **k: _Row(), raising=False)
+
+
+def _patch_app_env(monkeypatch, mod, env: str) -> None:
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    monkeypatch.setattr(mod, "settings", SimpleNamespace(app_env=env), raising=False)
+
+
+def test_f4_resolve_store_config_prod_inmemory_fails_fast(monkeypatch):
+    """⑩ @架构 seq3265: `app_env=="prod"` + `in_memory` => raise (fail-fast). The gate
+    lives in `resolve_store_config`, so startup (which resolves) refuses to boot; no
+    silent in-memory fallback in prod. `db=None` short-circuits to `pg_array`."""
+    mod = _emb_mod()
+    resolve = getattr(mod, "resolve_store_config", None)
+    build = getattr(mod, "build_embedding_store", None)
+    if resolve is None or build is None:
+        pytest.fail("P4 lock ⑩: resolve_store_config/build_embedding_store missing")
+    mem = getattr(mod, "EMBEDDING_STORE_IN_MEMORY", "in_memory")
+    pg = getattr(mod, "EMBEDDING_STORE_PG_ARRAY", "pg_array")
+
+    _patch_app_env(monkeypatch, mod, "prod")
+    _patch_store_value(monkeypatch, mem)
+
+    assert resolve(None) == pg, (
+        "⑩: db=None must short-circuit to pg_array (no config read, no env gate)"
+    )
+
+    for label, call in (
+        ("resolve_store_config(object())", lambda: resolve(object())),
+        ("build_embedding_store(object())", lambda: build(object())),
+    ):
+        try:
+            call()
+        except AssertionError:
+            raise
+        except Exception:  # noqa: BLE001
+            continue
+        pytest.fail(
+            f"⑩ fail-fast: {label} must RAISE when app_env=='prod' and the configured "
+            f"store is {mem!r} (no silent in-memory fallback in prod)"
+        )
+
+
+def test_f5_resolve_store_config_dev_test_allows_inmemory(monkeypatch):
+    """⑩: `app_env∈{dev,test}` keeps both values usable (preserves f3 dispatch); only
+    the prod env is gated."""
+    mod = _emb_mod()
+    resolve = getattr(mod, "resolve_store_config", None)
+    if resolve is None:
+        pytest.fail("P4 lock ⑩: resolve_store_config missing")
+    mem = getattr(mod, "EMBEDDING_STORE_IN_MEMORY", "in_memory")
+
+    _patch_store_value(monkeypatch, mem)
+    for env in ("dev", "test"):
+        _patch_app_env(monkeypatch, mod, env)
+        got = resolve(object())
+        assert got == mem, (
+            f"⑩: app_env={env!r} + {mem!r} must resolve to {mem!r}; got {got!r}"
+        )
+
+
+def test_f6_prod_gate_only_on_resolve_preserves_explicit_build(monkeypatch):
+    """⑩ @后端 seq3267 ③: the prod gate applies to `resolve_store_config` only; an
+    explicit `build_embedding_store(..., value=in_memory)` stays untouched (保 f3)."""
+    mod = _emb_mod()
+    build = getattr(mod, "build_embedding_store", None)
+    if build is None:
+        pytest.fail("P4 lock ⑩: build_embedding_store missing")
+    mem = getattr(mod, "EMBEDDING_STORE_IN_MEMORY", "in_memory")
+    inmem_cls = _require("InMemoryEmbeddingStore")
+
+    _patch_app_env(monkeypatch, mod, "prod")
+    got = _call_build(build, None, mem)
+    assert isinstance(got, inmem_cls), (
+        f"⑩: explicit build value {mem!r} must still dispatch to InMemoryEmbeddingStore "
+        f"under prod (gate is resolve-only); got {type(got)!r}"
+    )

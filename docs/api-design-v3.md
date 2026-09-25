@@ -290,6 +290,8 @@ WS `/ws/workflow-runs/{id}`。权限点：`workflow:list/add/edit/del/version/ro
 
 权限点：`cicd:provider:list/add/edit/del/test` / `release:list/add/view/canary/promote/rollback/cancel`。
 
+> 动作门（`POST /releases/{id}/{action}`；非法源 ⇒ **409**）：`canary←{pending,deploying}`、`promote←{canary}`、`rollback←{deploying,canary,failed}`、`cancel←{pending,deploying,canary}`。
+
 > 本节取代旧版 §7「/pipelines」骨架：P3-3 拆为 **CMDB 深化 / 编排 Playbook / CI-CD 集成** 三段，承 @刘辉 2026-09-24 立项。
 
 ## 8. 批次落地顺序（与 architecture-phase23.md §11 对齐）

@@ -296,6 +296,7 @@ IdP 回调 GET /auth/oauth/{provider}/callback?code&state → 校验 state
 - **Provider 对接**：`gitlab|jenkins|generic`，配置化接入（密钥密文）；出站触发/拉取产物走 provider API，**测试用 stub/mock**。
 - **入站事件**：`POST /cicd/webhooks/{provider}` 归一化「构建完成/产物就绪」事件（provider token 鉴权、**非 session**）；可触发 release 或 workflow。
 - **发布编排**：release 状态机 `pending→deploying→canary→succeeded`（异常 `failed→rolled_back`）；灰度＝分批放量＋健康检查（复用 exec_task 部署）；回滚＝回退上一版本。
+- **动作门（`action ← 允许源 → to`；非法源 ⇒ 409）**：`canary←{pending,deploying}→canary`、`promote←{canary}→succeeded`、`rollback←{deploying,canary,failed}→rolled_back`、`cancel←{pending,deploying,canary}→cancelled`。**残余**：`deploy`/`fail` 已声明但**无 API 入口**（`deploying`/`failed` 服务端不可达）；「run 失败 ⇒ release `failed`」＝后置 add-only 残余（owner @后端）。
 - **审计**：发布/灰度/回滚均记 `sys_audit_log`，关联 `workflow_run`/exec_task 证据。
 - **边界（非目标）**：**不含源码→构建→测试**（属 GitLab CI/Jenkins）。
 

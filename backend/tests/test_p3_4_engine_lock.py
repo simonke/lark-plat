@@ -93,10 +93,17 @@ Run (backend checkout, backend venv):
 from __future__ import annotations
 
 import importlib
+import itertools
 import re
 import time
 
 import pytest
+
+# R-FLAKE-1 (@架构 seq3043): `_seed_run` must NOT derive the workflow name from
+# `id(definition)` — the address of a discarded inline dict literal can be reused
+# by the next literal (GC-timing), colliding on the UNIQUE `workflow.name`. A
+# process-local monotonic counter is deterministic and reproducible.
+_WF_NAME_SEQ = itertools.count(1)
 
 
 def _try(mod: str):
@@ -346,7 +353,7 @@ def _seed_run(session, definition) -> int:
     """Insert Workflow + Version + a `pending` Run + `pending` NodeRuns; return run_id."""
     from app.db.models.workflow import Workflow, WorkflowNodeRun, WorkflowRun, WorkflowVersion  # noqa: PLC0415
 
-    wf = Workflow(name=f"wf-{id(definition)}", current_version=1, enabled=1)
+    wf = Workflow(name=f"wf-{next(_WF_NAME_SEQ)}", current_version=1, enabled=1)
     session.add(wf)
     session.flush()
     session.add(WorkflowVersion(workflow_id=wf.id, version=1, definition=definition))

@@ -67,6 +67,14 @@ B18 UNKNOWN biz_type via the REAL一期 `approval_service.approve()` stays fail-
     effects. Pins the EXPLICIT `=="workflow"` guard form of (B) and blocks a future
     regression to a catch-all `else: no-op` (which would flip fail-closed to
     fail-open and silently approve an unrelated row)
+B19 `exec_dispatch` aggregate finalize must NOT clobber a concurrent cancel
+    (D2/§27.2 external-cancel convergence; @架构 seq3013, @需求 seq3008, @单元 seq3009):
+    the一期 `app/tasks/exec_tasks.py` aggregate wrote `task.status`/`finished_at`
+    unconditionally (no CAS, no `canceled` guard) while `agent_ws._maybe_finalize_task`
+    and `scan_timeouts` ARE CAS-guarded. Since the engine host① dispatches in-process,
+    an external `cancel_run` in the `running` window was overwritten back to `success`
+    (live F RED). Implementation-neutral: once the linked exec_task is `canceled`, the
+    dispatch aggregate must leave it `canceled`
 
 WS close-code matrix (4401/4404) and frame `seq` monotonicity are asserted by live F
 (@集成), per tuple G — not reproducible on the offline TestClient without a running driver.
@@ -1202,6 +1210,74 @@ def test_b14b_cancel_awaiting_approval_exec_task_closes_pending_approval(env, mo
     assert ap is not None and ap.status == "canceled", (
         "cancelling an awaiting_approval exec_task must close its pending approval "
         f"(reuse `_close_orphan_approval`, no orphan); got {None if ap is None else ap.status!r}"
+    )
+
+
+# ── B19: `exec_dispatch` aggregate must not clobber a concurrent cancel ───────
+# @架构 seq3013 (承 @需求 seq3008 / @单元 seq3009): the一期 `exec_dispatch`
+# aggregate finalize wrote `task.status`/`finished_at` UNCONDITIONALLY (no CAS, no
+# `canceled` guard) -- unlike `agent_ws._maybe_finalize_task` / `scan_timeouts`,
+# which are CAS-guarded. The P3-4b engine host① dispatches in-process via
+# `_kick_off_exec(..., in_process=True)`, so an external `cancel_run` landing in the
+# `running` window was overwritten back to `success` (live F RED). This lock pins the
+# invariant implementation-neutrally: once a linked exec_task is `canceled`, the
+# dispatch aggregate must NOT flip it back to a success/failed terminal.
+
+def test_b19_exec_dispatch_aggregate_does_not_overwrite_canceled(env, monkeypatch):
+    session, set_flag = env
+    set_flag(True)
+    et = _try("app.tasks.exec_tasks")
+    if isinstance(et, Exception):
+        pytest.fail(f"P3-4b lock: exec_tasks unavailable: {et}")
+    from datetime import datetime, timezone  # noqa: PLC0415
+
+    from sqlalchemy.orm import object_session  # noqa: PLC0415
+
+    from app.db.models.exec import ExecTask  # noqa: PLC0415
+    from app.services import exec_service  # noqa: PLC0415
+
+    host_id = _seed_host(session)
+    res = exec_service.create_exec_task_record(
+        session, name="b19", kind="command", target_host_ids=[host_id],
+        command="true", mode="batch", timeout_sec=300,
+    )
+    task_id = res["id"]
+    session.expire_all()
+    row = _exec_task_row(session, task_id)
+    assert row is not None and row.status == "running", (
+        f"B19 needs a `running` exec_task to dispatch; got {None if row is None else row.status!r}"
+    )
+
+    # Seams: the offline harness has no Redis semaphores / broker / WS.
+    monkeypatch.setattr(et, "acquire_semaphore", lambda *a, **k: True)
+    monkeypatch.setattr(et, "release_semaphore", lambda *a, **k: None)
+    monkeypatch.setattr(et, "broadcast_sync", lambda *a, **k: None)
+
+    def _fake_exec_then_cancel(task, th, content, timeout_sec, params):
+        """Make this host terminal, then simulate a concurrent external cancel
+        (separate session) landing BEFORE the aggregate finalize runs."""
+        s1 = object_session(th)
+        th.status = "success"
+        th.exit_code = 0
+        s1.commit()
+        s2 = _dbs.SessionLocal()
+        try:
+            r = s2.get(ExecTask, task.id)
+            r.status = "canceled"
+            r.finished_at = datetime.now(timezone.utc)
+            s2.commit()
+        finally:
+            s2.close()
+
+    monkeypatch.setattr(et, "_execute_via_mock", _fake_exec_then_cancel)
+
+    et.exec_dispatch(task_id)  # runs the terminal aggregate finalize
+    session.expire_all()
+    row = _exec_task_row(session, task_id)
+    assert row is not None and row.status == "canceled", (
+        "D2/§27.2 external-cancel invariant (@架构 seq3013): the `exec_dispatch` "
+        "aggregate must NOT overwrite an already-`canceled` exec_task (needs CAS + "
+        f"`canceled` guard); got {None if row is None else row.status!r}"
     )
 
 

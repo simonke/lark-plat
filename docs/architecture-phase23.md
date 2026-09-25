@@ -308,7 +308,7 @@ IdP 回调 GET /auth/oauth/{provider}/callback?code&state → 校验 state
 - `GET/POST /cicd/providers`、`PUT/DELETE /cicd/providers/{id}`、`POST /cicd/providers/{id}/test`。
 - `POST /cicd/webhooks/{provider}`（token 鉴权）。
 - `GET/POST /releases`、`GET /releases/{id}`（状态/证据链）、`POST /releases/{id}/canary|promote|rollback|cancel`。
-- 权限码：`cicd:provider:list/add/edit/del/test` ＋ `release:list/add/view/run/canary/promote/rollback/cancel`；flag **`feature.cicd`**（默认 False）。
+- 权限码：`cicd:provider:list/add/edit/del/test` ＋ `release:list/add/view/canary/promote/rollback/cancel`；flag **`feature.cicd`**（默认 False）。
 - paths **URL 键 +10 → `len(paths)==154`**（基 M6 144；`/cicd/providers`·`/{id}`·`/{id}/test`·`/cicd/webhooks/{provider}` ＋ `/releases`·`/{id}`·`/{id}/canary`·`/{id}/promote`·`/{id}/rollback`·`/{id}/cancel`；ops 13）；迁移 **+1**（rev 建议 **`b2c3d4e5f6a8`**〔与既有 `b2c3d4e5f6a7` 形近、勿混〕，parent P3-4 rev、单 head）。
 - 前端：`/cicd/providers`、`/releases`（列表/状态，不引图库）。
 

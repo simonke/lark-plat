@@ -44,7 +44,13 @@ export function releaseStatusTag(v: string): TagType {
   }
 }
 
-/** §14.1: cancel is allowed from pending|deploying|canary; an already-terminal release -> 409. */
+/**
+ * §14.1 / @架构 seq3077 裁: action -> allowed_from (illegal source -> 409).
+ * canary   <- pending|deploying
+ * promote  <- canary
+ * rollback <- deploying|canary|failed   (canary required: deploying/failed have no API entry)
+ * cancel   <- pending|deploying|canary
+ */
 export function canCancel(v: string): boolean {
   return v === 'pending' || v === 'deploying' || v === 'canary'
 }
@@ -62,7 +68,7 @@ export function canPromote(v: string): boolean {
 }
 
 export function canRollback(v: string): boolean {
-  return v === 'failed'
+  return v === 'deploying' || v === 'canary' || v === 'failed'
 }
 
 export function formatTime(v: string | null | undefined): string {

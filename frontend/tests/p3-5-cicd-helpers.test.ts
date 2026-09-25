@@ -44,13 +44,18 @@ describe('release helpers (P3-5)', () => {
     expect(isTerminal('canary')).toBe(false)
   })
 
-  it('gates canary/promote/rollback by status', () => {
+  it('gates canary/promote/rollback by allowed source set (@架构 seq3077)', () => {
     expect(canCanary('pending')).toBe(true)
+    expect(canCanary('deploying')).toBe(true)
     expect(canCanary('canary')).toBe(false)
     expect(canPromote('canary')).toBe(true)
+    expect(canPromote('deploying')).toBe(false)
     expect(canPromote('pending')).toBe(false)
+    expect(canRollback('deploying')).toBe(true)
+    expect(canRollback('canary')).toBe(true)
     expect(canRollback('failed')).toBe(true)
     expect(canRollback('succeeded')).toBe(false)
+    expect(canRollback('pending')).toBe(false)
   })
 })
 

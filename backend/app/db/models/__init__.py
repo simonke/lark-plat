@@ -19,6 +19,15 @@ from app.db.models.workflow import (
     WorkflowRun,
     WorkflowVersion,
 )
+from app.db.models.cicd import (
+    CICD_PROVIDER_STATUSES,
+    CICD_PROVIDER_TYPES,
+    RELEASE_ENVS,
+    RELEASE_STATUSES,
+    RELEASE_TERMINAL_STATUSES,
+    CicdProvider,
+    Release,
+)
 from app.db.models.auth_provider import AUTH_PROVIDER_TYPES, AUTH_SOURCES, AuthProvider
 from app.db.models.script import Script, ScriptVersion
 from app.db.models.exec import ExecLog, ExecTask, ExecTaskHost
@@ -96,6 +105,13 @@ __all__ = [
     "NODE_STATUSES",
     "TERMINAL_RUN_STATUSES",
     "TRIGGER_TYPES",
+    "CicdProvider",
+    "Release",
+    "CICD_PROVIDER_TYPES",
+    "CICD_PROVIDER_STATUSES",
+    "RELEASE_ENVS",
+    "RELEASE_STATUSES",
+    "RELEASE_TERMINAL_STATUSES",
     "AuthProvider",
     "AUTH_PROVIDER_TYPES",
     "AUTH_SOURCES",

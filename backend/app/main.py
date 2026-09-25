@@ -156,6 +156,7 @@ from app.api.v1.endpoints import (  # noqa: E402
     approval,
     asset,
     auth,
+    cicd,
     dashboard,
     exec,
     kb,
@@ -187,10 +188,12 @@ for router in (
     ticket.router,
     kb.router,
     workflow.router,
+    cicd.router,
 ):
     app.include_router(router, prefix=settings.api_prefix)
 
 app.include_router(workflow.run_router, prefix=settings.api_prefix)
+app.include_router(cicd.release_router, prefix=settings.api_prefix)
 
 app.include_router(exec_ws.router, prefix=settings.api_prefix)
 app.include_router(transfer_ws.router, prefix=settings.api_prefix)

@@ -98,6 +98,35 @@ PERMISSION_TREE: list[tuple[str, str, str, str, str, list[tuple[str, str, str, s
         ],
     ),
     (
+        "cicd:provider:list",
+        "CI/CD 集成",
+        "menu",
+        "/cicd/providers",
+        "Promotion",
+        [
+            ("cicd:provider:add", "新增接入", "button", "", "Plus"),
+            ("cicd:provider:edit", "编辑接入", "button", "", "Edit"),
+            ("cicd:provider:del", "删除接入", "button", "", "Delete"),
+            ("cicd:provider:test", "连通测试", "button", "", "Connection"),
+        ],
+    ),
+    (
+        "release:list",
+        "发布编排",
+        "menu",
+        "/releases",
+        "Upload",
+        [
+            ("release:add", "创建发布", "button", "", "Plus"),
+            ("release:view", "查看发布", "button", "", "View"),
+            ("release:run", "触发发布", "button", "", "VideoPlay"),
+            ("release:canary", "灰度放量", "button", "", "TrendCharts"),
+            ("release:promote", "全量发布", "button", "", "Promotion"),
+            ("release:rollback", "回滚", "button", "", "RefreshLeft"),
+            ("release:cancel", "取消发布", "button", "", "CircleClose"),
+        ],
+    ),
+    (
         "exec:task:list",
         "命令执行",
         "menu",
@@ -557,6 +586,7 @@ DEFAULT_CONFIG_RULES: dict[str, dict] = {
     "feature.kb": {"value": False},
     "feature.cmdb_topology": {"value": False},
     "feature.workflow": {"value": False},
+    "feature.cicd": {"value": False},
 }
 
 _CONFIG_RULE_REMARKS: dict[str, str] = {
@@ -569,6 +599,7 @@ _CONFIG_RULE_REMARKS: dict[str, str] = {
     "feature.kb": "P3-2 知识库功能默认关闭",
     "feature.cmdb_topology": "P3-3 CMDB 深化（关系/拓扑/影响分析）默认关闭",
     "feature.workflow": "P3-4 编排 Playbook 默认关闭",
+    "feature.cicd": "P3-5 CI/CD 集成（发布编排段）默认关闭",
 }
 
 

@@ -1775,4 +1775,74 @@ export interface AiFeedbackIn {
   basis_refs?: unknown[] | null
 }
 
+// ---------------------------------------------------------------- P5 E4/E5 (AIOps) ---------
+
+// E4 read-time aggregation (NO new table). Mirrors rca_service.aggregate().
+export interface AlertAggregateItem {
+  entity_id: string
+  entity_type: string | null
+  count: number
+  max_severity: MonSeverity | null
+  alert_ids: number[]
+}
+
+export interface AlertAggregateResult {
+  list: AlertAggregateItem[]
+  total: number
+  page: number
+  size: number
+  generated_at: string
+  authoritative: boolean
+}
+
+export interface AlertAggregateQuery {
+  status?: string
+  severity?: string
+  page?: number
+  size?: number
+}
+
+// E4 RCA report. Depth domain is owned by cmdb_service: 0..3, default 2.
+export interface RcaCandidate {
+  entity_type: string
+  entity_id: string
+  score: number
+  reason: string
+  evidence: unknown[]
+}
+
+export interface RcaRootEntity {
+  type: string
+  id: string | number | null
+  name: string | null
+}
+
+export interface RcaReport {
+  alert_id: number | null
+  root_entity: RcaRootEntity
+  depth: number
+  candidates: RcaCandidate[]
+  generated_at: string
+  authoritative: boolean
+}
+
+export interface RcaRunIn {
+  depth?: number
+}
+
+// E5 playbook suggestion (reuses the P3-4 workflow engine; advisory only).
+export interface PlaybookSuggestIn {
+  goal: string
+  context?: string
+}
+
+export interface PlaybookSuggestion {
+  kind: string
+  supported_kinds: string[]
+  goal: string
+  definition: WorkflowDefinition
+  model_name: string
+  authoritative: boolean
+}
+
 

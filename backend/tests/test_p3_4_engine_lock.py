@@ -58,6 +58,11 @@ B16 `manual_approval` released via the REAL一期 `approval_service.approve()` (
     B13 decides the row directly and hides this; §27.2 needs the real path
 B17 `manual_approval` decided via the REAL一期 `approval_service.reject()`
     (no crash; node failed + `on_failure`)
+B18 UNKNOWN biz_type via the REAL一期 `approval_service.approve()` stays fail-closed
+    (@需求 seq2977): raise -> `db.rollback()`, row persists `pending`, zero side
+    effects. Pins the EXPLICIT `=="workflow"` guard form of (B) and blocks a future
+    regression to a catch-all `else: no-op` (which would flip fail-closed to
+    fail-open and silently approve an unrelated row)
 
 WS close-code matrix (4401/4404) and frame `seq` monotonicity are asserted by live F
 (@集成), per tuple G — not reproducible on the offline TestClient without a running driver.
@@ -1027,6 +1032,65 @@ def test_b17_manual_approval_rejected_via_approval_service(env, monkeypatch):
     nodes = _nodes(session, rid)
     assert nodes["ap"] == "failed" and nodes["after-fail"] == "succeeded", (
         f"rejected workflow node must take `on_failure`; got {nodes}"
+    )
+
+
+# ── B18: unknown biz_type approve is fail-closed (pins the explicit (B) guard) ─
+# @需求 seq2977 scope ruling: the (B) fix MUST be an explicit `=="workflow"` guard
+# placed before the fall-through, so an UNKNOWN biz_type still reaches
+# `_approve_exec` -> `task_repo.get(biz_id)` None -> `NotFoundError` -> `approve()`
+# rollback (phase-1 fail-closed). A catch-all `else: return` (no-op) would flip this
+# to fail-open and silently approve an unrelated row. This negative pin holds both
+# before and after the (B) fix, blocking a regression to catch-all. It needs only
+# the frozen phase-1 approval service (no engine), so it is GREEN from day one —
+# the intended guard against the catch-all form, not an engine-absent failure.
+
+_UNKNOWN_BIZ_ID = 9_876_543_210
+
+
+def _seed_unknown_approval(session, biz_type: str = "mystery") -> int:
+    from app.db.models.schedule import ApprovalRequest  # noqa: PLC0415
+
+    ap = ApprovalRequest(
+        request_no=f"AP-LOCK-{biz_type}",
+        biz_type=biz_type,
+        biz_id=_UNKNOWN_BIZ_ID,
+        title="lock: unknown biz_type fail-closed",
+        requester_id=_U.id,
+        status="pending",
+    )
+    session.add(ap)
+    session.commit()
+    return ap.id
+
+
+def test_b18_unknown_biz_type_approve_is_fail_closed(env):
+    session, _ = env
+    ap_svc = _approval_service_or_fail()
+    from app.core.exceptions import NotFoundError  # noqa: PLC0415
+    from app.db.models.schedule import ApprovalRecord, ApprovalRequest  # noqa: PLC0415
+
+    ap_id = _seed_unknown_approval(session)
+    with pytest.raises(NotFoundError):
+        ap_svc.approve(session, _U(), ap_id, "ok")
+
+    session.expire_all()
+    row = session.get(ApprovalRequest, ap_id)
+    assert row is not None and row.status == "pending", (
+        "fail-closed (@需求 seq2977): approving an UNKNOWN biz_type must roll back and "
+        f"leave the row `pending`; got {None if row is None else row.status!r} "
+        "(a catch-all `else: no-op` would silently approve it => fail-open)"
+    )
+    assert row.approver_id is None and row.decided_at is None, (
+        "fail-closed: approve must not persist approver_id/decided_at after rollback"
+    )
+    assert row.version == 0, (
+        f"fail-closed: version must be unchanged after rollback; got {row.version}"
+    )
+    records = session.query(ApprovalRecord).filter_by(approval_id=ap_id).all()
+    assert records == [], (
+        "fail-closed: approve must write NO ApprovalRecord when the linkage raises; "
+        f"found {[(r.action, r.operator_id) for r in records]}"
     )
 
 

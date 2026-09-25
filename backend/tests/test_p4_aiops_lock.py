@@ -1474,3 +1474,45 @@ def test_f6_prod_gate_only_on_resolve_preserves_explicit_build(monkeypatch):
         f"⑩: explicit build value {mem!r} must still dispatch to InMemoryEmbeddingStore "
         f"under prod (gate is resolve-only); got {type(got)!r}"
     )
+
+
+def test_f7_inmemory_constant_single_source_and_used_in_resolve():
+    """⑩ @架构 seq3269: `EMBEDDING_STORE_IN_MEMORY` is a single-source seam — the
+    constant may appear only in `embedding_store.py` (definition / `VALID_STORES` /
+    resolver comparison); no other `app/` module references it or passes `in_memory`
+    explicitly (descriptions like seed.py use quoted literals, not the constant).
+    Non-vacuity: the resolver itself must branch on the constant."""
+    mod = _emb_mod()
+    name = "EMBEDDING_STORE_IN_MEMORY"
+    if not hasattr(mod, name):
+        pytest.fail(f"P4 lock ⑩: embedding_store.{name} must be defined")
+
+    try:
+        import app  # noqa: PLC0415
+    except Exception as exc:  # noqa: BLE001
+        pytest.fail(f"P4 lock ⑩: import app failed: {exc}")
+    root = pathlib.Path(app.__file__).resolve().parent
+    allowed = (root / "services" / "embedding_store.py").resolve()
+    pattern = re.compile(rf"\b{name}\b")
+    offenders = []
+    for py in root.rglob("*.py"):
+        if py.resolve() == allowed:
+            continue
+        try:
+            txt = py.read_text(encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            continue
+        if pattern.search(txt):
+            offenders.append(str(py.relative_to(root)))
+    assert not offenders, (
+        "⑩ single-source: `EMBEDDING_STORE_IN_MEMORY` must not be referenced outside "
+        f"embedding_store.py (resolve is the sole selection seam); offenders={offenders}"
+    )
+
+    resolve = getattr(mod, "resolve_store_config", None)
+    if resolve is None:
+        pytest.fail("P4 lock ⑩: resolve_store_config missing")
+    assert name in inspect.getsource(resolve), (
+        "⑩ non-vacuity: `resolve_store_config` must branch on `EMBEDDING_STORE_IN_MEMORY` "
+        "(the prod gate compares against the constant)"
+    )

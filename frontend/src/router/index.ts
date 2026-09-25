@@ -116,6 +116,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/monitoring/AlertsView.vue'),
       },
       {
+        path: 'monitor/alerts/aggregate',
+        name: 'monitor-alerts-aggregate',
+        component: () => import('../views/monitoring/AlertsAggregateView.vue'),
+      },
+      {
         path: 'monitor/rules',
         name: 'monitor-rules',
         component: () => import('../views/monitoring/AlertRulesView.vue'),

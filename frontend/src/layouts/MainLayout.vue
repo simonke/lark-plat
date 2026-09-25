@@ -72,6 +72,7 @@
           </template>
           <el-menu-item index="/monitor/dashboard" v-if="auth.hasPerm('monitor:metric:view')">监控面板</el-menu-item>
           <el-menu-item index="/monitor/alerts" v-if="auth.hasPerm('monitor:alert:list')">告警事件</el-menu-item>
+          <el-menu-item index="/monitor/alerts/aggregate" v-if="auth.hasPerm('ai:use')">告警聚合</el-menu-item>
           <el-menu-item index="/monitor/rules" v-if="auth.hasPerm('monitor:rule:list')">告警规则</el-menu-item>
           <el-menu-item index="/monitor/adapters" v-if="auth.hasPerm('monitor:rule:list')">采集适配器</el-menu-item>
         </el-sub-menu>

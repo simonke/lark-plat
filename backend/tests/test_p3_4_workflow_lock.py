@@ -455,14 +455,11 @@ def test_r3_list_workflows_page(wf_client):
     r = client.get("/api/v1/workflows")
     assert r.status_code == 200, r.text
     d = r.json().get("data") or {}
-    assert {"total", "page", "size"} <= set(d), (
-        f"GET /workflows must return a Page envelope {{...,total,page,size}}; keys={sorted(d)}"
+    assert {"list", "total", "page", "size"} <= set(d), (
+        f"GET /workflows must return Page<Workflow> {{list,total,page,size}} "
+        f"(PageVO.items has JSON alias `list`, @架构 seq2896 / @需求 seq2897); keys={sorted(d)}"
     )
-    rows_key = "list" if "list" in d else ("items" if "items" in d else None)
-    assert rows_key is not None, (
-        f"Page rows collection must be `list` (repo convention) or `items`; keys={sorted(d)}"
-    )
-    assert isinstance(d[rows_key], list)
+    assert isinstance(d["list"], list)
 
 
 def _create_wf(client):

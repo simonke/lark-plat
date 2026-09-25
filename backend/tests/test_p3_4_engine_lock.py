@@ -37,6 +37,11 @@ B7  recover_runs(): running run resumes; running exec_task w/o row -> failed(eng
 B8  DRIVER_AUTOSTART False path: run stays pending (driver NOT started), step drives it
 B9  waiting timeout: callback node w/ config.timeout_sec -> failed(reason=timeout) (never hangs)
 B10 callback payload > 65536 B -> 422 `callback_payload_too_large` (not silently truncated)
+B11 `exec_task` node (R-复用): REAL exec_task row built + node.exec_task_id stored;
+    row `success` -> node succeeded -> run succeeded
+B12 `exec_task` node non-success terminal -> node failed -> `on_failure` branch; run failed
+B13 `manual_approval` (R-复用): REAL approval_request built + node -> `waiting`;
+    approved -> succeeded (resumes); rejected -> failed + `on_failure`
 
 WS close-code matrix (4401/4404) and frame `seq` monotonicity are asserted by live F
 (@集成), per tuple G — not reproducible on the offline TestClient without a running driver.
@@ -211,8 +216,9 @@ from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 WF_TABLES = ("workflow", "workflow_version", "workflow_run", "workflow_node_run")
 _CORE_TABLES = (
-    "config_rule", "sys_audit_log", "sys_user", "exec_task",
+    "config_rule", "sys_audit_log", "sys_user", "exec_task", "exec_task_host",
     "approval_request", "approval_rule", "approval_record",
+    "asset_group", "asset_host", "script", "script_version",
     *WF_TABLES,
 )
 
@@ -613,6 +619,194 @@ def test_b10_callback_payload_cap_422(env):
         )
     finally:
         app.dependency_overrides.clear()
+
+
+# ── B11/B12: exec_task node reuses the一期 exec primitive (R-复用 hard gate) ──
+# Tuple D: `exec_task` carries config.host_ids + command|script_id; the engine
+# MUST build a REAL `exec_task` row (never copy exec logic), store its id on the
+# node, and follow that row's terminal status (step polls the DB). The一期
+# executor injection seam is faked so dispatch never touches a real host.
+
+def _fake_executor(monkeypatch) -> None:
+    try:
+        from app.services import executors as _ex  # noqa: PLC0415
+    except Exception:  # noqa: BLE001
+        return
+    from unittest.mock import MagicMock  # noqa: PLC0415
+
+    res = MagicMock()
+    res.exit_code = 0
+    res.stdout = ""
+    res.stderr = ""
+    res.to_dict.return_value = {"exit_code": 0, "stdout": "", "stderr": ""}
+    fake = MagicMock()
+    fake.name = "agent"
+    fake.available = True
+    fake.reason = ""
+    fake.run.return_value = res
+    fake.execute.return_value = res
+    fake.dispatch.return_value = res
+    monkeypatch.setattr(_ex, "build_executor", lambda name: fake, raising=False)
+
+
+def _seed_host(session) -> int:
+    from app.db.models.asset import Host  # noqa: PLC0415
+
+    host = Host(hostname="h-exec", ip="10.9.9.9", connector="agent", status="online")
+    session.add(host)
+    session.commit()
+    return host.id
+
+
+def _exec_task_row(session, task_id: int):
+    from app.db.models.exec import ExecTask  # noqa: PLC0415
+
+    return session.get(ExecTask, task_id)
+
+
+def _step_until_node_running(session, eng, rid: int, key: str, tries: int = 15):
+    for _ in range(tries):
+        session.expire_all()
+        node = _node(session, rid, key)
+        if node is not None and node.status == "running" and node.exec_task_id:
+            return node
+        eng.step(session, rid)
+    session.expire_all()
+    return _node(session, rid, key)
+
+
+def _terminalize_exec_task(session, task_id: int, status: str) -> None:
+    from app.db.models.exec import ExecTask  # noqa: PLC0415
+
+    row = session.get(ExecTask, task_id)
+    row.status = status
+    session.commit()
+
+
+def _exec_task_definition(host_id: int, *, on_failure=None) -> dict:
+    node: dict = {
+        "key": "e", "type": "exec_task",
+        "config": {"host_ids": [host_id], "command": "true"}, "depends_on": [],
+    }
+    if on_failure:
+        node["on_failure"] = on_failure
+    return {"nodes": [node, _sleep("after-ok", deps=["e"]), _sleep("after-fail")]}
+
+
+def test_b11_exec_task_node_builds_and_waits(env, monkeypatch):
+    session, _ = env
+    _fake_executor(monkeypatch)
+    eng = _try("app.services.workflow_engine")
+    if isinstance(eng, Exception):
+        pytest.fail(f"P3-4b lock: workflow_engine unavailable: {eng}")
+    host_id = _seed_host(session)
+    rid = _seed_run(session, _exec_task_definition(host_id))
+    node = _step_until_node_running(session, eng, rid, "e")
+    assert node.status == "running" and node.exec_task_id, (
+        f"exec_task node must enter running with a stored exec_task_id; got "
+        f"status={node.status} exec_task_id={node.exec_task_id}"
+    )
+    assert _exec_task_row(session, node.exec_task_id) is not None, (
+        "R-复用 hard gate: engine must build a REAL exec_task row, not copy exec logic "
+        f"(no row for exec_task_id={node.exec_task_id})"
+    )
+    _terminalize_exec_task(session, node.exec_task_id, "success")
+    assert _step_until_done(session, rid) == "succeeded", "exec success must drive run to succeeded"
+    nodes = _nodes(session, rid)
+    assert nodes["e"] == "succeeded", f"exec_task node must follow its row to succeeded; got {nodes}"
+
+
+def test_b12_exec_task_failure_takes_on_failure_branch(env, monkeypatch):
+    session, _ = env
+    _fake_executor(monkeypatch)
+    eng = _try("app.services.workflow_engine")
+    if isinstance(eng, Exception):
+        pytest.fail(f"P3-4b lock: workflow_engine unavailable: {eng}")
+    host_id = _seed_host(session)
+    rid = _seed_run(session, _exec_task_definition(host_id, on_failure=["after-fail"]))
+    node = _step_until_node_running(session, eng, rid, "e")
+    assert node.status == "running" and node.exec_task_id, (
+        f"exec_task node must enter running with a stored exec_task_id; got {node.status!r}"
+    )
+    _terminalize_exec_task(session, node.exec_task_id, "failed")
+    assert _step_until_done(session, rid) == "failed", "exec failure must drive run to failed"
+    nodes = _nodes(session, rid)
+    assert nodes["e"] == "failed", f"non-success exec terminal must fail the node; got {nodes}"
+    assert nodes["after-fail"] == "succeeded", f"`on_failure` branch must run; got {nodes}"
+    assert nodes["after-ok"] == "skipped", f"success-path downstream must be skipped; got {nodes}"
+
+
+# ── B13: manual_approval reuses the一期 approval primitive (R-复用 hard gate) ─
+# Tuple D: engine builds a REAL `approval_request` via the existing primitive,
+# node -> `waiting` + `approval_id`; approve -> succeeded (run resumes),
+# reject -> failed + `on_failure`.
+
+def _approval_row(session, approval_id: int):
+    from app.db.models.schedule import ApprovalRequest  # noqa: PLC0415
+
+    return session.get(ApprovalRequest, approval_id)
+
+
+def _step_until_node_waiting(session, eng, rid: int, key: str, tries: int = 15):
+    for _ in range(tries):
+        session.expire_all()
+        node = _node(session, rid, key)
+        if node is not None and node.status == "waiting":
+            return node
+        eng.step(session, rid)
+    session.expire_all()
+    return _node(session, rid, key)
+
+
+def _decide_approval(session, approval_id: int, status: str) -> None:
+    from datetime import datetime, timezone  # noqa: PLC0415
+
+    row = _approval_row(session, approval_id)
+    row.status = status
+    row.decided_at = datetime.now(timezone.utc)
+    session.commit()
+
+
+def _approval_definition(*, on_failure=None) -> dict:
+    node: dict = {"key": "ap", "type": "manual_approval", "config": {}, "depends_on": []}
+    if on_failure:
+        node["on_failure"] = on_failure
+    return {"nodes": [node, _sleep("after-ok", deps=["ap"]), _sleep("after-fail")]}
+
+
+def test_b13_manual_approval_blocks_then_releases(env):
+    session, _ = env
+    eng = _try("app.services.workflow_engine")
+    if isinstance(eng, Exception):
+        pytest.fail(f"P3-4b lock: workflow_engine unavailable: {eng}")
+    # (i) approve -> node succeeded, run resumes downstream
+    rid = _seed_run(session, _approval_definition())
+    node = _step_until_node_waiting(session, eng, rid, "ap")
+    assert node.status == "waiting", (
+        f"manual_approval must block the node in `waiting`; got {node.status}"
+    )
+    assert node.approval_id, "manual_approval must store approval_id (reuse一期 primitive)"
+    assert _approval_row(session, node.approval_id) is not None, (
+        "R-复用 hard gate: engine must build a REAL approval_request row, not copy approval logic"
+    )
+    _decide_approval(session, node.approval_id, "approved")
+    assert _step_until_done(session, rid) == "succeeded", "approval must release the node"
+    nodes = _nodes(session, rid)
+    assert nodes["ap"] == "succeeded", f"approved node must continue as succeeded; got {nodes}"
+    assert nodes["after-ok"] == "succeeded", f"approved path must continue downstream; got {nodes}"
+
+    # (ii) reject -> node failed + `on_failure` branch
+    rid2 = _seed_run(session, _approval_definition(on_failure=["after-fail"]))
+    node2 = _step_until_node_waiting(session, eng, rid2, "ap")
+    assert node2.status == "waiting" and node2.approval_id, (
+        f"manual_approval must wait with an approval_id; got {node2.status!r}/{node2.approval_id!r}"
+    )
+    _decide_approval(session, node2.approval_id, "rejected")
+    assert _step_until_done(session, rid2) == "failed", "rejection must fail the run"
+    nodes2 = _nodes(session, rid2)
+    assert nodes2["ap"] == "failed", f"rejected node must be failed; got {nodes2}"
+    assert nodes2["after-fail"] == "succeeded", f"`on_failure` branch must run; got {nodes2}"
+    assert nodes2["after-ok"] == "skipped", f"success-path downstream must be skipped; got {nodes2}"
 
 
 def _force_run_running(session, run_id: int) -> None:

@@ -15,9 +15,10 @@
         <el-tag
           v-for="c in result.citations"
           :key="c.chunk_ref"
-          class="citation"
+          :class="['citation', { 'citation-off': articleIdFromDocRef(c.doc_ref) === null }]"
           size="small"
           :type="sourceTag('kb')"
+          :title="articleIdFromDocRef(c.doc_ref) === null ? '无法定位来源' : ''"
           @click="openCitation(c)"
         >
           {{ c.chunk_ref }} · 相关度 {{ c.score.toFixed(3) }}
@@ -68,6 +69,10 @@ function openCitation(c: KbCitation) {
 .citation {
   margin: 0 6px 6px 0;
   cursor: pointer;
+}
+.citation-off {
+  cursor: default;
+  opacity: 0.6;
 }
 .sink {
   margin-top: 10px;

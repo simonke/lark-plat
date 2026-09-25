@@ -47,6 +47,10 @@ B13 `manual_approval` (R-复用): REAL approval_request built + node -> `waiting
     approved -> succeeded (resumes); rejected -> failed + `on_failure`
 B14 cancel propagates to a node whose一期 exec_task is still `running`
     (exec_task cancelled via the一期 primitive; node -> skipped; run cancelled)
+B15 `exec_task` sensitive command is gated (fail-closed, @架构 seq2957): a sensitive
+    `command` -> REAL exec_task row with `sensitive_flag`/`approve_required`=1 +
+    `awaiting_approval` + linked pending `exec` approval_request (never silently
+    `running`); engine must not bypass the一期 exec sensitivity/approval linkage
 
 WS close-code matrix (4401/4404) and frame `seq` monotonicity are asserted by live F
 (@集成), per tuple G — not reproducible on the offline TestClient without a running driver.
@@ -796,6 +800,80 @@ def test_b12_exec_task_failure_takes_on_failure_branch(env, monkeypatch):
     assert nodes["e"] == "failed", f"non-success exec terminal must fail the node; got {nodes}"
     assert nodes["after-fail"] == "succeeded", f"`on_failure` branch must run; got {nodes}"
     assert nodes["after-ok"] == "skipped", f"success-path downstream must be skipped; got {nodes}"
+
+
+# ── B15: exec_task sensitive command gate (fail-closed) ──────────────────────
+# @架构 seq2957: the engine reuses `_task_no`/`_kick_off_exec` but MUST NOT bypass
+# the exec-layer safeguards — a sensitive `command` must NEVER silently become a
+# `running` exec_task. The一期 `exec_service` marks sensitivity
+# (`sensitive_flag`/`approve_required`) and links an `exec` approval, moving the
+# task to `awaiting_approval` before any dispatch (US-06/US-09). The engine must
+# retain this guarantee via a shared core (or an explicit scope exemption from
+# @需求/@刘辉). This is a behaviour assertion, independent of the implementation
+# symbol chosen, so it stays valid under either fix.
+
+def _seed_sensitive_word(session, word: str) -> None:
+    from app.db.models.notify import ConfigRule  # noqa: PLC0415
+
+    session.add(ConfigRule(rule_key="exec_sensitive_word", rule_value={"words": [word]}))
+    session.commit()
+
+
+def _sensitive_exec_definition(host_id: int) -> dict:
+    node: dict = {
+        "key": "e", "type": "exec_task",
+        "config": {"host_ids": [host_id], "command": "rm -rf /tmp/p34e"}, "depends_on": [],
+    }
+    return {"nodes": [node, _sleep("after-ok", deps=["e"])]}
+
+
+def test_b15_sensitive_exec_task_is_gated_not_silently_running(env, monkeypatch):
+    session, _ = env
+    _fake_executor(monkeypatch)
+    eng = _try("app.services.workflow_engine")
+    if isinstance(eng, Exception):
+        pytest.fail(f"P3-4b lock: workflow_engine unavailable: {eng}")
+    host_id = _seed_host(session)
+    _seed_sensitive_word(session, "rm -rf")
+    rid = _seed_run(session, _sensitive_exec_definition(host_id))
+    for _ in range(15):
+        session.expire_all()
+        node = _node(session, rid, "e")
+        if node is not None and node.exec_task_id:
+            break
+        eng.step(session, rid)
+    session.expire_all()
+    node = _node(session, rid, "e")
+    assert node is not None and node.exec_task_id, (
+        f"sensitive exec_task node must build an exec_task row; got {node and node.status!r}"
+    )
+    row = _exec_task_row(session, node.exec_task_id)
+    assert row is not None, "sensitive exec_task must build a REAL exec_task row"
+    assert int(getattr(row, "sensitive_flag", 0) or 0) == 1, (
+        "US-06/09 fail-closed: a sensitive `command` must set exec_task.sensitive_flag=1; "
+        "the engine must not bypass the一期 exec sensitivity detection"
+    )
+    assert int(getattr(row, "approve_required", 0) or 0) == 1, (
+        "sensitive exec_task must require approval (approve_required=1)"
+    )
+    assert row.status == "awaiting_approval", (
+        "sensitive exec_task must NOT silently run: expected status 'awaiting_approval', "
+        f"got {row.status!r} (bypasses the exec approval gate)"
+    )
+    from app.db.models.schedule import ApprovalRequest  # noqa: PLC0415
+
+    ap = (
+        session.query(ApprovalRequest)
+        .filter_by(biz_type="exec", biz_id=row.id)
+        .one_or_none()
+    )
+    assert ap is not None and ap.status == "pending", (
+        "sensitive exec_task must link a pending `exec` approval_request"
+    )
+    session.expire_all()
+    assert _run_status(session, rid) != "succeeded", (
+        "run must not silently succeed around an unapproved sensitive exec_task"
+    )
 
 
 # ── B13: manual_approval reuses the一期 approval primitive (R-复用 hard gate) ─

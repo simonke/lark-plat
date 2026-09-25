@@ -25,12 +25,16 @@ celery_app.conf.update(
     # Ensure the worker registers exec tasks (exec_dispatch / scan_timeouts). The
     # module is otherwise only imported lazily from services, which would leave the
     # worker without the task registry entries beat schedules and brokers dispatch.
-    imports=("app.tasks.exec_tasks", "app.tasks.monitor_tasks"),
+    imports=("app.tasks.exec_tasks", "app.tasks.monitor_tasks", "app.tasks.workflow_tasks"),
 )
 
 celery_app.conf.beat_schedule = {
     "scan-exec-timeouts": {
         "task": "app.tasks.exec_tasks.scan_timeouts",
+        "schedule": crontab(minute="*"),
+    },
+    "scan-workflow-timeouts": {
+        "task": "app.tasks.workflow_tasks.scan_workflow_timeouts",
         "schedule": crontab(minute="*"),
     },
     "trigger-schedules": {

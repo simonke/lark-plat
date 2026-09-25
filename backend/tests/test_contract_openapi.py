@@ -139,7 +139,10 @@ def test_path_count_stable(openapi_spec):
     # /workflows/{id} [get+put+delete], /workflows/{id}/versions, /workflows/{id}/rollback,
     # /workflows/{id}/run, /workflow-runs, /workflow-runs/{id},
     # /workflow-runs/{id}/cancel, /workflow-runs/{id}/retry; @架构 seq2894, add-only).
-    assert len(paths) == 142
+    # 142 -> 144: P3-4b adds 2 more URL keys (/workflow-runs/{id}/ws-token,
+    # /workflow-runs/{id}/callback/{node_key}; @架构 engine tuple v1.1/v1.2,
+    # add-only; WS itself is NOT in openapi).
+    assert len(paths) == 144
 
 
 def test_stage4_terminal_paths_present(openapi_spec):

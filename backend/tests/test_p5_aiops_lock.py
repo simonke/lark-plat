@@ -524,3 +524,82 @@ def test_r2_notanint_stays_422(p5_client):
         f"fix (a) keeps int path semantics: notanint must be 422 (not 404); got "
         f"{r.status_code} {r.text}"
     )
+
+
+# ── E4 depth (tuple r2.1, @架构 seq3337 / @代码reviewer 3336) ──────────────────
+
+def test_g3_e4_reuses_cmdb_topology_single_source():
+    """r2.1 item 3: E4 association traversal must REUSE `cmdb_service` topology read
+    (`_clamp_depth` + layered traversal), not start a second BFS."""
+    rca = _try("app.services.rca_service")
+    if isinstance(rca, Exception):
+        pytest.fail(f"P5 lock: app.services.rca_service unavailable: {rca}")
+    src = inspect.getsource(rca)
+    assert "cmdb_service" in src, (
+        "E4 association traversal must reuse `cmdb_service` (r2.1 item 3: no second BFS)"
+    )
+
+
+def test_b3_depth_domain_and_default():
+    """r2.1 item 1: legal domain `0..3`, default 2, `0` legal, `<0`|`>3` raise."""
+    cmdb = _try("app.services.cmdb_service")
+    if isinstance(cmdb, Exception):
+        pytest.fail(f"P5 lock: app.services.cmdb_service unavailable: {cmdb}")
+    assert cmdb._clamp_depth(None) == 2, "default depth must be 2 (P3-3 same value)"
+    assert cmdb._clamp_depth(0) == 0, "depth 0 must be legal (no `ge=1` drift)"
+    assert cmdb._clamp_depth(3) == 3, "depth 3 must be legal (upper bound)"
+    for bad in (-1, 4):
+        with pytest.raises(cmdb.ValidationError):
+            cmdb._clamp_depth(bad)
+
+
+def test_b4_depth_execution_limits_layers(monkeypatch):
+    """r2.1 item 2: depth must be EXECUTED (layered traversal), not merely validated.
+
+    A chain of length >=4 proves `depth=1/2/3` grows monotonically and never includes the
+    `depth+1` layer — defeats a "accept depth but always full-BFS" false-green.
+    """
+    cmdb = _try("app.services.cmdb_service")
+    if isinstance(cmdb, Exception):
+        pytest.fail(f"P5 lock: app.services.cmdb_service unavailable: {cmdb}")
+
+    class _Edge:
+        src_type, src_id, dst_type, dst_id, rel_type = "host", 0, "host", 0, "depends"
+
+    def _edge(a: int, b: int) -> _Edge:
+        e = _Edge()
+        e.src_type, e.src_id, e.dst_type, e.dst_id = "host", a, "host", b
+        return e
+
+    chain = {
+        ("host", 1): [_edge(1, 2)],
+        ("host", 2): [_edge(2, 3)],
+        ("host", 3): [_edge(3, 4)],
+        ("host", 4): [_edge(4, 5)],
+        ("host", 5): [],
+    }
+    monkeypatch.setattr(cmdb, "_require_feature", lambda db: None)
+    monkeypatch.setattr(cmdb, "_visible_scope", lambda db, user: None)
+    monkeypatch.setattr(cmdb, "_entity_visible", lambda scope, t, i: True)
+    monkeypatch.setattr(cmdb, "_labels", lambda db, keys: {})
+    monkeypatch.setattr(
+        cmdb, "_edges_for", lambda db, node, direction, rel_types: chain.get(node, [])
+    )
+
+    class _User:
+        def require_perm(self, *_a, **_k):  # noqa: ANN002,ANN003
+            return None
+
+    class _DB:
+        pass
+
+    def _ids(depth):
+        out = cmdb.impact(_DB(), _User(), "host", 1, "down", depth, None)
+        return {n["id"] for n in out["affected"]}
+
+    d1, d2, d3 = _ids(1), _ids(2), _ids(3)
+    assert d1 == {2}, f"depth=1 must reach only layer 1; got {d1}"
+    assert d2 == {2, 3}, f"depth=2 must reach layers 1..2; got {d2}"
+    assert d3 == {2, 3, 4}, f"depth=3 must reach layers 1..3; got {d3}"
+    assert 5 not in d3, "depth=3 must NOT include the depth+1 (layer 4) member"
+    assert d1 <= d2 <= d3, f"candidate set must grow monotonically with depth; {d1} {d2} {d3}"

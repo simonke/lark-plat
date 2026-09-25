@@ -318,6 +318,32 @@ def _core_tables():
     return [tl[name] for name in _CORE_TABLES if name in tl]
 
 
+_ACTION_PERMS = [
+    "cicd:provider:add",
+    "release:add",
+    "release:view",
+    "release:canary",
+    "release:promote",
+    "release:rollback",
+]
+
+
+def _seed_release(client, *, app, env="dev"):
+    """Create a provider + a `pending` release through the API; return the release id."""
+    prov = client.post(
+        "/api/v1/cicd/providers",
+        json={"type": "generic", "name": f"g-{app}", "endpoint": "https://g"},
+    )
+    assert prov.status_code == 200, prov.text
+    pid = (prov.json().get("data") or {}).get("id")
+    rel = client.post(
+        "/api/v1/releases",
+        json={"provider_id": pid, "app": app, "version": "1.0.0", "env": env},
+    )
+    assert rel.status_code == 200, rel.text
+    return (rel.json().get("data") or {}).get("id")
+
+
 @pytest.fixture()
 def cicd_client(tmp_path):
     """Yields ``(client, set_user, set_flag)``."""
@@ -564,4 +590,54 @@ def test_r8_release_reuses_section13_workflow_run(cicd_client):
     assert rows and rows >= 1, (
         "§14.4: triggering a release must create a REAL §13 workflow_run "
         "(trigger_type='release'); none found — release must NOT re-implement the orchestrator"
+    )
+
+
+def test_r9_action_gate_canary_from_canary_409(cicd_client):
+    """§14.1 state machine: canary source ∈ {pending, deploying}; from `canary` -> 409."""
+    client, set_user, set_flag, _ = cicd_client
+    set_flag(True)
+    set_user(_ACTION_PERMS, admin=True)
+    rid = _seed_release(client, app="svc-g")
+    first = client.post(f"/api/v1/releases/{rid}/canary")
+    assert first.status_code == 200, (
+        f"canary from `pending` must be allowed (§14.1); got {first.status_code}: {first.text}"
+    )
+    again = client.post(f"/api/v1/releases/{rid}/canary")
+    assert again.status_code == 409, (
+        f"canary from `canary` must be 409 (illegal source state, §14.1); "
+        f"got {again.status_code}: {again.text}"
+    )
+
+
+def test_r10_action_gate_promote_from_pending_409(cicd_client):
+    """§14.1 state machine: promote source = `canary` only; from `pending` -> 409."""
+    client, set_user, set_flag, _ = cicd_client
+    set_flag(True)
+    set_user(_ACTION_PERMS, admin=True)
+    rid = _seed_release(client, app="svc-h")
+    r = client.post(f"/api/v1/releases/{rid}/promote")
+    assert r.status_code == 409, (
+        f"promote from `pending` must be 409 (promote source = `canary`, §14.1); "
+        f"got {r.status_code}: {r.text}"
+    )
+
+
+def test_r11_action_gate_rollback_from_succeeded_409(cicd_client):
+    """§14.1 state machine: rollback source = `failed`; from terminal `succeeded` -> 409."""
+    client, set_user, set_flag, _ = cicd_client
+    set_flag(True)
+    set_user(_ACTION_PERMS, admin=True)
+    rid = _seed_release(client, app="svc-i")
+    can = client.post(f"/api/v1/releases/{rid}/canary")
+    assert can.status_code == 200, can.text
+    prom = client.post(f"/api/v1/releases/{rid}/promote")
+    assert prom.status_code == 200, (
+        f"promote from `canary` must succeed (§14.1 `canary→succeeded`); "
+        f"got {prom.status_code}: {prom.text}"
+    )
+    rb = client.post(f"/api/v1/releases/{rid}/rollback")
+    assert rb.status_code == 409, (
+        f"rollback from terminal `succeeded` must be 409 (rollback source = `failed`, §14.1); "
+        f"got {rb.status_code}: {rb.text}"
     )

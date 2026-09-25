@@ -135,7 +135,11 @@ def test_path_count_stable(openapi_spec):
     # 129 -> 133: P3-3 adds 4 CMDB URL keys (/assets/relations [get+post],
     # /assets/relations/{id}, /assets/cmdb/topology, /assets/cmdb/impact;
     # @架构 seq2817, add-only).
-    assert len(paths) == 133
+    # 133 -> 142: P3-4 adds 9 workflow URL keys (/workflows [get+post],
+    # /workflows/{id} [get+put+delete], /workflows/{id}/versions, /workflows/{id}/rollback,
+    # /workflows/{id}/run, /workflow-runs, /workflow-runs/{id},
+    # /workflow-runs/{id}/cancel, /workflow-runs/{id}/retry; @架构 seq2894, add-only).
+    assert len(paths) == 142
 
 
 def test_stage4_terminal_paths_present(openapi_spec):

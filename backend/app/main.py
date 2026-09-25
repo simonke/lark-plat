@@ -161,6 +161,7 @@ from app.api.v1.endpoints import (  # noqa: E402
     terminal,
     ticket,
     transfer,
+    workflow,
 )
 from app.ws import agent_ws, exec_ws, monitor_ws, terminal_ws, transfer_ws  # noqa: E402
 
@@ -179,8 +180,11 @@ for router in (
     transfer.router,
     ticket.router,
     kb.router,
+    workflow.router,
 ):
     app.include_router(router, prefix=settings.api_prefix)
+
+app.include_router(workflow.run_router, prefix=settings.api_prefix)
 
 app.include_router(exec_ws.router, prefix=settings.api_prefix)
 app.include_router(transfer_ws.router, prefix=settings.api_prefix)

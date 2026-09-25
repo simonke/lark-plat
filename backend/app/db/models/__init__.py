@@ -8,6 +8,17 @@ from app.db.models.system import (
 )
 from app.db.models.asset import AssetGroup, Host, HostCredential
 from app.db.models.cmdb import ENTITY_TYPES, REL_TYPES, EntityRelation
+from app.db.models.workflow import (
+    NODE_STATUSES,
+    NODE_TYPES,
+    RUN_STATUSES,
+    TERMINAL_RUN_STATUSES,
+    TRIGGER_TYPES,
+    Workflow,
+    WorkflowNodeRun,
+    WorkflowRun,
+    WorkflowVersion,
+)
 from app.db.models.auth_provider import AUTH_PROVIDER_TYPES, AUTH_SOURCES, AuthProvider
 from app.db.models.script import Script, ScriptVersion
 from app.db.models.exec import ExecLog, ExecTask, ExecTaskHost
@@ -76,6 +87,15 @@ __all__ = [
     "EntityRelation",
     "ENTITY_TYPES",
     "REL_TYPES",
+    "Workflow",
+    "WorkflowVersion",
+    "WorkflowRun",
+    "WorkflowNodeRun",
+    "NODE_TYPES",
+    "RUN_STATUSES",
+    "NODE_STATUSES",
+    "TERMINAL_RUN_STATUSES",
+    "TRIGGER_TYPES",
     "AuthProvider",
     "AUTH_PROVIDER_TYPES",
     "AUTH_SOURCES",

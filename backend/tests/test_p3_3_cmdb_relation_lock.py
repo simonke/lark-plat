@@ -136,9 +136,12 @@ def test_a1_p3_3_paths_present_with_methods():
 
 def test_a2_paths_count_133():
     paths = _openapi_paths()
-    assert len(paths) == 133, (
-        f"P3-3 adds 4 URL keys => paths must be 133 (129 + 4); got {len(paths)}. "
-        "OpenAPI `paths` is URL-keyed (GET+POST share one key); exact gate is 133."
+    # P3-3 adds 4 URL keys => 129 -> 133. Later add-only batches (P3-4/P3-5)
+    # legitimately raise the cumulative count; exact value re-pinned in
+    # test_contract_openapi.py (mirrors the P3 lock's `>= 129` form).
+    assert len(paths) >= 133, (
+        f"P3-3 baseline (133) must not shrink; got {len(paths)}. "
+        "OpenAPI `paths` is URL-keyed (GET+POST share one key)."
     )
 
 
@@ -258,6 +261,7 @@ def test_f1_feature_cmdb_topology_default_false():
 
 _VERSIONS_DIR = __import__("pathlib").Path(__file__).resolve().parents[1] / "alembic" / "versions"
 _P3X_HEAD = "e1f2a3b4c5d7"
+_P33_HEAD = "f2a3b4c5d6e7"
 
 
 def _revision_graph() -> dict[str, str | None]:
@@ -274,13 +278,22 @@ def _revision_graph() -> dict[str, str | None]:
 def test_g1_migration_single_head_descends_from_p3x():
     revs = _revision_graph()
     assert _P3X_HEAD in revs, f"P3.1 head {_P3X_HEAD} missing from versions dir"
+    assert revs.get(_P33_HEAD) == _P3X_HEAD, (
+        f"P3-3 migration must descend directly from {_P3X_HEAD}; got {revs.get(_P33_HEAD)!r}"
+    )
     downs = {v for v in revs.values() if v}
     heads = sorted(r for r in revs if r not in downs)
     assert len(heads) == 1, f"migration must keep a single head; got {heads}"
     head = heads[0]
-    assert revs[head] == _P3X_HEAD, (
-        f"P3-3 head must descend directly from {_P3X_HEAD} "
-        f"(suggested rev `f2a3b4c5d6e7`); head={head} parent={revs[head]}"
+    # Later add-only batches (P3-4/P3-5) extend the same linear chain ABOVE P3-3;
+    # the head must still descend from the P3-3 rev (not necessarily equal it).
+    seen: set[str] = set()
+    cursor: str | None = head
+    while cursor and cursor not in seen:
+        seen.add(cursor)
+        cursor = revs.get(cursor)
+    assert _P33_HEAD in seen, (
+        f"head {head} must descend from P3-3 {_P33_HEAD}; chain={sorted(seen)}"
     )
 
 

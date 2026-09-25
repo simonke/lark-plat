@@ -1,7 +1,7 @@
 """Seed-data existence contract (module-design §12).
 
 Static assertion against app/db/seed.py (DB-free): the RBAC baseline must
-declare the full permission-point tree (23 menus + 90 buttons post P3-3, add-only)
+declare the full permission-point tree (24 menus + 98 buttons post P3-4, add-only)
 and the 3 builtin roles. Runtime presence is verified by integration against
 /system/permissions; this guards the declared contract itself.
 """
@@ -28,8 +28,8 @@ P23_AUTH_CODES = {
 def test_seed_tree_permission_points():
     menus = [node[0] for node in PERMISSION_TREE]
     buttons = [child[0] for node in PERMISSION_TREE for child in node[5]]
-    assert len(menus) == 23
-    assert len(buttons) == 90
+    assert len(menus) == 24
+    assert len(buttons) == 98
     assert len(set(menus)) == len(menus)
     assert len(set(buttons)) == len(buttons)
 

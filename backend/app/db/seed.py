@@ -81,6 +81,23 @@ PERMISSION_TREE: list[tuple[str, str, str, str, str, list[tuple[str, str, str, s
         ],
     ),
     (
+        "workflow:list",
+        "编排 Playbook",
+        "menu",
+        "/workflows",
+        "Share",
+        [
+            ("workflow:add", "新增编排", "button", "", "Plus"),
+            ("workflow:view", "查看编排", "button", "", "View"),
+            ("workflow:edit", "编辑编排", "button", "", "Edit"),
+            ("workflow:del", "删除编排", "button", "", "Delete"),
+            ("workflow:version", "版本管理", "button", "", "Files"),
+            ("workflow:rollback", "回滚版本", "button", "", "RefreshLeft"),
+            ("workflow:run", "运行编排", "button", "", "VideoPlay"),
+            ("workflow:cancel", "取消运行", "button", "", "CircleClose"),
+        ],
+    ),
+    (
         "exec:task:list",
         "命令执行",
         "menu",
@@ -539,6 +556,7 @@ DEFAULT_CONFIG_RULES: dict[str, dict] = {
     "feature.ticket": {"value": False},
     "feature.kb": {"value": False},
     "feature.cmdb_topology": {"value": False},
+    "feature.workflow": {"value": False},
 }
 
 _CONFIG_RULE_REMARKS: dict[str, str] = {
@@ -550,6 +568,7 @@ _CONFIG_RULE_REMARKS: dict[str, str] = {
     "feature.ticket": "P3-1 工单功能默认关闭",
     "feature.kb": "P3-2 知识库功能默认关闭",
     "feature.cmdb_topology": "P3-3 CMDB 深化（关系/拓扑/影响分析）默认关闭",
+    "feature.workflow": "P3-4 编排 Playbook 默认关闭",
 }
 
 

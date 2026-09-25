@@ -52,7 +52,7 @@ B15 `exec_task` sensitive command is gated (fail-closed, @架构 seq2957): a sen
     `awaiting_approval` + linked pending `exec` approval_request (never silently
     `running`); engine must not bypass the一期 exec sensitivity/approval linkage
 B16 `manual_approval` released via the REAL一期 `approval_service.approve()` (the
-    platform approval path, @代码reviewer seq2971): `_approve_linkages` routes any
+    platform approval path, @代码reviewer seq2970/2972): `_approve_linkages` routes any
     non-`terminal` biz_type into `_approve_exec`, which `task_repo.get(biz_id)`
     fails for `biz_type="workflow"` -> `NotFoundError` -> `approve()` rollback.
     B13 decides the row directly and hides this; §27.2 needs the real path
@@ -967,7 +967,7 @@ def test_b13_manual_approval_blocks_then_releases(env, monkeypatch):
 
 
 # ── B16/B17: manual_approval release via the REAL一期 approval service ─────────
-# @代码reviewer seq2971: 一期 `approval_service._approve_linkages` routes any
+# @代码reviewer seq2970/2972: 一期 `approval_service._approve_linkages` routes any
 # non-`terminal` biz_type into `_approve_exec`, whose `task_repo.get(biz_id)`
 # returns None for `biz_type="workflow"` -> `NotFoundError` -> `approve()` rolls
 # back and re-raises. B13 decides the approval row directly, so it cannot catch
@@ -1045,6 +1045,7 @@ def test_b17_manual_approval_rejected_via_approval_service(env, monkeypatch):
 # the frozen phase-1 approval service (no engine), so it is GREEN from day one —
 # the intended guard against the catch-all form, not an engine-absent failure.
 
+# Deliberately far outside the exec_task id domain; B18 asserts no collision.
 _UNKNOWN_BIZ_ID = 9_876_543_210
 
 
@@ -1068,8 +1069,17 @@ def test_b18_unknown_biz_type_approve_is_fail_closed(env):
     session, _ = env
     ap_svc = _approval_service_or_fail()
     from app.core.exceptions import NotFoundError  # noqa: PLC0415
+    from app.db.models.exec import ExecTask  # noqa: PLC0415
     from app.db.models.schedule import ApprovalRecord, ApprovalRequest  # noqa: PLC0415
 
+    assert session.get(ExecTask, _UNKNOWN_BIZ_ID) is None, (
+        "B18 premise (@代码reviewer seq2978 / @架构 seq2979): the unknown biz_type's "
+        "`biz_id` must NOT collide with any `exec_task.id`. The fail-closed behaviour "
+        "here is `_approve_exec`'s `task_repo.get(biz_id)` landing empty — NOT a "
+        "biz_type gate. A colliding id would let `_approve_exec` advance that unrelated "
+        "task regardless of biz_type (biz_id is globally unique with no relational tie "
+        "to biz_type), making this lock vacuously pass."
+    )
     ap_id = _seed_unknown_approval(session)
     with pytest.raises(NotFoundError):
         ap_svc.approve(session, _U(), ap_id, "ok")

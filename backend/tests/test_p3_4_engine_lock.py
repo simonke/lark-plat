@@ -35,6 +35,8 @@ B5  callback: node waiting + output.callback{token,url,expires_at}; token -> suc
 B6  attempt: 0 -> 1 on entering running
 B7  recover_runs(): running run resumes; running exec_task w/o row -> failed(engine_restart)
 B8  DRIVER_AUTOSTART False path: run stays pending (driver NOT started), step drives it
+B9  waiting timeout: callback node w/ config.timeout_sec -> failed(reason=timeout) (never hangs)
+B10 callback payload > 65536 B -> 422 `callback_payload_too_large` (not silently truncated)
 
 WS close-code matrix (4401/4404) and frame `seq` monotonicity are asserted by live F
 (@集成), per tuple G — not reproducible on the offline TestClient without a running driver.
@@ -47,6 +49,7 @@ from __future__ import annotations
 
 import importlib
 import re
+import time
 
 import pytest
 
@@ -369,12 +372,18 @@ def test_b2_parallel_then_and_join(env):
 
 def test_b3_timeout_failed_takes_on_failure_branch(env):
     session, _ = env
+    eng = _try("app.services.workflow_engine")
+    if isinstance(eng, Exception):
+        pytest.fail(f"P3-4b lock: workflow_engine unavailable: {eng}")
     definition = {"nodes": [
-        _sleep("a", timeout=0, on_failure=["c"]),
+        {"key": "a", "type": "wait", "config": {"duration_sec": 3600, "timeout_sec": 1},
+         "depends_on": [], "on_failure": ["c"]},
         _sleep("b", deps=["a"]),
         _sleep("c"),
     ]}
     rid = _seed_run(session, definition)
+    eng.step(session, rid)  # a -> running (long wait, 1s timeout)
+    time.sleep(1.2)         # let the 1s node timeout elapse
     assert _step_until_done(session, rid) == "failed", "a timed-out run must end failed"
     nodes = _nodes(session, rid)
     assert nodes["a"] == "failed", f"timed-out node must be failed; got {nodes}"
@@ -467,10 +476,13 @@ def test_b5_callback_token_roundtrip(env):
 
 def test_b6_attempt_increments_on_running(env):
     session, _ = env
-    rid = _seed_run(session, {"nodes": [_sleep("a")]})
     eng = _try("app.services.workflow_engine")
     if isinstance(eng, Exception):
         pytest.fail(f"P3-4b lock: workflow_engine unavailable: {eng}")
+    # a long `wait` keeps the node in `running` so the 0->1 attempt bump is observable
+    rid = _seed_run(session, {"nodes": [
+        {"key": "a", "type": "wait", "config": {"duration_sec": 3600}, "depends_on": []},
+    ]})
     assert _node(session, rid, "a").attempt == 0
     eng.step(session, rid)
     session.expire_all()
@@ -530,6 +542,77 @@ def test_b8_driver_autostart_false_path(env, monkeypatch):
     )
     assert _run_status(session, rid) == "pending"
     assert _step_until_done(session, rid) == "succeeded", "step must still drive the run"
+
+
+def test_b9_waiting_timeout_fails_not_hangs(env):
+    session, _ = env
+    eng = _try("app.services.workflow_engine")
+    if isinstance(eng, Exception):
+        pytest.fail(f"P3-4b lock: workflow_engine unavailable: {eng}")
+    rid = _seed_run(session, {"nodes": [
+        {"key": "cb", "type": "callback", "config": {"timeout_sec": 1}, "depends_on": []},
+    ]})
+    for _ in range(5):
+        session.expire_all()
+        if _node(session, rid, "cb").status == "waiting":
+            break
+        eng.step(session, rid)
+    assert _node(session, rid, "cb").status == "waiting", "callback node must block in `waiting`"
+    time.sleep(1.2)
+    status = _step_until_done(session, rid)
+    n = _node(session, rid, "cb")
+    session.refresh(n)
+    assert n.status == "failed", (
+        f"a waiting node past its timeout must fail (never hang forever); got {n.status}"
+    )
+    reason = ((n.output or {}).get("reason") or "") + (n.error or "")
+    assert "timeout" in reason.lower(), (
+        f"failure reason must record timeout; got output={n.output!r} error={n.error!r}"
+    )
+    assert status == "failed"
+
+
+def test_b10_callback_payload_cap_422(env):
+    session, set_flag = env
+    set_flag(True)
+    eng = _try("app.services.workflow_engine")
+    if isinstance(eng, Exception):
+        pytest.fail(f"P3-4b lock: workflow_engine unavailable: {eng}")
+    rid = _seed_run(session, {"nodes": [
+        {"key": "cb", "type": "callback", "config": {}, "depends_on": []},
+    ]})
+    for _ in range(5):
+        session.expire_all()
+        if _node(session, rid, "cb").status == "waiting":
+            break
+        eng.step(session, rid)
+    token = ((_node(session, rid, "cb").output or {}).get("callback") or {}).get("token")
+    assert token, "waiting callback node must expose a token"
+
+    from app.main import app  # noqa: PLC0415
+    from app.db.session import get_db  # noqa: PLC0415
+    from app.api.deps import CurrentUser, get_current_user  # noqa: PLC0415
+    from starlette.testclient import TestClient  # noqa: PLC0415
+
+    app.dependency_overrides[get_db] = lambda: (yield session)
+    app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+        user_id=1, username="qa", is_admin=True, permissions=[], visible_group_ids=[]
+    )
+    try:
+        client = TestClient(app)
+        r = client.post(
+            f"/api/v1/workflow-runs/{rid}/callback/cb",
+            headers={"X-Callback-Token": token},
+            json={"blob": "x" * 70000},
+        )
+        assert r.status_code == 422, (
+            f"payload > 65536 B must be 422 (no silent truncation); got {r.status_code}: {r.text[:200]}"
+        )
+        assert "callback_payload_too_large" in r.text, (
+            f"over-cap code must be `callback_payload_too_large`; got {r.text[:200]}"
+        )
+    finally:
+        app.dependency_overrides.clear()
 
 
 def _force_run_running(session, run_id: int) -> None:

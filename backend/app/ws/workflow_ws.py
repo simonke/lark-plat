@@ -1,11 +1,13 @@
 """P3-4b WebSocket gateway: workflow run realtime echo (/ws/workflow-runs/{run_id}).
 
-Frozen contract: @架构 P3-4b engine tuple **G** (seq2918) + @需求 §27.2 §27.7③.
+Frozen contract: @架构 tuple **G** as revised (seq2986) + @需求 §27.2 §27.7③.
 Token is a short-lived (5min) JWT bound to ``run_id`` (type=``ws``, IDOR guard,
 mirrors exec/transfer); auth failure closes 4401, unknown run closes 4404.
-S->C frames ``run``/``node`` carry a monotonic ``seq`` (reconnect de-dup);
-C->S only ``ping``. Broadcasts are **same-process** (engine host ①, the driver
-runs in the API process) — no Celery-worker cross-process hop.
+S->C frames are **notifications**, not state carriers: ``{type,data,seq}`` with a
+top-level per-run monotonic ``seq`` (reconnect de-dup); REST is authoritative.
+The engine emits ``run`` (progress) and ``pong`` (ping reply); ``node`` is
+**reserved** — clients ignore unknown types. C->S only ``ping``. Broadcasts are
+**same-process** (engine host ①, the driver runs in the API process).
 """
 
 from __future__ import annotations

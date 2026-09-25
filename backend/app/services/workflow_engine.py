@@ -224,14 +224,13 @@ def _create_exec_task(db, run, node, defnode) -> None:
         node.started_at = node.started_at or _now()
         node.status = "waiting"
     else:
-        # Host ① : dispatch in-process via the一期 celery task function (uses the
-        # build_executor seam; no broker hop). Non-fatal in degraded mode.
+        # Dispatch through the existing exec primitive (D4, @架构 seq2986):
+        # engine host ① forces the in-process branch so the driver never depends
+        # on a celery worker consuming the broker.
         try:
-            from app.tasks.exec_tasks import exec_dispatch
-
-            exec_dispatch(resolved["id"])
+            exec_service._kick_off_exec(db, resolved["id"], in_process=True)
         except Exception:  # noqa: BLE001
-            logger.warning("workflow exec_task %s in-process dispatch failed", resolved["id"])
+            logger.warning("workflow exec_task %s dispatch failed", resolved["id"])
 
 
 def _poll_exec_task(db, node) -> bool:

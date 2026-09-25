@@ -233,7 +233,7 @@ def create_task(db: Session, user, data: schemas.ExecTaskCreate) -> dict:
     return result
 
 
-def _kick_off_exec(db: Session, task_id: int) -> None:
+def _kick_off_exec(db: Session, task_id: int, *, in_process: bool = False) -> None:
     """Dispatch an exec task.
 
     Targets with a live agent in THIS process require in-process dispatch so the
@@ -241,8 +241,13 @@ def _kick_off_exec(db: Session, task_id: int) -> None:
     separate process with an empty agent registry). Otherwise fall back to the
     celery worker (mock/degraded loop), and to an in-process run when the broker
     is unavailable (existing degraded-mode intent).
+
+    ``in_process=True`` forces the in-process path (P3-4 engine host ①): the
+    workflow driver must not depend on a celery worker being up — a
+    reachable-but-unconsumed broker would enqueue the task and leave exec_task
+    nodes hanging (D2-class false-green).
     """
-    if task_has_inprocess_agent(db, task_id):
+    if in_process or task_has_inprocess_agent(db, task_id):
         exec_dispatch(task_id)
         return
     try:

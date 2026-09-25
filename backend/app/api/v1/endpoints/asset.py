@@ -175,7 +175,6 @@ def list_relations(
     page: Annotated[int, Query(ge=1)] = 1,
     size: Annotated[int, Query(ge=1, le=100)] = 20,
 ):
-    user.require_perm("asset:relation:list")
     return Result.ok(cmdb_service.list_relations(
         db, user,
         {"src_type": src_type, "src_id": src_id, "dst_type": dst_type,
@@ -186,13 +185,11 @@ def list_relations(
 
 @router.post("/relations", response_model=Result)
 def create_relation(db: DbDep, user: UserDep, data: sch.RelationCreate):
-    user.require_perm("asset:relation:add")
     return Result.ok(cmdb_service.create_relation(db, user, data))
 
 
 @router.delete("/relations/{relation_id}", response_model=Result)
 def delete_relation(db: DbDep, user: UserDep, relation_id: int):
-    user.require_perm("asset:relation:del")
     cmdb_service.delete_relation(db, user, relation_id)
     return Result.ok()
 
@@ -207,7 +204,6 @@ def cmdb_topology(
     depth: int = 2,
     rel_types: Annotated[list[str] | None, Query()] = None,
 ):
-    user.require_perm("asset:topo:view")
     return Result.ok(cmdb_service.topology(
         db, user, entity_type, entity_id, direction, depth, rel_types
     ))
@@ -223,7 +219,6 @@ def cmdb_impact(
     depth: int = 2,
     rel_types: Annotated[list[str] | None, Query()] = None,
 ):
-    user.require_perm("asset:topo:view")
     return Result.ok(cmdb_service.impact(
         db, user, entity_type, entity_id, direction, depth, rel_types
     ))

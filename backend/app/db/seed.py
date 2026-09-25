@@ -119,8 +119,10 @@ PERMISSION_TREE: list[tuple[str, str, str, str, str, list[tuple[str, str, str, s
         [
             ("release:add", "创建发布", "button", "", "Plus"),
             ("release:view", "查看发布", "button", "", "View"),
+            ("release:deploy", "开始部署", "button", "", "VideoPlay"),
             ("release:canary", "灰度放量", "button", "", "TrendCharts"),
             ("release:promote", "全量发布", "button", "", "Promotion"),
+            ("release:fail", "标记失败", "button", "", "CircleClose"),
             ("release:rollback", "回滚", "button", "", "RefreshLeft"),
             ("release:cancel", "取消发布", "button", "", "CircleClose"),
         ],

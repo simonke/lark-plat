@@ -161,6 +161,28 @@ def _apply_release_transition(r: Release, action: str) -> str:
     return target
 
 
+def fail_release_for_run(db: Session, run) -> bool:
+    """R1 seam (§架构 P3-6 tuple v1 B): a release-linked run failing drives its release.
+
+    Called from the §13 engine when a ``workflow_run`` reaches terminal ``failed``.
+    Only ``trigger_type == 'release'`` runs are considered (a non-release run must
+    never touch a release). CAS: the release is transitioned only while still in the
+    ``fail`` source set (``deploying|canary``); terminal / already-``failed`` is a
+    no-op. Non-release-linked runs and releases are left untouched.
+    """
+    if getattr(run, "trigger_type", None) != "release":
+        return False
+    r = db.scalar(select(Release).where(Release.workflow_run_id == run.id))
+    if r is None:
+        return False
+    allowed_from, target = RELEASE_TRANSITIONS["fail"]
+    if r.status not in allowed_from:
+        return False
+    r.status = target
+    _audit(db, None, "release.fail", r)
+    return True
+
+
 def _audit(db: Session, user, action: str, r: Release) -> None:
     """Explicit audit row for release state changes (§27.3 ⑧)."""
     from app.db.models.notify import AuditLog
@@ -368,6 +390,18 @@ def _trigger_release_run(db: Session, user, r: Release, action: str):
     return run
 
 
+def deploy_release(db: Session, user, release_id: int) -> dict:
+    """A② deploy entry: `pending -> deploying` (activates the reserved transition)."""
+    _require_feature(db)
+    user.require_perm("release:deploy")
+    r = _get_release(db, release_id)
+    _apply_release_transition(r, "deploy")
+    _audit(db, user, "release.deploy", r)
+    db.commit()
+    db.refresh(r)
+    return _release_out(r)
+
+
 def canary_release(db: Session, user, release_id: int) -> dict:
     _require_feature(db)
     user.require_perm("release:canary")
@@ -386,6 +420,18 @@ def promote_release(db: Session, user, release_id: int) -> dict:
     r = _get_release(db, release_id)
     _apply_release_transition(r, "promote")
     _audit(db, user, "release.promote", r)
+    db.commit()
+    db.refresh(r)
+    return _release_out(r)
+
+
+def fail_release(db: Session, user, release_id: int) -> dict:
+    """A② fail entry: `deploying|canary -> failed` (makes `failed` reachable)."""
+    _require_feature(db)
+    user.require_perm("release:fail")
+    r = _get_release(db, release_id)
+    _apply_release_transition(r, "fail")
+    _audit(db, user, "release.fail", r)
     db.commit()
     db.refresh(r)
     return _release_out(r)

@@ -150,6 +150,7 @@ def list_relations(
     size: int,
 ) -> dict:
     _require_feature(db)
+    user.require_perm("asset:relation:list")
     stmt = select(EntityRelation)
     for field in ("src_type", "src_id", "dst_type", "dst_id", "rel_type"):
         value = filters.get(field)
@@ -176,6 +177,7 @@ def list_relations(
 
 def create_relation(db: Session, user, data: sch.RelationCreate) -> dict:
     _require_feature(db)
+    user.require_perm("asset:relation:add")
     _validate_create(data)
     scope = _visible_scope(db, user)
     # US-03 write path: caller must see BOTH src AND dst, else 403.
@@ -215,6 +217,7 @@ def create_relation(db: Session, user, data: sch.RelationCreate) -> dict:
 
 def delete_relation(db: Session, user, relation_id: int) -> None:
     _require_feature(db)
+    user.require_perm("asset:relation:del")
     row = db.get(EntityRelation, relation_id)
     if row is None:
         raise NotFoundError("relation not found")
@@ -241,6 +244,7 @@ def topology(
     rel_types: list[str] | None,
 ) -> dict:
     _require_feature(db)
+    user.require_perm("asset:topo:view")
     direction = _check_direction(direction)
     depth = _clamp_depth(depth)
     scope = _visible_scope(db, user)
@@ -300,6 +304,7 @@ def impact(
     rel_types: list[str] | None,
 ) -> dict:
     _require_feature(db)
+    user.require_perm("asset:topo:view")
     direction = _check_direction(direction if direction is not None else "down")
     depth = _clamp_depth(depth)
     scope = _visible_scope(db, user)

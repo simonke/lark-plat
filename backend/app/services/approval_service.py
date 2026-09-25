@@ -77,6 +77,23 @@ def _require_pending(db: Session, approval_id: int, user) -> ApprovalRequest:
     return a
 
 
+# P3-6 ④: the domains an approval may bind. A `biz_type` outside this set must
+# NEVER fall through to a catch-all no-op (fail-open): it raises instead, so a
+# foreign `biz_id` can never be silently "linked" (§27.4 (a)).
+_KNOWN_BIZ_TYPES = frozenset({"exec", "terminal", "workflow"})
+
+
+def _assert_biz_type(a: ApprovalRequest) -> None:
+    """Fail-closed domain gate (§27.4 ④): unknown `biz_type` -> 404.
+
+    Runs *before* any mutation so an unknown/foreign approval leaves no half-commit.
+    `workflow`/`terminal`/`exec` are routed to their own linkage; only a truly
+    unknown `biz_type` raises.
+    """
+    if a.biz_type not in _KNOWN_BIZ_TYPES:
+        raise NotFoundError(f"unknown approval biz_type {a.biz_type!r}")
+
+
 def _approve_exec(db: Session, a: ApprovalRequest) -> None:
     """Approve -> exec_task approved -> running -> dispatch. Enforced at exec entry (cannot bypass)."""
     task_repo = ExecTaskRepository(db)
@@ -110,13 +127,17 @@ def _approve_linkages(db: Session, a: ApprovalRequest) -> None:
         return
     if a.biz_type == "workflow":
         return
-    _approve_exec(db, a)
+    if a.biz_type == "exec":
+        _approve_exec(db, a)
+        return
+    raise NotFoundError(f"approval biz_type {a.biz_type!r} has no approve linkage")
 
 
 def approve(db: Session, user, approval_id: int, comment: str) -> dict:
     user.require_perm("approval:approve")
     repo = ApprovalRepository(db)
     a = _require_pending(db, approval_id, user)
+    _assert_biz_type(a)
     if not repo.optimistic_update(a.id, "pending", "approved", a.version):
         raise ConflictError("approval modified concurrently, refresh and retry")
     a.version += 1
@@ -137,18 +158,20 @@ def reject(db: Session, user, approval_id: int, comment: str) -> dict:
     user.require_perm("approval:approve")
     repo = ApprovalRepository(db)
     a = _require_pending(db, approval_id, user)
+    _assert_biz_type(a)
     if not repo.optimistic_update(a.id, "pending", "rejected", a.version):
         raise ConflictError("approval modified concurrently, refresh and retry")
     a.version += 1
     a.approver_id = user.id
     a.decided_at = datetime.now(timezone.utc)
     db.add(ApprovalRecord(approval_id=a.id, action="reject", operator_id=user.id, comment=comment))
-    task_repo = ExecTaskRepository(db)
-    task = task_repo.get(a.biz_id)
-    if task and task.status == "awaiting_approval":
-        if task_repo.optimistic_update(task.id, "awaiting_approval", "canceled", task.version):
-            task.version += 1
-            task.finished_at = datetime.now(timezone.utc)
+    if a.biz_type == "exec":
+        task_repo = ExecTaskRepository(db)
+        task = task_repo.get(a.biz_id)
+        if task and task.status == "awaiting_approval":
+            if task_repo.optimistic_update(task.id, "awaiting_approval", "canceled", task.version):
+                task.version += 1
+                task.finished_at = datetime.now(timezone.utc)
     db.commit()
     return {"id": a.id, "status": "rejected"}
 
@@ -161,6 +184,8 @@ def _cancel_linkages(db: Session, a: ApprovalRequest) -> None:
 
         terminal_service.close_on_cancel(db, a)
         return
+    if a.biz_type != "exec":
+        return
     task_repo = ExecTaskRepository(db)
     task = task_repo.get(a.biz_id)
     if task and task.status == "awaiting_approval":
@@ -172,6 +197,7 @@ def _cancel_linkages(db: Session, a: ApprovalRequest) -> None:
 def cancel(db: Session, user, approval_id: int) -> dict:
     repo = ApprovalRepository(db)
     a = _require_pending(db, approval_id, user)
+    _assert_biz_type(a)
     if a.requester_id != user.id and not user.is_admin:
         raise ForbiddenError("only requester can cancel")
     if not repo.optimistic_update(a.id, "pending", "canceled", a.version):

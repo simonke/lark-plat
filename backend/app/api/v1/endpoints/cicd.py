@@ -102,6 +102,11 @@ def get_release(db: DbDep, user: UserDep, release_id: int):
     return Result.ok(cicd_service.get_release(db, user, release_id))
 
 
+@release_router.post("/{release_id}/deploy", response_model=Result)
+def deploy_release(db: DbDep, user: UserDep, release_id: int):
+    return Result.ok(cicd_service.deploy_release(db, user, release_id))
+
+
 @release_router.post("/{release_id}/canary", response_model=Result)
 def canary_release(db: DbDep, user: UserDep, release_id: int):
     return Result.ok(cicd_service.canary_release(db, user, release_id))
@@ -110,6 +115,11 @@ def canary_release(db: DbDep, user: UserDep, release_id: int):
 @release_router.post("/{release_id}/promote", response_model=Result)
 def promote_release(db: DbDep, user: UserDep, release_id: int):
     return Result.ok(cicd_service.promote_release(db, user, release_id))
+
+
+@release_router.post("/{release_id}/fail", response_model=Result)
+def fail_release(db: DbDep, user: UserDep, release_id: int):
+    return Result.ok(cicd_service.fail_release(db, user, release_id))
 
 
 @release_router.post("/{release_id}/rollback", response_model=Result)

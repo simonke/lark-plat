@@ -51,6 +51,13 @@ B15 `exec_task` sensitive command is gated (fail-closed, @架构 seq2957): a sen
     `command` -> REAL exec_task row with `sensitive_flag`/`approve_required`=1 +
     `awaiting_approval` + linked pending `exec` approval_request (never silently
     `running`); engine must not bypass the一期 exec sensitivity/approval linkage
+B16 `manual_approval` released via the REAL一期 `approval_service.approve()` (the
+    platform approval path, @代码reviewer seq2971): `_approve_linkages` routes any
+    non-`terminal` biz_type into `_approve_exec`, which `task_repo.get(biz_id)`
+    fails for `biz_type="workflow"` -> `NotFoundError` -> `approve()` rollback.
+    B13 decides the row directly and hides this; §27.2 needs the real path
+B17 `manual_approval` decided via the REAL一期 `approval_service.reject()`
+    (no crash; node failed + `on_failure`)
 
 WS close-code matrix (4401/4404) and frame `seq` monotonicity are asserted by live F
 (@集成), per tuple G — not reproducible on the offline TestClient without a running driver.
@@ -952,6 +959,75 @@ def test_b13_manual_approval_blocks_then_releases(env, monkeypatch):
     assert nodes2["ap"] == "failed", f"rejected node must be failed; got {nodes2}"
     assert nodes2["after-fail"] == "succeeded", f"`on_failure` branch must run; got {nodes2}"
     assert nodes2["after-ok"] == "skipped", f"success-path downstream must be skipped; got {nodes2}"
+
+
+# ── B16/B17: manual_approval release via the REAL一期 approval service ─────────
+# @代码reviewer seq2971: 一期 `approval_service._approve_linkages` routes any
+# non-`terminal` biz_type into `_approve_exec`, whose `task_repo.get(biz_id)`
+# returns None for `biz_type="workflow"` -> `NotFoundError` -> `approve()` rolls
+# back and re-raises. B13 decides the approval row directly, so it cannot catch
+# this. §27.2 requires the REAL platform approval path to release a workflow
+# node; the fix may be a `workflow` branch in approval_service (frozen-behaviour
+# change => @刘辉 scope) or a redesign — either way this observable must hold.
+
+def _approval_service_or_fail():
+    ap_svc = _try("app.services.approval_service")
+    if isinstance(ap_svc, Exception):
+        pytest.fail(f"P3-4b lock: approval_service unavailable: {ap_svc}")
+    return ap_svc
+
+
+def test_b16_manual_approval_approved_via_approval_service(env, monkeypatch):
+    session, _ = env
+    eng = _try("app.services.workflow_engine")
+    if isinstance(eng, Exception):
+        pytest.fail(f"P3-4b lock: workflow_engine unavailable: {eng}")
+    ap_svc = _approval_service_or_fail()
+    rid = _seed_run(session, _approval_definition())
+    node = _step_until_node_waiting(session, eng, rid, "ap")
+    assert node is not None and node.status == "waiting" and node.approval_id, (
+        f"manual_approval must reach `waiting` with an approval_id; got {node and node.status!r}"
+    )
+    try:
+        ap_svc.approve(session, _U(), node.approval_id, "ok")
+    except Exception as exc:  # noqa: BLE001
+        pytest.fail(
+            "一期 approval_service.approve() must release a workflow manual_approval; "
+            f"raised {type(exc).__name__}: {exc} (biz_type routing drops 'workflow' "
+            "into _approve_exec -> NotFoundError -> rollback)"
+        )
+    assert _step_until_done(session, rid) == "succeeded", (
+        "approving via the platform approval service must resume the run"
+    )
+    nodes = _nodes(session, rid)
+    assert nodes["ap"] == "succeeded" and nodes["after-ok"] == "succeeded", (
+        f"approved workflow node must continue; got {nodes}"
+    )
+
+
+def test_b17_manual_approval_rejected_via_approval_service(env, monkeypatch):
+    session, _ = env
+    eng = _try("app.services.workflow_engine")
+    if isinstance(eng, Exception):
+        pytest.fail(f"P3-4b lock: workflow_engine unavailable: {eng}")
+    ap_svc = _approval_service_or_fail()
+    rid = _seed_run(session, _approval_definition(on_failure=["after-fail"]))
+    node = _step_until_node_waiting(session, eng, rid, "ap")
+    assert node is not None and node.status == "waiting" and node.approval_id, (
+        f"manual_approval must reach `waiting` with an approval_id; got {node and node.status!r}"
+    )
+    try:
+        ap_svc.reject(session, _U(), node.approval_id, "no")
+    except Exception as exc:  # noqa: BLE001
+        pytest.fail(
+            "一期 approval_service.reject() must decide a workflow manual_approval; "
+            f"raised {type(exc).__name__}: {exc}"
+        )
+    assert _step_until_done(session, rid) == "failed", "rejection must fail the run"
+    nodes = _nodes(session, rid)
+    assert nodes["ap"] == "failed" and nodes["after-fail"] == "succeeded", (
+        f"rejected workflow node must take `on_failure`; got {nodes}"
+    )
 
 
 def test_b14_cancel_propagates_to_running_exec_task(env, monkeypatch):

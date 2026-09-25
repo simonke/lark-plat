@@ -603,3 +603,127 @@ def test_b4_depth_execution_limits_layers(monkeypatch):
     assert d3 == {2, 3, 4}, f"depth=3 must reach layers 1..3; got {d3}"
     assert 5 not in d3, "depth=3 must NOT include the depth+1 (layer 4) member"
     assert d1 <= d2 <= d3, f"candidate set must grow monotonically with depth; {d1} {d2} {d3}"
+
+
+# ── E4 aggregate window key + max severity (@架构 3348 / @需求 3350 / tuple §五.1) ─
+#
+# Frozen window = `(entity_type, entity_id, rule)`, `rule` = `rule_id` -> `rule_name`
+# -> `""`. `max_severity` = TRUE max over `MON_LEVELS = (info, warning, critical)`
+# (None == lowest), NOT first-non-null. Service-level (no DB round-trip): `aggregate`
+# is a pure read-time bucketer over `MonAlert` rows.
+
+class _AggScalars:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+
+class _AggDB:
+    """Fake session: `db.scalars(...).all()` returns the canned alert rows as-is."""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def scalars(self, stmt, *a, **k):
+        return _AggScalars(self._rows)
+
+
+class _AggUser:
+    def require_perm(self, *_a, **_k):  # noqa: ANN002,ANN003
+        return None
+
+
+class _AggAlert:
+    def __init__(self, id, entity_type, entity_id, rule_id, severity, status="firing",
+                 rule_name=None):
+        self.id = id
+        self.entity = {"entity_type": entity_type, "entity_id": entity_id}
+        self.rule_id = rule_id
+        self.rule_name = rule_name if rule_name is not None else ""
+        self.severity = severity
+        self.status = status
+
+
+def _run_aggregate(monkeypatch, alerts):
+    rca = _try("app.services.rca_service")
+    if isinstance(rca, Exception):
+        pytest.fail(f"P5 lock: app.services.rca_service unavailable: {rca}")
+    from app.services import monitor_service  # noqa: PLC0415
+
+    monkeypatch.setattr(rca, "require_feature", lambda db, flag: None)
+    monkeypatch.setattr(monitor_service, "_visible_entity_ids", lambda db, user: None)
+    return rca.aggregate(_AggDB(alerts), _AggUser(), {}, 1, 100)
+
+
+def test_b5_aggregate_window_key_is_type_entity_rule(monkeypatch):
+    """E4 window == frozen `(entity_type, entity_id, rule)` (@需求 seq3350 §一).
+
+    Rows differing in ANY window component must NOT collapse into one bucket:
+      * same entity + same type, DIFFERENT rule  => 2 buckets
+      * same entity + same rule, DIFFERENT type  => 2 buckets
+    Kills the "bucket by `entity_id` alone" defect (@架构 seq3348).
+    """
+    alerts = [
+        _AggAlert(1, "host", "h1", 10, "warning"),
+        _AggAlert(2, "host", "h1", 11, "warning"),  # same type+entity, DIFF rule
+        _AggAlert(3, "app", "h1", 10, "warning"),   # same entity+rule, DIFF type
+    ]
+    out = _run_aggregate(monkeypatch, alerts)
+    rows = out["list"]
+    assert len(rows) == 3, (
+        "E4 window must be (entity_type, entity_id, rule): 3 distinct triples => 3 buckets, "
+        f"not merged by entity_id alone; got {len(rows)} bucket(s)"
+    )
+    assert sorted(r["count"] for r in rows) == [1, 1, 1], (
+        f"each distinct window triple must hold exactly its own alert; got {[r['count'] for r in rows]}"
+    )
+    triples = sorted((r.get("entity_type"), r.get("entity_id"), r.get("rule")) for r in rows)
+    assert triples == sorted([("host", "h1", "10"), ("host", "h1", "11"), ("app", "h1", "10")]), (
+        "each bucket must echo the full window key (entity_type, entity_id, rule); "
+        f"got {triples}"
+    )
+
+
+def test_b6_aggregate_count_and_true_max_severity(monkeypatch):
+    """Same window triple: N events => 1 bucket `count=N`; `max_severity` = TRUE max over
+    `MON_LEVELS=(info, warning, critical)` (@需求 seq3350 §二); repeated call is stable."""
+    alerts = [
+        _AggAlert(1, "host", "h1", 10, "warning"),
+        _AggAlert(2, "host", "h1", 10, "critical"),  # same window triple
+        _AggAlert(3, "host", "h1", 10, "info"),
+    ]
+    out = _run_aggregate(monkeypatch, alerts)
+    rows = out["list"]
+    assert len(rows) == 1, f"one window triple => one bucket; got {len(rows)}"
+    bucket = rows[0]
+    assert bucket["count"] == 3, f"bucket must count all 3 alerts; got {bucket['count']}"
+    assert bucket["max_severity"] == "critical", (
+        "max_severity must be the true max over (info, warning, critical); got "
+        f"{bucket['max_severity']!r} — first-non-null yields 'warning'"
+    )
+    out2 = _run_aggregate(monkeypatch, alerts)
+    assert out2["list"] == rows, "aggregate must be stable/idempotent across repeated calls"
+
+
+def test_b7_aggregate_rule_fallback_and_none_severity(monkeypatch):
+    """`rule` value = `rule_id` -> `rule_name` -> `""` (@需求 seq3350 §一); all-None
+    severities => `max_severity is None` (unknown == lowest, §二)."""
+    out = _run_aggregate(monkeypatch, [
+        _AggAlert(1, "host", "h1", 5, "warning", rule_name="ignored"),
+        _AggAlert(2, "host", "h1", None, "warning", rule_name="named"),
+        _AggAlert(3, "host", "h1", None, "warning", rule_name=""),
+    ])
+    rules = sorted(r.get("rule") for r in out["list"])
+    assert rules == ["", "5", "named"], (
+        f"rule fallback must be rule_id > rule_name > ''; got {rules}"
+    )
+    out2 = _run_aggregate(monkeypatch, [
+        _AggAlert(4, "host", "h1", 5, None),
+        _AggAlert(5, "host", "h1", 5, None),
+    ])
+    assert len(out2["list"]) == 1, f"same window triple => 1 bucket; got {len(out2['list'])}"
+    assert out2["list"][0]["max_severity"] is None, (
+        f"all-None severities => max_severity None; got {out2['list'][0]['max_severity']!r}"
+    )

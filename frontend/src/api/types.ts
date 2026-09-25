@@ -1653,4 +1653,126 @@ export interface ReleaseQuery {
   size?: number
 }
 
+// ---------------------------------------------------------------- ai / ops-event (P4, tuple v1 / @架构 seq3203·3207·3212)
+// Shapes @ backend/app/services/ai_service.py (ff0fc80). entity_id is a str (v1.2 勘误).
+export type OpsEventSource = 'monitor' | 'exec' | 'audit' | 'ticket' | 'kb'
+
+export interface OpsEvent {
+  id: number
+  ts: string | null
+  entity_type: string
+  entity_id: string
+  action: string
+  result: string | null
+  source: string
+  refs: Record<string, unknown> | null
+  trace_id: string | null
+  created_at: string | null
+}
+
+export interface OpsEventQuery {
+  source?: string
+  entity_type?: string
+  trace_id?: string
+  page?: number
+  size?: number
+}
+
+export type AiActionDecision = 'adopted' | 'rejected' | 'auto'
+
+export interface AiAction {
+  id: number
+  model_name: string
+  model_version: string | null
+  input_snapshot: Record<string, unknown> | null
+  confidence: number | null
+  basis_refs: unknown[] | null
+  trace_id: string | null
+  actor: number | null
+  decision: AiActionDecision
+  created_at: string | null
+}
+
+export interface AiActionQuery {
+  decision?: AiActionDecision
+  trace_id?: string
+  page?: number
+  size?: number
+}
+
+export interface TicketSuggestion {
+  ticket_id: number
+  suggestion: string
+  model_name: string
+  trace_id: string
+  authoritative: boolean
+}
+
+export interface SimilarTicket {
+  id: number
+  ticket_no: string
+  title: string
+  status: string
+}
+
+export interface TicketSimilarResult {
+  ticket_id: number
+  list: SimilarTicket[]
+  total: number
+}
+
+export type SemanticMode = 'vector' | 'fts' | 'hybrid'
+
+export interface SemanticSearchIn {
+  q: string
+  mode?: SemanticMode
+  limit?: number
+  entity_type?: string
+}
+
+export interface SemanticHit {
+  doc_ref: string
+  chunk_ref: string
+  score: number
+  branch: string
+  title?: string
+}
+
+export interface SemanticSearchResult {
+  list: SemanticHit[]
+  total: number
+  mode: string
+  fail_closed?: boolean
+}
+
+export interface KbCitation {
+  doc_ref: string
+  chunk_ref: string
+  score: number
+}
+
+export interface KbAnswerIn {
+  q: string
+  limit?: number
+  entity_type?: string
+}
+
+export interface KbAnswerResult {
+  answer: string
+  citations: KbCitation[]
+  model_name?: string
+  authoritative: boolean
+  fail_closed?: boolean
+}
+
+export interface AiFeedbackIn {
+  trace_id?: string | null
+  decision?: AiActionDecision
+  model_name?: string | null
+  model_version?: string | null
+  confidence?: number | null
+  input_snapshot?: Record<string, unknown> | null
+  basis_refs?: unknown[] | null
+}
+
 

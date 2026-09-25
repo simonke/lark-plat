@@ -345,6 +345,17 @@ PERMISSION_TREE: list[tuple[str, str, str, str, str, list[tuple[str, str, str, s
             ("kb:search", "知识检索", "button", "", "Search"),
         ],
     ),
+    (
+        "ai",
+        "智能（AI）",
+        "menu",
+        "/ai",
+        "MagicStick",
+        [
+            ("ai:use", "使用 AI", "button", "", "MagicStick"),
+            ("ai:admin", "AI 治理", "button", "", "Setting"),
+        ],
+    ),
 ]
 
 # role code -> permission codes
@@ -588,6 +599,13 @@ DEFAULT_CONFIG_RULES: dict[str, dict] = {
     "feature.cmdb_topology": {"value": False},
     "feature.workflow": {"value": False},
     "feature.cicd": {"value": False},
+    # P4 (AIOps) feature flags (never overwrite existing; default off).
+    "ai.enabled": {"value": False},
+    "ai.events": {"value": False},
+    "ai.ticket_assist": {"value": False},
+    "ai.kb_assist": {"value": False},
+    # P4 embedding-store selection (enum, not a boolean flag; default pg_array).
+    "ai.embedding_store": {"value": "pg_array"},
 }
 
 _CONFIG_RULE_REMARKS: dict[str, str] = {
@@ -601,6 +619,11 @@ _CONFIG_RULE_REMARKS: dict[str, str] = {
     "feature.cmdb_topology": "P3-3 CMDB 深化（关系/拓扑/影响分析）默认关闭",
     "feature.workflow": "P3-4 编排 Playbook 默认关闭",
     "feature.cicd": "P3-5 CI/CD 集成（发布编排段）默认关闭",
+    "ai.enabled": "P4 AI 能力总闸默认关闭",
+    "ai.events": "P4 统一运维事件默认关闭",
+    "ai.ticket_assist": "P4 工单助手默认关闭",
+    "ai.kb_assist": "P4 KB-RAG 助手默认关闭",
+    "ai.embedding_store": "P4 向量存储后端（pg_array|in_memory）",
 }
 
 

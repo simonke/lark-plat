@@ -40,6 +40,41 @@
           <el-descriptions-item label="描述" :span="3">{{ ticket.description || '-' }}</el-descriptions-item>
         </el-descriptions>
 
+        <el-divider content-position="left">AI 建议</el-divider>
+        <div class="ai-suggest">
+          <el-button v-perm="'ai:use'" type="primary" size="small" :loading="suggesting" @click="onSuggest">
+            生成建议
+          </el-button>
+          <el-button v-perm="'ai:use'" size="small" :loading="similarLoading" @click="onSimilar">
+            相似工单
+          </el-button>
+        </div>
+        <EvidenceCard
+          v-if="suggestion"
+          class="suggestion-card"
+          title="AI 工单建议"
+          :model-name="suggestion.model_name"
+          :authoritative="suggestion.authoritative"
+          :hitl="true"
+        >
+          <div class="suggestion">{{ suggestion.suggestion }}</div>
+          <div class="suggestion-actions">
+            <el-button v-perm="'ai:use'" size="small" type="success" :loading="deciding" @click="decide('adopted')">采纳</el-button>
+            <el-button v-perm="'ai:use'" size="small" type="danger" :loading="deciding" @click="decide('rejected')">否决</el-button>
+            <el-radio-group v-model="useful" size="small">
+              <el-radio :value="true">有用</el-radio>
+              <el-radio :value="false">无用</el-radio>
+            </el-radio-group>
+            <el-input v-model="feedbackNote" size="small" placeholder="备注" style="width: 160px" />
+            <el-button v-perm="'ai:use'" size="small" :loading="deciding" @click="sendFeedback">提交反馈</el-button>
+          </div>
+        </EvidenceCard>
+        <el-table v-if="similar.length" :data="similar" size="small" border class="similar">
+          <el-table-column prop="ticket_no" label="工单号" width="140" />
+          <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip />
+          <el-table-column prop="status" label="状态" width="100" />
+        </el-table>
+
         <el-divider content-position="left">关联对象</el-divider>
         <div class="refs">
           <el-tag v-for="r in ticket.refs" :key="r.id" class="ref-tag" closable @close="noop">
@@ -185,8 +220,10 @@ import {
 } from '../../api/ticket'
 import { listUsers } from '../../api/system'
 import { useAuthStore } from '../../stores/auth'
-import type { TicketDetail, TicketUpdate, UserOut } from '../../api/types'
+import type { TicketDetail, TicketUpdate, UserOut, TicketSuggestion, SimilarTicket } from '../../api/types'
 import { extractError } from '../../api/http'
+import { ticketSuggest, ticketSimilar, aiFeedback } from '../../api/ai'
+import EvidenceCard from '../ai/EvidenceCard.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -452,6 +489,77 @@ async function loadUsers() {
   }
 }
 
+// ---- AI 建议 (E2) + 反馈 (E8) — write path stays read-only; no approval bypass
+const suggesting = ref(false)
+const similarLoading = ref(false)
+const deciding = ref(false)
+const suggestion = ref<TicketSuggestion | null>(null)
+const similar = ref<SimilarTicket[]>([])
+const useful = ref<boolean | null>(null)
+const feedbackNote = ref('')
+
+async function onSuggest() {
+  suggesting.value = true
+  try {
+    suggestion.value = await ticketSuggest(ticketId)
+  } catch (e) {
+    ElMessage.warning(extractError(e))
+  } finally {
+    suggesting.value = false
+  }
+}
+
+async function onSimilar() {
+  similarLoading.value = true
+  try {
+    const res = await ticketSimilar(ticketId)
+    similar.value = res.list
+  } catch (e) {
+    similar.value = []
+    ElMessage.warning(extractError(e))
+  } finally {
+    similarLoading.value = false
+  }
+}
+
+async function decide(decision: 'adopted' | 'rejected') {
+  if (!suggestion.value) return
+  deciding.value = true
+  try {
+    await aiFeedback({
+      trace_id: suggestion.value.trace_id,
+      decision,
+      model_name: suggestion.value.model_name,
+      basis_refs: [`ticket:${ticketId}`],
+    })
+    ElMessage.success(decision === 'adopted' ? '已采纳' : '已否决')
+  } catch (e) {
+    ElMessage.error(extractError(e))
+  } finally {
+    deciding.value = false
+  }
+}
+
+async function sendFeedback() {
+  if (!suggestion.value) return
+  deciding.value = true
+  try {
+    await aiFeedback({
+      trace_id: suggestion.value.trace_id,
+      decision: 'auto',
+      model_name: suggestion.value.model_name,
+      input_snapshot: { useful: useful.value, note: feedbackNote.value },
+      basis_refs: [`ticket:${ticketId}`],
+    })
+    ElMessage.success('反馈已记录')
+    feedbackNote.value = ''
+  } catch (e) {
+    ElMessage.error(extractError(e))
+  } finally {
+    deciding.value = false
+  }
+}
+
 onMounted(() => {
   load()
   loadUsers()
@@ -488,5 +596,26 @@ onMounted(() => {
   gap: 8px;
   align-items: flex-start;
   margin-top: 8px;
+}
+.ai-suggest {
+  display: flex;
+  gap: 8px;
+}
+.suggestion-card {
+  margin-top: 10px;
+}
+.suggestion {
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
+.suggestion-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.similar {
+  margin-top: 10px;
 }
 </style>

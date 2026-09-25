@@ -130,16 +130,18 @@ def test_p1b_operation_code_binding_1to1_no_release_run():
 
 
 def test_p1c_seed_menu_button_counts():
-    """P3-6 ② counting lock (@架构 seq3147): +2 release buttons; menus unchanged (26)."""
+    """P3-6 ② counting lock (@架构 seq3147), advanced by P4 tuple v1 (seq3203):
+    P3-6 => 26 menus / 110 buttons; P4 adds top menu `ai` + shared `ai:use`/`ai:admin`.
+    """
     seed = _try("app.db.seed")
     if isinstance(seed, Exception):
         pytest.fail(f"P3-6 lock: app.db.seed unavailable: {seed}")
     tree = getattr(seed, "PERMISSION_TREE", [])
     menus = [node[0] for node in tree]
     buttons = [child[0] for node in tree for child in node[5]]
-    assert len(menus) == 26, f"menus must stay 26 (no new menu); got {len(menus)}"
-    assert len(buttons) == 110, (
-        f"buttons must be 110 (108 + release:deploy/fail); got {len(buttons)}"
+    assert len(menus) == 27, f"menus must be 27 (26 + P4 `ai`); got {len(menus)}"
+    assert len(buttons) == 112, (
+        f"buttons must be 112 (110 + P4 ai:use/ai:admin); got {len(buttons)}"
     )
 
 
@@ -193,15 +195,16 @@ def test_a1_p3_5_paths_present_with_methods():
     assert not problems, "P3-5 openapi surface incomplete: " + "; ".join(problems)
 
 
-def test_a2_paths_count_156():
+def test_a2_paths_count_at_least_156():
     paths = _openapi_paths()
-    # Base == M6 (`a0131456`), P3-4 收口 == 144, P3-5 == 154, P3-6 收尾批 == 156
-    # (@架构 P3-6 tuple v1: +/releases/{id}/deploy·/fail). EXACT equality (NOT
-    # `>=`): a future accidental 157 must still fail.
-    assert len(paths) == 156, (
-        f"P3-6 paths must be exactly 156 (P3-5 154 + 2 deploy/fail URL keys); got {len(paths)}. "
-        "OpenAPI `paths` is URL-keyed; the 2 new keys are /releases/{id}/deploy and "
-        "/releases/{id}/fail."
+    # P3-6 收尾批 anchored EXACTLY 156 (@架构 P3-6 tuple v1). P4 (AIOps) is
+    # add-only on top; the P3-5/P3-6 floor is now a MONOTONIC no-shrink check
+    # (>=156) with the exact count pinned at the newest batch lock
+    # (test_p4_aiops_lock::test_a2_paths_count_164 + test_contract_openapi==164).
+    # Must NOT shrink below 156.
+    assert len(paths) >= 156, (
+        f"paths must be >= 156 (P3-6 floor: P3-5 154 + 2 deploy/fail URL keys); got {len(paths)}. "
+        "OpenAPI `paths` is URL-keyed."
     )
     # layer ④ (@架构 seq3057): no-shrink against the FROZEN M6 baseline key set — a
     # net-zero substitution (drop 1 old key, add 1 extra new key, still ==154) would
@@ -278,6 +281,8 @@ def test_f1_feature_cicd_default_false():
 _VERSIONS_DIR = __import__("pathlib").Path(__file__).resolve().parents[1] / "alembic" / "versions"
 _P34_HEAD = "a1b2c3d4e5f7"
 _P35_REV = "b2c3d4e5f6a8"
+# P4 (AIOps, @架构 tuple v1 seq3203): add-only rev on top of the P3-5 head.
+_P4_REV = "e9d8c7b6a5f4"
 # 形近陷阱: `b2c3d4e5f6a7` is the EXISTING P2-1 transfer-table rev (docs §14.3) — must NOT be reused.
 _P21_TRANSFER_REV = "b2c3d4e5f6a7"
 
@@ -302,11 +307,17 @@ def test_g1_migration_single_head_descends_from_p34():
     heads = sorted(r for r in revs if r not in downs)
     assert len(heads) == 1, f"migration must keep a single head; got {heads}"
     head = heads[0]
-    assert head == _P35_REV, (
-        f"P3-5 head must be the suggested rev `{_P35_REV}`; got {head}"
+    # P4 (@架构 tuple v1 seq3203) advances the single head to the AIOps rev; the
+    # P3-5 head-only assertion is superseded, but the P3-5 → P3-4 ancestry is kept.
+    assert head == _P4_REV, (
+        f"P4 head must be the suggested rev `{_P4_REV}`; got {head}"
     )
-    assert revs[head] == _P34_HEAD, (
-        f"P3-5 head must descend directly from P3-4 rev {_P34_HEAD}; got parent {revs[head]!r}"
+    assert revs[head] == _P35_REV, (
+        f"P4 head must descend directly from P3-5 rev {_P35_REV}; got parent {revs[head]!r}"
+    )
+    assert revs.get(_P35_REV) == _P34_HEAD, (
+        f"P3-5 rev must descend directly from P3-4 rev {_P34_HEAD}; "
+        f"got parent {revs.get(_P35_REV)!r}"
     )
 
 

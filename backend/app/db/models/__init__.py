@@ -82,6 +82,15 @@ from app.db.models.kb import (
     KbArticleVersion,
     KbCategory,
 )
+from app.db.models.ops_event import OPS_EVENT_SOURCES, OpsEvent
+from app.db.models.ai import (
+    AI_ACTION_DECISIONS,
+    AI_EVAL_CASE_KINDS,
+    AiAction,
+    AiEvalCase,
+    AiEvalRun,
+    KbEmbedding,
+)
 
 __all__ = [
     "User",
@@ -171,4 +180,12 @@ __all__ = [
     "KbCategory",
     "KbArticleTag",
     "KB_VISIBILITIES",
+    "OpsEvent",
+    "OPS_EVENT_SOURCES",
+    "KbEmbedding",
+    "AiAction",
+    "AiEvalCase",
+    "AiEvalRun",
+    "AI_ACTION_DECISIONS",
+    "AI_EVAL_CASE_KINDS",
 ]

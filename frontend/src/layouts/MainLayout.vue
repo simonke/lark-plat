@@ -75,6 +75,15 @@
           <el-menu-item index="/monitor/rules" v-if="auth.hasPerm('monitor:rule:list')">告警规则</el-menu-item>
           <el-menu-item index="/monitor/adapters" v-if="auth.hasPerm('monitor:rule:list')">采集适配器</el-menu-item>
         </el-sub-menu>
+        <el-sub-menu index="ai" v-if="auth.hasPerm('ai:use')">
+          <template #title>
+            <el-icon><MagicStick /></el-icon>
+            <span>智能（AI）</span>
+          </template>
+          <el-menu-item index="/ops/incidents" v-if="auth.hasPerm('ai:use')">运维事件</el-menu-item>
+          <el-menu-item index="/ai/kb" v-if="auth.hasPerm('ai:use')">知识助手</el-menu-item>
+          <el-menu-item index="/ai/actions" v-if="auth.hasPerm('ai:admin')">AI 审计</el-menu-item>
+        </el-sub-menu>
       </el-menu>
     </el-aside>
     <el-container>
@@ -122,7 +131,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { DataBoard, Setting, ArrowDown, Monitor, Promotion, Finished, DataLine, Share, Upload } from '@element-plus/icons-vue'
+import { DataBoard, Setting, ArrowDown, Monitor, Promotion, Finished, DataLine, Share, Upload, MagicStick } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 import { changePassword } from '../api/auth'
 import { extractError } from '../api/http'

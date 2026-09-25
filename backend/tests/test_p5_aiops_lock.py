@@ -764,3 +764,156 @@ def test_g4_rca_severity_rank_single_source():
         "E4 severity rank must use the single source `MON_LEVELS` "
         "(backend/app/db/models/monitor.py:26), not a re-declared order"
     )
+
+
+# ── E5 kind round-B RED (k1–k5, @架构 3362 §四 / @集成 3365) ──────────────────
+#
+# E5 reuses the SAME workflow engine: `kind` discriminates workflow vs playbook. The
+# discriminator must be LIVE + round-trippable: `WorkflowCreate.kind` (default None ->
+# `'workflow'`), validated against the `WORKFLOW_KINDS` symbol; `create_workflow`
+# persists it; `_workflow_out` echoes it (single point => create/get/list/...).
+
+_WF_PERMS = ("workflow:add", "workflow:list", "workflow:view", "workflow:edit")
+
+
+@pytest.fixture()
+def p5_wf_client(tmp_path):
+    from app.db.base import Base  # noqa: PLC0415
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'p5wf.db'}", future=True)
+    Base.metadata.create_all(engine, tables=_mk_tables())
+    maker = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, future=True)
+    session = maker()
+    prev_bind = getattr(_dbs.SessionLocal, "kw", {}).get("bind")
+    _dbs.SessionLocal.configure(bind=engine)
+
+    import app.main as main  # noqa: PLC0415
+    from app.api.deps import CurrentUser, get_current_user  # noqa: PLC0415
+    from app.db.session import get_db  # noqa: PLC0415
+    from starlette.testclient import TestClient  # noqa: PLC0415
+
+    main.app.dependency_overrides[get_db] = lambda: (yield session)
+
+    def set_user(perms):
+        user = CurrentUser(
+            user_id=1, username="qa", is_admin=True,
+            permissions=list(perms), visible_group_ids=[],
+        )
+        main.app.dependency_overrides[get_current_user] = lambda: user
+        return user
+
+    def set_flag(key: str, on: bool):
+        from app.db.models.notify import ConfigRule  # noqa: PLC0415
+
+        row = session.query(ConfigRule).filter_by(rule_key=key).one_or_none()
+        if row is None:
+            session.add(ConfigRule(rule_key=key, rule_value={"value": on}))
+        else:
+            row.rule_value = {"value": on}
+        session.commit()
+
+    try:
+        yield TestClient(main.app), session, set_user, set_flag
+    finally:
+        main.app.dependency_overrides.clear()
+        session.close()
+        if prev_bind is not None:
+            _dbs.SessionLocal.configure(bind=prev_bind)
+        engine.dispose()
+
+
+def _wf_create(client, name, kind=None, nodes=None):
+    body = {"name": name, "definition": {"nodes": nodes or []}}
+    if kind is not None:
+        body["kind"] = kind
+    return client.post("/api/v1/workflows", json=body)
+
+
+def test_k1_create_playbook_kind_persisted_and_echoed(p5_wf_client):
+    """k1(+k1b): `create(kind='playbook')` must PERSIST `playbook` to the DB and `GET`
+    must echo `kind` (discriminator live + round-trippable)."""
+    client, session, set_user, set_flag = p5_wf_client
+    set_flag("feature.workflow", True)
+    set_user(_WF_PERMS)
+    r = _wf_create(client, "pb-k1", kind="playbook")
+    assert r.status_code == 200, f"create failed: {r.status_code} {r.text}"
+    wid = r.json()["data"]["id"]
+    from app.db.models.workflow import Workflow  # noqa: PLC0415
+
+    session.expire_all()
+    row = session.get(Workflow, wid)
+    assert row.kind == "playbook", (
+        f"E5 kind must persist to the DB; got {row.kind!r} — `kind` silently dropped"
+    )
+    g = client.get(f"/api/v1/workflows/{wid}")
+    assert g.status_code == 200, g.text
+    assert g.json()["data"].get("kind") == "playbook", (
+        f"GET must echo `kind`; got {g.json()['data'].get('kind')!r}"
+    )
+
+
+def test_k2_default_kind_is_workflow(p5_wf_client):
+    """k2 (invariant): create WITHOUT kind => `workflow` (server default)."""
+    client, session, set_user, set_flag = p5_wf_client
+    set_flag("feature.workflow", True)
+    set_user(_WF_PERMS)
+    r = _wf_create(client, "wf-k2")
+    assert r.status_code == 200, r.text
+    wid = r.json()["data"]["id"]
+    from app.db.models.workflow import Workflow  # noqa: PLC0415
+
+    session.expire_all()
+    assert session.get(Workflow, wid).kind == "workflow"
+
+
+def test_k3_invalid_kind_is_422(p5_wf_client):
+    """k3: invalid `kind` must be rejected with **422** by a REAL validator (not the
+    "ignore extra field" default that would silently keep 200)."""
+    client, _session, set_user, set_flag = p5_wf_client
+    set_flag("feature.workflow", True)
+    set_user(_WF_PERMS)
+    r = _wf_create(client, "wf-k3", kind="nonsense")
+    assert r.status_code == 422, (
+        "invalid kind must be 422 (real validator/Literal, not 'ignore extra field'); "
+        f"got {r.status_code} {r.text}"
+    )
+
+
+def test_k4_list_echoes_kind(p5_wf_client):
+    """k4: `_workflow_out` single point => list rows echo `kind`."""
+    client, _session, set_user, set_flag = p5_wf_client
+    set_flag("feature.workflow", True)
+    set_user(_WF_PERMS)
+    _wf_create(client, "l-k4", kind="playbook")
+    r = client.get("/api/v1/workflows", params={"size": 10})
+    assert r.status_code == 200, r.text
+    items = r.json()["data"]["list"]
+    assert items, "list must return the created workflow"
+    assert all("kind" in it for it in items), (
+        f"list rows must echo `kind`; got keys {sorted(items[0].keys())}"
+    )
+
+
+def test_k5_kind_symbol_pin():
+    """k5: discriminator vocabulary single source = `WORKFLOW_KINDS` (import, not inline
+    literal); `WorkflowCreate` exposes `kind`; `_workflow_out` echoes it."""
+    from app.db.models.workflow import WORKFLOW_KINDS  # noqa: PLC0415
+
+    assert set(WORKFLOW_KINDS) == {"workflow", "playbook"}, (
+        f"WORKFLOW_KINDS must be ('workflow','playbook'); got {WORKFLOW_KINDS}"
+    )
+    sch = _try("app.schemas.workflow")
+    if isinstance(sch, Exception):
+        pytest.fail(f"P5 lock: app.schemas.workflow unavailable: {sch}")
+    assert "kind" in getattr(sch.WorkflowCreate, "model_fields", {}), (
+        "WorkflowCreate must expose a `kind` field (E5 discriminator)"
+    )
+    assert "WORKFLOW_KINDS" in inspect.getsource(sch), (
+        "WorkflowCreate.kind must validate against the `WORKFLOW_KINDS` symbol, not an inline literal"
+    )
+    wf = _try("app.services.workflow_service")
+    if isinstance(wf, Exception):
+        pytest.fail(f"P5 lock: app.services.workflow_service unavailable: {wf}")
+    assert re.search(r'"kind"\s*:', inspect.getsource(wf._workflow_out)), (
+        "`_workflow_out` must echo `kind` (single point covers create/get/list/...)"
+    )

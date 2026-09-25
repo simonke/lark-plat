@@ -150,15 +150,15 @@ def test_a1_p3_4_paths_present_with_methods():
     assert not problems, "P3-4 openapi surface incomplete: " + "; ".join(problems)
 
 
-def test_a2_paths_count_142():
+def test_a2_paths_count_144():
     paths = _openapi_paths()
-    # Relaxed to monotonic (P3-4b adds ws-token + callback => 144). The exact
-    # total is re-pinned in test_contract_openapi.py (==144) and in the P3-4b
-    # engine lock (test_p3_4_engine_lock.py A1 ==144) per the batch convention.
-    assert len(paths) >= 142, (
-        f"P3-4 adds 9 URL keys => paths must be >= 142 (133 + 9); got {len(paths)}. "
-        "OpenAPI `paths` is URL-keyed; /workflows·/{id}·/{id}/versions·/{id}/rollback·/{id}/run "
-        "· /workflow-runs·/{id}·/{id}/cancel·/{id}/retry = 9 keys, 13 ops."
+    # Superseded by P3-4b (@单元 lock-owner seq2954): global openapi 142 -> 144
+    # (ws-token + callback). The exact count is pinned here AND in
+    # test_contract_openapi.py (==144) AND the P3-4b engine lock A1 (==144);
+    # the P3-4 9-key increment is still guaranteed by A1.
+    assert len(paths) == 144, (
+        f"P3-4b adds 2 URL keys => paths must be 144 (142 + 2); got {len(paths)}. "
+        "OpenAPI `paths` is URL-keyed; WS itself is NOT in openapi."
     )
 
 

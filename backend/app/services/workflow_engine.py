@@ -19,7 +19,6 @@ and, if the row is gone, fails with ``engine_restart`` (**no blind re-dispatch**
 from __future__ import annotations
 
 import logging
-import os
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -54,16 +53,6 @@ _RUN_TERMINAL = set(TERMINAL_RUN_STATUSES)
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _in_test() -> bool:
-    """Background drivers are disabled under an active pytest run.
-
-    The offline suites drive ``step`` directly (tuple 实施缝 seq2920); spawning
-    daemon threads against a temp SQLite + shared-session fixture would race.
-    Live (uvicorn) is unaffected, so real autostart is still proven by live F.
-    """
-    return bool(os.environ.get("PYTEST_CURRENT_TEST"))
 
 
 # ------------------------------------------------------------------ definition
@@ -203,45 +192,62 @@ def _enter_waiting_callback(run: WorkflowRun, node: WorkflowNodeRun) -> None:
 
 
 def _create_exec_task(db, run, node, defnode) -> None:
-    from app.db.models.exec import ExecTask, ExecTaskHost
     from app.services import exec_service
 
     cfg = _cfg(defnode)
     host_ids = list(cfg.get("host_ids") or [])
     kind = cfg.get("kind") or ("script" if cfg.get("script_id") else "command")
-    task = ExecTask(
-        task_no=exec_service._task_no(db),  # reuse一期 ID primitive
+    resolved = exec_service.create_exec_task_record(
+        db,  # shared core: sensitive gate + approval linkage + executor + dispatch
         name=f"workflow:{node.node_key}"[:128],
         kind=kind,
+        target_host_ids=host_ids,
         script_id=cfg.get("script_id"),
         script_version=cfg.get("script_version"),
         command=cfg.get("command"),
         params=cfg.get("params"),
-        target_host_ids={"ids": host_ids},
         mode="batch",
         timeout_sec=int(cfg.get("timeout_sec") or 300),
-        status="running",
         created_by=run.created_by,
-        started_at=_now(),
+        requester_id=run.created_by,
+        visible_group_ids=None,  # system driver == admin scope (US-03 not narrowed)
     )
-    db.add(task)
-    db.flush()
-    for hid in host_ids:
-        db.add(
-            ExecTaskHost(
-                exec_task_id=task.id, host_id=hid, hostname="", ip="", executor="agent",
-                status="pending",
-            )
-        )
-    node.exec_task_id = task.id
-    if _in_test():
-        return
-    try:
-        # Reuse the一期 exec dispatch primitive (in-process agent -> direct;
-        # otherwise celery with an in-process degraded fallback).
-        exec_service._kick_off_exec(db, task.id)
-    except Exception:  # noqa: BLE001 - broker may be absent (degraded mode)
-        logger.warning("workflow exec_task %s dispatch deferred", task.id)
+    node.exec_task_id = resolved["id"]
+    if resolved.get("approve_required"):
+        # Sensitive exec: never silently ``running`` — mirror the一期 approval and
+        # block the node until the exec task is approved/terminal.
+        node.approval_id = resolved.get("approval_id")
+        node.started_at = node.started_at or _now()
+        node.status = "waiting"
+    else:
+        # Host ① : dispatch in-process via the一期 celery task function (uses the
+        # build_executor seam; no broker hop). Non-fatal in degraded mode.
+        try:
+            from app.tasks.exec_tasks import exec_dispatch
+
+            exec_dispatch(resolved["id"])
+        except Exception:  # noqa: BLE001
+            logger.warning("workflow exec_task %s in-process dispatch failed", resolved["id"])
+
+
+def _poll_exec_task(db, node) -> bool:
+    """Follow the linked一期 ``exec_task`` row to its terminal state (R-复用)."""
+    from app.db.models.exec import ExecTask
+
+    task = db.get(ExecTask, node.exec_task_id)
+    if task is None:
+        _fail(node, "engine_restart", "engine_restart")
+        return True
+    if task.status in ("success", "partial"):
+        _succeed(node, {"exec_task_id": node.exec_task_id})
+        return True
+    if task.status in ("failed", "timed_out", "cancelled"):
+        _fail(node, "exec_task_failed", "exec_task_failed")
+        return True
+    if task.status == "running" and node.status == "waiting":
+        node.status = "running"  # approval granted -> resume polling
+        return True
+    return False
 
 
 def _create_approval(db, run, node) -> None:
@@ -300,23 +306,16 @@ def _advance_running(db, run, node, defnode, definition) -> bool:
         if node.exec_task_id is None:
             _create_exec_task(db, run, node, defnode)
             return True
-        from app.db.models.exec import ExecTask
-
-        task = db.get(ExecTask, node.exec_task_id)
-        if task is None:
-            _fail(node, "engine_restart", "engine_restart")
-            return True
-        if task.status in ("success", "partial"):
-            _succeed(node, {"exec_task_id": node.exec_task_id})
-            return True
-        if task.status in ("failed", "timed_out", "cancelled"):
-            _fail(node, "exec_task_failed", "exec_task_failed")
-            return True
-        return False
+        return _poll_exec_task(db, node)
     return False
 
 
 def _advance_waiting(db, run, node, defnode, definition) -> bool:
+    progressed = False
+    if node.node_type == "exec_task" and node.exec_task_id is not None:
+        progressed = _poll_exec_task(db, node)
+        if node.status != "waiting":
+            return progressed
     if node.node_type == "manual_approval" and node.approval_id is not None:
         from app.db.models.schedule import ApprovalRequest
 
@@ -332,7 +331,7 @@ def _advance_waiting(db, run, node, defnode, definition) -> bool:
     if to is not None and _elapsed(node) >= to:
         _fail(node, "timeout", "timeout")
         return True
-    return False
+    return progressed
 
 
 # ------------------------------------------------------------------ step
@@ -417,7 +416,7 @@ def _broadcast(_db, run_id: int) -> None:
 
 def start_driver(run_id: int) -> None:
     """Start (or reuse) the in-process driver thread for a run."""
-    if not DRIVER_AUTOSTART or _in_test():
+    if not DRIVER_AUTOSTART:
         return
     existing = _DRIVERS.get(run_id)
     if existing is not None and existing.is_alive():

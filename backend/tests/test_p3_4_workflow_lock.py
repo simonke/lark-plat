@@ -59,6 +59,8 @@ import re
 
 import pytest
 
+from tests.openapi_baseline import M6_P3_4_KEYS
+
 
 def _try(mod: str):
     try:
@@ -138,14 +140,6 @@ def _openapi_paths() -> dict:
     return app.openapi().get("paths", {})
 
 
-def _committed_openapi_paths() -> dict:
-    import json  # noqa: PLC0415
-    from pathlib import Path  # noqa: PLC0415
-
-    p = Path(__file__).resolve().parents[2] / "docs" / "openapi.json"
-    return json.loads(p.read_text(encoding="utf-8")).get("paths", {})
-
-
 def test_a1_p3_4_paths_present_with_methods():
     paths = _openapi_paths()
     problems = []
@@ -177,9 +171,9 @@ def test_a2_paths_count_at_least_144():
         "GET /api/v1/workflow-runs/{id}/ws-token + POST …/callback/{node_key} "
         "(the WS endpoint itself is NOT in openapi)."
     )
-    removed = set(_committed_openapi_paths()) - set(paths)
+    removed = set(M6_P3_4_KEYS) - set(paths)
     assert not removed, (
-        f"openapi keys must not shrink (later add-only batches may add, never remove): "
+        f"openapi keys must not shrink below the M6 baseline (@架构 seq3057): "
         f"removed={sorted(removed)}"
     )
 

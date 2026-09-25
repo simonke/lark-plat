@@ -102,6 +102,8 @@ import time
 
 import pytest
 
+from tests.openapi_baseline import M6_P3_4_KEYS
+
 # R-FLAKE-1 (@架构 seq3043): `_seed_run` must NOT derive the workflow name from
 # `id(definition)` — the address of a discarded inline dict literal can be reused
 # by the next literal (GC-timing), colliding on the UNIQUE `workflow.name`. A
@@ -196,29 +198,22 @@ def _openapi_paths() -> dict:
     return app.openapi().get("paths", {})
 
 
-def _committed_openapi_paths() -> dict:
-    import json  # noqa: PLC0415
-    from pathlib import Path  # noqa: PLC0415
-
-    p = Path(__file__).resolve().parents[2] / "docs" / "openapi.json"
-    return json.loads(p.read_text(encoding="utf-8")).get("paths", {})
-
-
 def test_a1_paths_count_at_least_144():
     """P3-4b landed 144; later add-only batches (P3-5) may add keys.
 
     Pin the LOWER BOUND here (batch lock, @架构 seq3051/seq3053) and keep the EXACT
-    current value in `test_contract_openapi.py`. No-shrink: every committed
-    docs/openapi.json key must still be present at runtime (`removed == []`).
+    current value in `test_contract_openapi.py`. No-shrink against the FROZEN M6
+    baseline key set (@架构 seq3057 layer ④) — NOT the current committed file, else a
+    net-zero substitution would slip through.
     """
     paths = _openapi_paths()
     assert len(paths) >= 144, (
         f"P3-4b adds 2 URL keys (ws-token + callback) => paths >= 144 (142 + 2); "
         f"got {len(paths)}. WS itself is NOT in openapi."
     )
-    removed = set(_committed_openapi_paths()) - set(paths)
+    removed = set(M6_P3_4_KEYS) - set(paths)
     assert not removed, (
-        f"openapi keys must not shrink (later add-only batches may add, never remove): "
+        f"openapi keys must not shrink below the M6 baseline (@架构 seq3057): "
         f"removed={sorted(removed)}"
     )
 

@@ -36,6 +36,8 @@ import re
 
 import pytest
 
+from tests.openapi_baseline import M6_P3_4_KEYS
+
 
 def _try(mod: str):
     try:
@@ -145,6 +147,14 @@ def test_a2_paths_count_154():
         "OpenAPI `paths` is URL-keyed; the 10 keys are /cicd/providers·/{id}·/{id}/test·"
         "/cicd/webhooks/{provider} + /releases·/{id}·/{id}/canary·/{id}/promote·/{id}/rollback·"
         "/{id}/cancel (13 ops)."
+    )
+    # layer ④ (@架构 seq3057): no-shrink against the FROZEN M6 baseline key set — a
+    # net-zero substitution (drop 1 old key, add 1 extra new key, still ==154) would
+    # otherwise pass the exact-count + per-key layers.
+    removed = set(M6_P3_4_KEYS) - set(paths)
+    assert not removed, (
+        f"openapi keys must not shrink below the M6 baseline (layer ④, @架构 seq3057): "
+        f"removed={sorted(removed)}"
     )
 
 

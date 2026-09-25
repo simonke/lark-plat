@@ -81,3 +81,9 @@ export function shortTrace(t: string | null | undefined): string {
   if (!t) return '-'
   return t.length > 24 ? `${t.slice(0, 21)}…` : t
 }
+
+export function articleIdFromDocRef(docRef: string | null | undefined): number | null {
+  if (docRef === null || docRef === undefined || docRef === '') return null
+  const id = Number(docRef)
+  return Number.isInteger(id) && id > 0 ? id : null
+}

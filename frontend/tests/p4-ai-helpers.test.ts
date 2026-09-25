@@ -10,6 +10,7 @@ import {
   confidencePercent,
   eventSummary,
   shortTrace,
+  articleIdFromDocRef,
 } from '../src/views/ai/helpers'
 
 describe('ai helpers (P4)', () => {
@@ -50,5 +51,15 @@ describe('ai helpers (P4)', () => {
     expect(shortTrace(null)).toBe('-')
     expect(shortTrace('short')).toBe('short')
     expect(shortTrace('x'.repeat(40))).toHaveLength(22)
+  })
+
+  it('maps only numeric doc_refs to navigable article ids', () => {
+    expect(articleIdFromDocRef('42')).toBe(42)
+    expect(articleIdFromDocRef(' 7 ')).toBe(7)
+    expect(articleIdFromDocRef('doc-abc')).toBeNull()
+    expect(articleIdFromDocRef('0')).toBeNull()
+    expect(articleIdFromDocRef('')).toBeNull()
+    expect(articleIdFromDocRef(null)).toBeNull()
+    expect(articleIdFromDocRef(undefined)).toBeNull()
   })
 })

@@ -1735,6 +1735,7 @@ export interface SemanticHit {
   chunk_ref: string
   score: number
   branch: string
+  title?: string
 }
 
 export interface SemanticSearchResult {

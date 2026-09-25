@@ -34,9 +34,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import EvidenceCard from './EvidenceCard.vue'
 import type { KbAnswerResult, KbCitation } from '../../api/types'
-import { sourceTag } from './helpers'
+import { sourceTag, articleIdFromDocRef } from './helpers'
 
 const props = defineProps<{ result: KbAnswerResult | null }>()
 defineEmits<{ (e: 'sink', result: KbAnswerResult): void }>()
@@ -45,10 +46,9 @@ const router = useRouter()
 const failClosed = computed(() => props.result?.fail_closed === true)
 
 function openCitation(c: KbCitation) {
-  const id = Number(c.doc_ref)
-  if (Number.isInteger(id) && id > 0) {
-    router.push(`/kb/articles/${id}`)
-  }
+  const id = articleIdFromDocRef(c.doc_ref)
+  if (id !== null) router.push(`/kb/articles/${id}`)
+  else ElMessage.info('该依据暂不支持跳转到文章')
 }
 </script>
 

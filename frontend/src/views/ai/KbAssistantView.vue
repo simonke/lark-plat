@@ -39,6 +39,9 @@
         <el-card>
           <template #header><span class="title">检索结果</span></template>
           <el-table :data="hits" size="small" border>
+            <el-table-column label="标题" min-width="160" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.title || '—' }}</template>
+            </el-table-column>
             <el-table-column prop="chunk_ref" label="片段" min-width="180" show-overflow-tooltip />
             <el-table-column label="分支" width="80">
               <template #default="{ row }">
@@ -50,7 +53,7 @@
             </el-table-column>
             <el-table-column label="操作" width="80">
               <template #default="{ row }">
-                <el-button link size="small" @click="openDoc(row.doc_ref)">查看</el-button>
+                <el-button link size="small" @click="openDoc(row)">查看</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -68,7 +71,7 @@ import { kbAnswer, kbSearchSemantic } from '../../api/ai'
 import { createArticle } from '../../api/kb'
 import { extractError } from '../../api/http'
 import type { KbAnswerResult, SemanticHit } from '../../api/types'
-import { branchLabel } from './helpers'
+import { branchLabel, articleIdFromDocRef } from './helpers'
 import AnswerCard from './AnswerCard.vue'
 
 const router = useRouter()
@@ -113,9 +116,10 @@ async function search() {
   }
 }
 
-function openDoc(docRef: string) {
-  const id = Number(docRef)
-  if (Number.isInteger(id) && id > 0) router.push(`/kb/articles/${id}`)
+function openDoc(row: SemanticHit) {
+  const id = articleIdFromDocRef(row.doc_ref)
+  if (id !== null) router.push(`/kb/articles/${id}`)
+  else ElMessage.info('该来源暂不支持跳转到文章')
 }
 
 async function onSink(result: KbAnswerResult) {

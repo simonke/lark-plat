@@ -1,8 +1,9 @@
 r"""P3-4b workflow engine + WS contract locks — @单元测试工程师 (lock-first, add-only).
 
 Frozen contract: @架构 **P3-4b engine tuple v1.1** (seq2918) + **实施缝裁定** (seq2920)
-+ **v1.2** (callback/attempt/recover) ; @需求 §27.2 full-scope ruling (seq2916/2922);
-design `docs/architecture-phase23.md §13.1/§13.3`.
++ **v1.2** (callback/attempt/recover, seq2924) + **v1.2.1** (waiting-timeout/payload-cap, seq2925)
++ **v1.2.2** (exec_task in-process dispatch via exec_service/_kick_off_exec, seq2935);
+@需求 §27.2 full-scope ruling (seq2916/2922/2926); design `docs/architecture-phase23.md §13.1/§13.3`.
 
 Symbols (pinned by tuple):
   app/services/workflow_engine.py -> step(db, run_id)->bool, start_driver(run_id), recover_runs()
@@ -42,6 +43,8 @@ B11 `exec_task` node (R-复用): REAL exec_task row built + node.exec_task_id st
 B12 `exec_task` node non-success terminal -> node failed -> `on_failure` branch; run failed
 B13 `manual_approval` (R-复用): REAL approval_request built + node -> `waiting`;
     approved -> succeeded (resumes); rejected -> failed + `on_failure`
+B14 cancel propagates to a node whose一期 exec_task is still `running`
+    (exec_task cancelled via the一期 primitive; node -> skipped; run cancelled)
 
 WS close-code matrix (4401/4404) and frame `seq` monotonicity are asserted by live F
 (@集成), per tuple G — not reproducible on the offline TestClient without a running driver.
@@ -499,11 +502,13 @@ def test_b6_attempt_increments_on_running(env):
     )
 
 
-def test_b7_recover_runs_resumes_and_missing_exec_row_fails(env):
+def test_b7_recover_runs_resumes_and_missing_exec_row_fails(env, monkeypatch):
     session, _ = env
     eng = _try("app.services.workflow_engine")
     if isinstance(eng, Exception):
         pytest.fail(f"P3-4b lock: workflow_engine unavailable: {eng}")
+    # no real driver thread may race the offline step loop while recover_runs runs
+    monkeypatch.setattr(eng, "DRIVER_AUTOSTART", False, raising=False)
     # (i) a `running` run with a healthy pending node resumes to terminal under step
     ok = _seed_run(session, {"nodes": [_sleep("a")]})
     session.expire_all()
@@ -807,6 +812,33 @@ def test_b13_manual_approval_blocks_then_releases(env):
     assert nodes2["ap"] == "failed", f"rejected node must be failed; got {nodes2}"
     assert nodes2["after-fail"] == "succeeded", f"`on_failure` branch must run; got {nodes2}"
     assert nodes2["after-ok"] == "skipped", f"success-path downstream must be skipped; got {nodes2}"
+
+
+def test_b14_cancel_propagates_to_running_exec_task(env, monkeypatch):
+    session, set_flag = env
+    set_flag(True)
+    _fake_executor(monkeypatch)
+    svc = _try("app.services.workflow_service")
+    eng = _try("app.services.workflow_engine")
+    if isinstance(svc, Exception) or isinstance(eng, Exception):
+        pytest.fail(f"P3-4b lock: services unavailable: {svc if isinstance(svc, Exception) else eng}")
+    host_id = _seed_host(session)
+    rid = _seed_run(session, _exec_task_definition(host_id))
+    node = _step_until_node_running(session, eng, rid, "e")
+    assert node.status == "running" and node.exec_task_id, (
+        f"need a running exec_task node to cancel; got {node.status!r}/{node.exec_task_id!r}"
+    )
+    svc.cancel_run(session, _U(), rid)
+    session.expire_all()
+    assert _run_status(session, rid) == "cancelled", "cancel must drive the run to cancelled"
+    assert _node(session, rid, "e").status == "skipped", (
+        "cancel must propagate: running node -> skipped"
+    )
+    row = _exec_task_row(session, node.exec_task_id)
+    assert row is not None and row.status in {"canceled", "cancelled"}, (
+        "cancel must cancel the running一期 exec_task via the primitive (not orphan it); "
+        f"got {None if row is None else row.status!r}"
+    )
 
 
 def _force_run_running(session, run_id: int) -> None:

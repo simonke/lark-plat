@@ -20,6 +20,11 @@ from app.repositories import HostRepository
 # The dispatcher handles these entity types; anything else is fail-closed.
 KNOWN_ENTITY_TYPES = ("host", "ticket", "kb", "audit")
 
+# P5 US-03: explicit public/wildcard scope token. KB scope ALWAYS includes it so
+# `visibility=public` articles are retrievable by every actor (NOT NULL literal;
+# never a post-filter — it is part of the scope pushed into the retrieval layer).
+GLOBAL_SCOPE_TOKEN = "__public__"
+
 
 def _visible_hosts(db: Session, actor) -> frozenset[str]:
     if getattr(actor, "is_admin", False):
@@ -68,7 +73,10 @@ def _visible_kb(db: Session, actor) -> frozenset[str]:
                 KbArticle.author_id == getattr(actor, "id", None),
             )
         )
-    return frozenset(str(r[0]) for r in db.execute(stmt).all())
+    ids = {str(r[0]) for r in db.execute(stmt).all()}
+    # P5 US-03 double proof: the explicit public wildcard is ALWAYS in kb scope.
+    ids.add(GLOBAL_SCOPE_TOKEN)
+    return frozenset(ids)
 
 
 def _stringify(values) -> frozenset[str]:

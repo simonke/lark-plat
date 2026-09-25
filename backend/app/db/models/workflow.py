@@ -26,6 +26,9 @@ RUN_STATUSES = ("pending", "running", "succeeded", "failed", "cancelled")
 NODE_STATUSES = ("pending", "running", "succeeded", "failed", "skipped", "waiting")
 TERMINAL_RUN_STATUSES = ("succeeded", "failed", "cancelled")
 TRIGGER_TYPES = ("manual", "ticket", "schedule", "alert", "release")
+# P5 E5 (tuple v1->r2 seq3332): E5 reuses THIS engine — a "playbook" is a
+# workflow row distinguished by `kind`; no separate playbook table/executor.
+WORKFLOW_KINDS = ("workflow", "playbook")
 
 
 class Workflow(Base, TimestampMixin):
@@ -35,6 +38,10 @@ class Workflow(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False, unique=True, index=True)
+    # P5 E5: discriminator so the SAME engine serves both workflow + playbook.
+    kind: Mapped[str] = mapped_column(
+        String(16), default="workflow", server_default="workflow", nullable=False
+    )
     description: Mapped[str] = mapped_column(String(512), default="")
     current_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     enabled: Mapped[int] = mapped_column(Integer, default=1, nullable=False)

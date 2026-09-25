@@ -604,6 +604,9 @@ DEFAULT_CONFIG_RULES: dict[str, dict] = {
     "ai.events": {"value": False},
     "ai.ticket_assist": {"value": False},
     "ai.kb_assist": {"value": False},
+    # P5 (AIOps E4/E5) capability flags (never overwrite existing; default off).
+    "ai.rca": {"value": False},
+    "ai.playbook": {"value": False},
     # P4 embedding-store selection (enum, not a boolean flag; default pg_array).
     "ai.embedding_store": {"value": "pg_array"},
 }
@@ -623,6 +626,8 @@ _CONFIG_RULE_REMARKS: dict[str, str] = {
     "ai.events": "P4 统一运维事件默认关闭",
     "ai.ticket_assist": "P4 工单助手默认关闭",
     "ai.kb_assist": "P4 KB-RAG 助手默认关闭",
+    "ai.rca": "P5 告警根因分析（E4）默认关闭",
+    "ai.playbook": "P5 AI 编排建议（E5）默认关闭",
     "ai.embedding_store": "P4 向量存储后端（pg_array|in_memory）",
 }
 

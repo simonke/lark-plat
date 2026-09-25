@@ -290,7 +290,13 @@ def test_a1_paths_count_107_and_monitor_19():
     assert len(paths) >= 107, (
         "openapi paths must not regress below the P2-ID surface (107); "
         f"got {len(paths)}")
-    assert len(monitor) == 19, f"/monitor/* must stay 19 (frozen P2-MA); got {len(monitor)}"
+    # P5 supersession (tuple v1->r2 seq3332): P5 add-only adds 2 monitor URL keys
+    # (/monitor/alerts/aggregate, /monitor/alerts/{alert_id}/ai/rca) => 19 -> 21.
+    # The frozen P2-MA monitor keys are guarded by test_stage_monitor_paths_present;
+    # here assert no regression below the P2-MA floor (monotonic, mirrors the global
+    # count guard above).
+    assert len(monitor) >= 19, (
+        f"/monitor/* must not regress below 19 (frozen P2-MA); got {len(monitor)}")
 
 
 def test_a1_provider_and_auth_paths_present():

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import String, and_, cast, or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import NotFoundError, ValidationError
@@ -192,7 +192,18 @@ def _fts_hits(db: Session, q: str, scope: ScopeFilter | None, entity_type: str, 
     if scope is not None:
         if not scope.entity_ids:
             return []
-        stmt = stmt.where(cast(KbArticle.id, String).in_([str(i) for i in scope.entity_ids]))
+        # P5 D (perf reversal): do NOT str-cast the PK column (kills the integer
+        # index); filter non-numeric scope ids (host ip/hostname) instead of
+        # coercing them, so the predicate is `id IN (<ints>)` and stays non-throwing.
+        numeric_ids: list[int] = []
+        for raw in scope.entity_ids:
+            try:
+                numeric_ids.append(int(raw))
+            except (TypeError, ValueError):
+                continue
+        if not numeric_ids:
+            return []
+        stmt = stmt.where(KbArticle.id.in_(numeric_ids))
     rows = db.execute(stmt.order_by(KbArticle.id.desc()).limit(limit)).all()
     return [{"doc_ref": str(r[0]), "chunk_ref": f"article:{r[0]}", "title": r[1], "score": 0.0,
              "branch": "fts"} for r in rows]

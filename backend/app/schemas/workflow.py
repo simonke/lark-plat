@@ -34,3 +34,8 @@ class WorkflowRunIn(BaseModel):
     trigger_type: str = "manual"
     trigger_ref: dict | None = None
     context: dict | None = None
+
+
+class PlaybookSuggestIn(BaseModel):
+    goal: str = Field(min_length=1, max_length=256)
+    context: str = ""

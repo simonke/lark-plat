@@ -8334,6 +8334,195 @@
         ]
       }
     },
+    "/api/v1/monitor/alerts/aggregate": {
+      "get": {
+        "tags": [
+          "monitor"
+        ],
+        "summary": "Aggregate Alerts",
+        "operationId": "aggregate_alerts_api_v1_monitor_alerts_aggregate_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "severity",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Severity"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Size"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/monitor/alerts/{alert_id}/ai/rca": {
+      "post": {
+        "tags": [
+          "monitor"
+        ],
+        "summary": "Alert Rca",
+        "operationId": "alert_rca_api_v1_monitor_alerts__alert_id__ai_rca_post",
+        "parameters": [
+          {
+            "name": "alert_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Alert Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/RcaRunIn"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Data"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/api/v1/monitor/alerts/{alert_id}": {
       "get": {
         "tags": [
@@ -13127,6 +13316,70 @@
         ]
       }
     },
+    "/api/v1/workflows/ai/suggest": {
+      "post": {
+        "tags": [
+          "workflows"
+        ],
+        "summary": "Suggest Playbook",
+        "operationId": "suggest_playbook_api_v1_workflows_ai_suggest_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaybookSuggestIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/api/v1/workflows/{workflow_id}": {
       "get": {
         "tags": [
@@ -17554,6 +17807,26 @@
         "type": "object",
         "title": "MonRuleUpdate"
       },
+      "PlaybookSuggestIn": {
+        "properties": {
+          "goal": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Goal"
+          },
+          "context": {
+            "type": "string",
+            "title": "Context",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "goal"
+        ],
+        "title": "PlaybookSuggestIn"
+      },
       "ProviderCreate": {
         "properties": {
           "type": {
@@ -17661,6 +17934,23 @@
         },
         "type": "object",
         "title": "ProviderUpdate"
+      },
+      "RcaRunIn": {
+        "properties": {
+          "depth": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Depth"
+          }
+        },
+        "type": "object",
+        "title": "RcaRunIn"
       },
       "RefreshIn": {
         "properties": {

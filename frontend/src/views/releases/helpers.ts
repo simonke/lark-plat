@@ -45,10 +45,12 @@ export function releaseStatusTag(v: string): TagType {
 }
 
 /**
- * §14.1 / @架构 seq3077 裁: action -> allowed_from (illegal source -> 409).
+ * §14.1 / @架构 seq3077 + P3-6 tuple v1 (seq3127): action -> allowed_from (illegal source -> 409).
+ * deploy   <- pending
  * canary   <- pending|deploying
+ * fail     <- deploying|canary
  * promote  <- canary
- * rollback <- deploying|canary|failed   (canary required: deploying/failed have no API entry)
+ * rollback <- deploying|canary|failed
  * cancel   <- pending|deploying|canary
  */
 export function canCancel(v: string): boolean {
@@ -61,6 +63,14 @@ export function isTerminal(v: string): boolean {
 
 export function canCanary(v: string): boolean {
   return v === 'pending' || v === 'deploying'
+}
+
+export function canDeploy(v: string): boolean {
+  return v === 'pending'
+}
+
+export function canFail(v: string): boolean {
+  return v === 'deploying' || v === 'canary'
 }
 
 export function canPromote(v: string): boolean {

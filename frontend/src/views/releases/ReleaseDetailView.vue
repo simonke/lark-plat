@@ -12,8 +12,14 @@
           </div>
           <div>
             <el-button :loading="loading" @click="load">刷新</el-button>
+            <el-button v-if="row && canDeploy(row.status)" v-perm="'release:deploy'" type="primary" @click="onAction('deploy')">
+              部署
+            </el-button>
             <el-button v-if="row && canCanary(row.status)" v-perm="'release:canary'" type="primary" @click="onAction('canary')">
               灰度
+            </el-button>
+            <el-button v-if="row && canFail(row.status)" v-perm="'release:fail'" type="danger" @click="onAction('fail')">
+              标记失败
             </el-button>
             <el-button v-if="row && canPromote(row.status)" v-perm="'release:promote'" type="success" @click="onAction('promote')">
               全量
@@ -60,7 +66,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   getRelease,
+  deployRelease,
   canaryRelease,
+  failRelease,
   promoteRelease,
   rollbackRelease,
   cancelRelease,
@@ -68,7 +76,7 @@ import {
 import { extractError } from '../../api/http'
 import { useAuthStore } from '../../stores/auth'
 import type { Release } from '../../api/types'
-import { canCanary, canCancel, canPromote, canRollback, envLabel, formatTime, releaseStatusLabel, releaseStatusTag } from './helpers'
+import { canCanary, canCancel, canDeploy, canFail, canPromote, canRollback, envLabel, formatTime, releaseStatusLabel, releaseStatusTag } from './helpers'
 
 const route = useRoute()
 const router = useRouter()
@@ -79,13 +87,17 @@ const loading = ref(false)
 const row = ref<Release | null>(null)
 
 const ACTIONS = {
+  deploy: deployRelease,
   canary: canaryRelease,
+  fail: failRelease,
   promote: promoteRelease,
   rollback: rollbackRelease,
   cancel: cancelRelease,
 }
 const ACTION_LABEL: Record<keyof typeof ACTIONS, string> = {
+  deploy: '部署',
   canary: '灰度',
+  fail: '标记失败',
   promote: '全量',
   rollback: '回滚',
   cancel: '取消',

@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest'
 import {
   canCancel,
   canCanary,
+  canDeploy,
+  canFail,
   canPromote,
   canRollback,
   envLabel,
@@ -56,6 +58,17 @@ describe('release helpers (P3-5)', () => {
     expect(canRollback('failed')).toBe(true)
     expect(canRollback('succeeded')).toBe(false)
     expect(canRollback('pending')).toBe(false)
+  })
+
+  it('gates deploy/fail by allowed source set (P3-6 tuple v1 seq3127)', () => {
+    expect(canDeploy('pending')).toBe(true)
+    expect(canDeploy('deploying')).toBe(false)
+    expect(canDeploy('canary')).toBe(false)
+    expect(canFail('deploying')).toBe(true)
+    expect(canFail('canary')).toBe(true)
+    expect(canFail('pending')).toBe(false)
+    expect(canFail('failed')).toBe(false)
+    expect(canFail('succeeded')).toBe(false)
   })
 })
 

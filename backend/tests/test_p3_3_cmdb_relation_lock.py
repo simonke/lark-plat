@@ -507,3 +507,83 @@ def test_b7_delete_first_200_then_missing_404(p33_client):
     assert d2.status_code == 404, (
         f"repeat/missing DELETE must be 404; got {d2.status_code}: {d2.text}"
     )
+
+
+# ── B8: gate order = feature-first (P3-6 ③ unify; @架构 P3-6 tuple v1.C) ───────
+# P3-3 回改 (@架构 P3-6 C): routes drop the前置 `require_perm` so the platform
+# single mouth is **feature gate → permission gate** (P3-1/2/4/5 already this way):
+#   no token 401 (auth layer) / flag off -> ANY authed caller 400 / flag on+no perm 403.
+# Before the回改 the route-level `require_perm` ran first, so a no-perm caller with
+# the flag off saw 403 — this lock pins the corrected 400.
+
+@pytest.fixture()
+def p33_client_feature_off(tmp_path):
+    """Like ``p33_client`` but with `feature.cmdb_topology` DEFAULT (False) — no ConfigRule."""
+    from app.db.base import Base  # noqa: PLC0415
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'p33off.db'}", future=True)
+    Base.metadata.create_all(engine, tables=_core_tables())
+    maker = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, future=True)
+    session = maker()
+
+    h1_id = h2_id = None
+    try:
+        from app.db.models.asset import AssetGroup, Host  # noqa: PLC0415
+
+        g = AssetGroup(parent_id=0, name="g")
+        session.add(g)
+        session.flush()
+        h1 = Host(hostname="h1", ip="10.0.0.1", group_id=g.id)
+        h2 = Host(hostname="h2", ip="10.0.0.2", group_id=g.id)
+        session.add_all([h1, h2])
+        session.flush()
+        h1_id, h2_id = h1.id, h2.id
+    except Exception:  # noqa: BLE001
+        h1_id, h2_id = 1, 2
+    session.commit()
+
+    prev_bind = getattr(_dbs.SessionLocal, "kw", {}).get("bind")
+    _dbs.SessionLocal.configure(bind=engine)
+
+    import app.main as main  # noqa: PLC0415
+    from app.api.deps import CurrentUser, get_current_user  # noqa: PLC0415
+    from app.db.session import get_db  # noqa: PLC0415
+    from starlette.testclient import TestClient  # noqa: PLC0415
+
+    main.app.dependency_overrides[get_db] = lambda: (yield session)
+
+    def set_user(perms, admin=False):
+        user = CurrentUser(
+            user_id=1, username="qa", is_admin=admin,
+            permissions=list(perms), visible_group_ids=[],
+        )
+        main.app.dependency_overrides[get_current_user] = lambda: user
+        return user
+
+    try:
+        yield TestClient(main.app), set_user, h1_id, h2_id
+    finally:
+        main.app.dependency_overrides.clear()
+        session.close()
+        if prev_bind is not None:
+            _dbs.SessionLocal.configure(bind=prev_bind)
+        engine.dispose()
+
+
+def test_b8_feature_gate_runs_before_permission_gate(p33_client_feature_off):
+    client, set_user, _h1, _h2 = p33_client_feature_off
+    # flag off (default) + admin (would pass any perm) -> 400, NOT 403
+    set_user([], admin=True)
+    r_admin = client.get("/api/v1/assets/relations")
+    assert r_admin.status_code == 400, (
+        "P3-6 ③: flag off + admin must be 400 `feature disabled` (feature gate FIRST); "
+        f"got {r_admin.status_code}: {r_admin.text}"
+    )
+    assert r_admin.json().get("code") == 400
+    # flag off + NO permission -> must still be 400 (feature BEFORE permission), NOT 403
+    set_user([], admin=False)
+    r_noperm = client.get("/api/v1/assets/relations")
+    assert r_noperm.status_code == 400, (
+        "P3-6 ③: flag off + no-perm caller must be 400, NOT 403 "
+        f"(feature gate BEFORE permission gate); got {r_noperm.status_code}: {r_noperm.text}"
+    )

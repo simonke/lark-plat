@@ -286,11 +286,11 @@ WS `/ws/workflow-runs/{id}`。权限点：`workflow:list/add/edit/del/version/ro
 | POST | /cicd/webhooks/{provider} | 入站事件（**token 鉴权、非 session**） |
 | GET/POST | /releases | 列表 / 创建发布编排 |
 | GET | /releases/{id} | 详情（状态/证据链） |
-| POST | /releases/{id}/canary · /promote · /rollback · /cancel | 灰度/放量/回滚/取消 |
+| POST | /releases/{id}/canary · /promote · /rollback · /cancel · /deploy · /fail | 灰度/放量/回滚/取消/进入部署/标记失败 |
 
-权限点：`cicd:provider:list/add/edit/del/test` / `release:list/add/view/canary/promote/rollback/cancel`。
+权限点：`cicd:provider:list/add/edit/del/test` / `release:list/add/view/canary/promote/rollback/cancel/deploy/fail`（共 **14**）。
 
-> 动作门（`POST /releases/{id}/{action}`；非法源 ⇒ **409**）：`canary←{pending,deploying}`、`promote←{canary}`、`rollback←{deploying,canary,failed}`、`cancel←{pending,deploying,canary}`。
+> 动作门（`POST /releases/{id}/{action}`；非法源 ⇒ **409**）：`deploy←{pending}→deploying`、`canary←{pending,deploying}→canary`、`promote←{canary}→succeeded`、`rollback←{deploying,canary,failed}→rolled_back`、`fail←{deploying,canary}→failed`、`cancel←{pending,deploying,canary}→cancelled`。
 
 > 本节取代旧版 §7「/pipelines」骨架：P3-3 拆为 **CMDB 深化 / 编排 Playbook / CI-CD 集成** 三段，承 @刘辉 2026-09-24 立项。
 

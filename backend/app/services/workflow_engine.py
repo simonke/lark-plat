@@ -396,6 +396,7 @@ def step(db, run_id: int) -> bool:
             if failed:
                 run.status = "failed"
                 run.error = failed[0].error or "workflow node failed"
+                _on_run_failed(db, run)
             else:
                 run.status = "succeeded"
             run.finished_at = _now()
@@ -415,6 +416,22 @@ def _broadcast(_db, run_id: int) -> None:
         workflow_ws.broadcast_sync(run_id, {"type": "run", "data": {"run_id": run_id}})
     except Exception:  # noqa: BLE001
         pass
+
+
+def _on_run_failed(db, run) -> None:
+    """P3-6 R1 seam (§架构 tuple v1 B): notify domain seams of a terminal `failed` run.
+
+    Currently only the CI/CD release reacts (a release-linked ``workflow_run``
+    failing drives its release to ``failed``). Additive and failure-isolated: a
+    seam error must never abort the run finalisation. A non-release run is a no-op
+    inside the seam.
+    """
+    try:
+        from app.services import cicd_service
+
+        cicd_service.fail_release_for_run(db, run)
+    except Exception:  # noqa: BLE001
+        logger.exception("run-failed seam failed (run=%s)", getattr(run, "id", None))
 
 
 # ------------------------------------------------------------------ driver

@@ -46,11 +46,17 @@
         <el-table-column label="创建时间" width="180">
           <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="260" fixed="right">
+        <el-table-column label="操作" width="360" fixed="right">
           <template #default="{ row }">
             <el-button size="small" v-perm="'release:view'" @click.stop="openDetail(row)">详情</el-button>
+            <el-button v-if="canDeploy(row.status)" size="small" type="primary" v-perm="'release:deploy'" @click.stop="onAction(row, 'deploy')">
+              部署
+            </el-button>
             <el-button v-if="canCanary(row.status)" size="small" v-perm="'release:canary'" @click.stop="onAction(row, 'canary')">
               灰度
+            </el-button>
+            <el-button v-if="canFail(row.status)" size="small" type="danger" plain v-perm="'release:fail'" @click.stop="onAction(row, 'fail')">
+              标记失败
             </el-button>
             <el-button v-if="canPromote(row.status)" size="small" type="success" v-perm="'release:promote'" @click.stop="onAction(row, 'promote')">
               全量
@@ -115,7 +121,9 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   listReleases,
   createRelease,
+  deployRelease,
   canaryRelease,
+  failRelease,
   promoteRelease,
   rollbackRelease,
   cancelRelease,
@@ -124,7 +132,7 @@ import { listCicdProviders } from '../../api/cicd'
 import { extractError } from '../../api/http'
 import { useAuthStore } from '../../stores/auth'
 import type { CicdProviderOut, Release, ReleaseEnv, ReleaseQuery } from '../../api/types'
-import { ENV_OPTIONS, RELEASE_STATUS_OPTIONS, canCanary, canCancel, canPromote, canRollback, envLabel, formatTime, releaseStatusLabel, releaseStatusTag } from './helpers'
+import { ENV_OPTIONS, RELEASE_STATUS_OPTIONS, canCanary, canCancel, canDeploy, canFail, canPromote, canRollback, envLabel, formatTime, releaseStatusLabel, releaseStatusTag } from './helpers'
 import { providerTypeLabel } from '../cicd/helpers'
 
 const router = useRouter()
@@ -145,13 +153,17 @@ const form = reactive<{ provider_id: number; app: string; version: string; env: 
 })
 
 const ACTIONS = {
+  deploy: deployRelease,
   canary: canaryRelease,
+  fail: failRelease,
   promote: promoteRelease,
   rollback: rollbackRelease,
   cancel: cancelRelease,
 }
 const ACTION_LABEL: Record<keyof typeof ACTIONS, string> = {
+  deploy: '部署',
   canary: '灰度',
+  fail: '标记失败',
   promote: '全量',
   rollback: '回滚',
   cancel: '取消',

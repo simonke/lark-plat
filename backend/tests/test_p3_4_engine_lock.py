@@ -99,6 +99,7 @@ import importlib
 import itertools
 import re
 import time
+import uuid
 
 import pytest
 
@@ -301,6 +302,7 @@ _CORE_TABLES = (
     "config_rule", "sys_audit_log", "sys_user", "exec_task", "exec_task_host",
     "approval_request", "approval_rule", "approval_record",
     "asset_group", "asset_host", "script", "script_version",
+    "cicd_provider", "release",
     *WF_TABLES,
 )
 
@@ -385,10 +387,18 @@ def env(tmp_path):
 # ── behaviour helpers ────────────────────────────────────────────────────────
 
 def _seed_run(session, definition) -> int:
-    """Insert Workflow + Version + a `pending` Run + `pending` NodeRuns; return run_id."""
+    """Insert Workflow + Version + a `pending` Run + `pending` NodeRuns; return run_id.
+
+    P3-6 ⑤ (flake hardening): the workflow name carries BOTH a process-local
+    monotonic counter AND a `uuid4` suffix so no two seeded workflows can ever
+    collide on the UNIQUE `workflow.name` — across tests, DBs, or processes.
+    """
     from app.db.models.workflow import Workflow, WorkflowNodeRun, WorkflowRun, WorkflowVersion  # noqa: PLC0415
 
-    wf = Workflow(name=f"wf-{next(_WF_NAME_SEQ)}", current_version=1, enabled=1)
+    wf = Workflow(
+        name=f"wf-{next(_WF_NAME_SEQ)}-{uuid.uuid4().hex[:8]}",
+        current_version=1, enabled=1,
+    )
     session.add(wf)
     session.flush()
     session.add(WorkflowVersion(workflow_id=wf.id, version=1, definition=definition))
@@ -1168,6 +1178,228 @@ def test_b18_unknown_biz_type_approve_is_fail_closed(env):
     assert records == [], (
         "fail-closed: approve must write NO ApprovalRecord when the linkage raises; "
         f"found {[(r.action, r.operator_id) for r in records]}"
+    )
+
+
+# ── B20: ④ `biz_type↔biz_id` domain isolation (@架构 P3-6 tuple v1.D) ──────────
+# Phase-1 hazard: `approval_request.biz_id` is GLOBALLY UNIQUE with NO relational
+# tie to `biz_type`, and the exec fall-through resolves the task by `biz_id` alone.
+# So an UNKNOWN biz_type whose `biz_id` collides with a real `awaiting_approval`
+# exec_task could advance/cancel that unrelated task. P3-6 ④ forbids cross-domain
+# links: `approve`/`reject`/`cancel` must raise **404** (code unified — @架构 seq3139
+# B.4) and leave the colliding task byte-for-byte unchanged (fail-closed; a catch-all
+# no-op is ALSO rejected by B18). Compliant arrange (@代码reviewer seq3136 / @需求
+# seq3138): `biz_id` is
+# unique, so seed ONE colliding approval per task (biz_type='mystery', biz_id=T.id)
+# and do NOT create an exec-domain approval for T; three verbs need three
+# independent (task, approval) pairs (a decided approval cannot be reused).
+
+def _seed_colliding_mystery_approval(session, tag: str) -> tuple[int, int]:
+    from app.db.models.exec import ExecTask  # noqa: PLC0415
+    from app.db.models.schedule import ApprovalRequest  # noqa: PLC0415
+
+    task = ExecTask(
+        task_no=f"T-{uuid.uuid4().hex[:10]}", name=f"lockD-{tag}",
+        status="awaiting_approval", version=0,
+    )
+    session.add(task)
+    session.flush()
+    ap = ApprovalRequest(
+        request_no=f"AP-LOCK-XD-{uuid.uuid4().hex[:8]}", biz_type="mystery",
+        biz_id=task.id, title=f"lock cross-domain {tag}", requester_id=_U.id, status="pending",
+    )
+    session.add(ap)
+    session.commit()
+    return task.id, ap.id
+
+
+def test_b20_cross_domain_biz_type_biz_id_isolation(env, monkeypatch):
+    """④: approve/reject/cancel on a biz_type/biz_id mismatch => 404, advance nothing."""
+    session, _set_flag = env
+    from app.core.exceptions import NotFoundError  # noqa: PLC0415
+    from app.db.models.exec import ExecTask  # noqa: PLC0415
+    from app.db.models.schedule import ApprovalRequest  # noqa: PLC0415
+    from unittest.mock import MagicMock  # noqa: PLC0415
+
+    # Offline: the buggy fall-through (`_approve_exec`) calls `exec_dispatch.delay`,
+    # which would try a real Redis broker. Neutralize it so a RED run is fast and
+    # side-effect free (after the ④ fix the cross-domain path raises before dispatch).
+    import app.tasks.exec_tasks as _et  # noqa: PLC0415
+
+    monkeypatch.setattr(_et, "exec_dispatch", MagicMock(), raising=False)
+
+    ap_svc = _approval_service_or_fail()
+    cases = (
+        ("approve", lambda aid: ap_svc.approve(session, _U(), aid, "ok")),
+        ("reject", lambda aid: ap_svc.reject(session, _U(), aid, "no")),
+        ("cancel", lambda aid: ap_svc.cancel(session, _U(), aid)),
+    )
+    for verb, call in cases:
+        tid, aid = _seed_colliding_mystery_approval(session, verb)
+        before = session.get(ExecTask, tid)
+        st0, v0 = before.status, before.version
+        with pytest.raises(NotFoundError):
+            call(aid)
+        session.expire_all()
+        after = session.get(ExecTask, tid)
+        assert after is not None and (after.status, after.version) == (st0, v0), (
+            f"P3-6 ④: cross-domain `{verb}` (biz_type='mystery', biz_id={tid}) must NOT "
+            "advance the colliding exec_task; got "
+            f"{(None if after is None else (after.status, after.version))!r}"
+        )
+        ap_row = session.get(ApprovalRequest, aid)
+        assert ap_row is not None and ap_row.status == "pending", (
+            f"P3-6 ④: cross-domain `{verb}` must fail-closed (approval stays `pending`); "
+            f"got {None if ap_row is None else ap_row.status!r}"
+        )
+
+
+# ── B21: ① release run terminal `failed` ⇒ release `failed` (@架构 P3-6 tuple v1.B) ─
+# Automatic seam (NOT a user action): a `workflow_run(trigger_type='release')` that
+# reaches terminal `failed` flips its owning release (`deploying|canary`) -> `failed`
+# (CAS, terminal no-op, audit). Link chain = `release.workflow_run_id` + the run's
+# `trigger_type=='release'` (a non-release run must NOT touch any release). The run
+# is driven to failure through the REAL engine finalize path (missing exec row ->
+# engine_restart, same mechanism as B7 ii), so this lock is agnostic to exactly
+# which finalize site wires the reaction.
+
+def _set_config(session, key: str, value) -> None:
+    from app.db.models.notify import ConfigRule  # noqa: PLC0415
+
+    row = session.query(ConfigRule).filter_by(rule_key=key).one_or_none()
+    if row is None:
+        session.add(ConfigRule(rule_key=key, rule_value={"value": value}))
+    else:
+        row.rule_value = {"value": value}
+    session.commit()
+
+
+def _seed_release_linked_to_run(session, run_id: int, status: str = "canary") -> int:
+    from app.db.models.cicd import CicdProvider, Release  # noqa: PLC0415
+
+    prov = CicdProvider(type="generic", name=f"p-{uuid.uuid4().hex[:8]}", endpoint="https://x")
+    session.add(prov)
+    session.flush()
+    rel = Release(
+        provider_id=prov.id, app="svc-rel", env="dev", status=status, workflow_run_id=run_id
+    )
+    session.add(rel)
+    session.commit()
+    return rel.id
+
+
+def _seed_release_triggered_run(session, definition, trigger_type: str = "release") -> int:
+    from app.db.models.workflow import (  # noqa: PLC0415
+        Workflow, WorkflowNodeRun, WorkflowRun, WorkflowVersion,
+    )
+
+    wf = Workflow(name=f"wf-rel-{uuid.uuid4().hex[:8]}", current_version=1, enabled=1)
+    session.add(wf)
+    session.flush()
+    session.add(WorkflowVersion(workflow_id=wf.id, version=1, definition=definition))
+    run = WorkflowRun(
+        workflow_id=wf.id, workflow_version=1, status="pending",
+        trigger_type=trigger_type, trigger_ref={},
+    )
+    session.add(run)
+    session.flush()
+    for node in definition.get("nodes") or []:
+        session.add(
+            WorkflowNodeRun(
+                run_id=run.id, node_key=node["key"], node_type=node["type"],
+                status="pending", attempt=0,
+            )
+        )
+    session.commit()
+    return run.id
+
+
+def test_b21_release_run_failed_flips_linked_release(env, monkeypatch):
+    session, set_flag = env
+    _set_config(session, "feature.cicd", True)
+    eng = _try("app.services.workflow_engine")
+    if isinstance(eng, Exception):
+        pytest.fail(f"P3-6 lock: workflow_engine unavailable: {eng}")
+    monkeypatch.setattr(eng, "DRIVER_AUTOSTART", False, raising=False)
+    from app.db.models.cicd import Release  # noqa: PLC0415
+
+    definition = {
+        "nodes": [
+            {"key": "e", "type": "exec_task", "config": {"host_ids": [1], "command": "true"}, "depends_on": []}
+        ]
+    }
+    rid = _seed_release_triggered_run(session, definition)
+    rel_id = _seed_release_linked_to_run(session, rid, status="canary")
+    _force_run_running(session, rid)
+    _force_node(session, rid, "e", status="running", exec_task_id=987654321)
+    eng.recover_runs()
+    status = _step_until_done(session, rid)
+    assert status == "failed", f"release run must reach `failed`; got {status!r}"
+    session.expire_all()
+    rel = session.get(Release, rel_id)
+    assert rel is not None and rel.status == "failed", (
+        "P3-6 ①: a terminal `failed` run(trigger_type='release') must flip its owning "
+        f"release (canary) -> `failed`; got {None if rel is None else rel.status!r}"
+    )
+    eng.step(session, rid)
+    session.expire_all()
+    assert session.get(Release, rel_id).status == "failed", (
+        "P3-6 ①: reaction must be a terminal no-op (idempotent on a failed release)"
+    )
+
+
+def test_b22_non_release_run_failed_does_not_flip_release(env, monkeypatch):
+    """① negative (@架构 seq3156 / @需求 seq3157): gate = `trigger_type=='release'` AND failed.
+
+    A NON-release run reaching `failed` must NOT touch a linked release — else any
+    failed run would mutate releases (false-green).
+    """
+    session, set_flag = env
+    _set_config(session, "feature.cicd", True)
+    eng = _try("app.services.workflow_engine")
+    if isinstance(eng, Exception):
+        pytest.fail(f"P3-6 lock: workflow_engine unavailable: {eng}")
+    monkeypatch.setattr(eng, "DRIVER_AUTOSTART", False, raising=False)
+    from app.db.models.cicd import Release  # noqa: PLC0415
+
+    fail_def = {
+        "nodes": [
+            {"key": "e", "type": "exec_task", "config": {"host_ids": [1], "command": "true"}, "depends_on": []}
+        ]
+    }
+    rid = _seed_release_triggered_run(session, fail_def, trigger_type="manual")
+    rel = _seed_release_linked_to_run(session, rid, status="canary")
+    _force_run_running(session, rid)
+    _force_node(session, rid, "e", status="running", exec_task_id=987654321)
+    eng.recover_runs()
+    assert _step_until_done(session, rid) == "failed", "non-release run must still reach failed"
+    session.expire_all()
+    assert session.get(Release, rel).status == "canary", (
+        "P3-6 ①: a NON-release run (`trigger_type!='release'`) reaching `failed` must NOT "
+        "flip a release — the seam is gated by trigger_type=='release'"
+    )
+
+
+def test_b23_release_run_succeeded_does_not_flip_release(env, monkeypatch):
+    """① negative (@架构 seq3156 / @需求 seq3157): a succeeded release-run must not auto-flip.
+
+    `succeeded` stays收口 by `promote`; the seam must NOT fire on the `:400` branch.
+    """
+    session, set_flag = env
+    _set_config(session, "feature.cicd", True)
+    eng = _try("app.services.workflow_engine")
+    if isinstance(eng, Exception):
+        pytest.fail(f"P3-6 lock: workflow_engine unavailable: {eng}")
+    monkeypatch.setattr(eng, "DRIVER_AUTOSTART", False, raising=False)
+    from app.db.models.cicd import Release  # noqa: PLC0415
+
+    rid = _seed_release_triggered_run(session, {"nodes": [_sleep("s")]})  # trigger_type='release'
+    rel = _seed_release_linked_to_run(session, rid, status="canary")
+    assert _step_until_done(session, rid) == "succeeded", "release run must succeed here"
+    session.expire_all()
+    assert session.get(Release, rel).status == "canary", (
+        "P3-6 ①: a release run reaching `succeeded` must NOT auto-flip the release "
+        "(only `promote`收口; seam is on the `failed` branch)"
     )
 
 

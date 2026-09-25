@@ -19,11 +19,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import NotFoundError
-from app.db.models import MonAlert
+from app.db.models import MON_LEVELS, MonAlert
 from app.services import cmdb_service
 from app.services.ai_gate import require_feature
 
 _AI_USE = "ai:use"
+# E4 severity rank — single source of truth (`app/db/models/monitor.py`, imported,
+# never re-declared). Index order defines "max" (higher == more severe).
+_SEVERITY_RANK = {lvl: i for i, lvl in enumerate(MON_LEVELS)}
 
 
 @dataclass
@@ -79,8 +82,20 @@ def _coerce_id(value) -> int | None:
         return None
 
 
+def _window_rule(a) -> str:
+    """Aggregate window `rule` value: `rule_id` -> `rule_name` -> ``""``."""
+    if a.rule_id is not None:
+        return str(a.rule_id)
+    return getattr(a, "rule_name", "") or ""
+
+
 def aggregate(db: Session, user, filters: dict | None = None, page: int = 1, size: int = 20) -> dict:
-    """Read-time alert aggregation (NO new table). Scoped via the monitor seam."""
+    """Read-time alert aggregation (NO new table). Scoped via the monitor seam.
+
+    Window = `(entity_type, entity_id, rule)` (tuple §五.1 / §29.8); `rule` falls
+    back `rule_id` -> `rule_name` -> `""`. `max_severity` = TRUE max over the
+    `MON_LEVELS` single source (None/unknown == lowest; all-None => None).
+    """
     require_feature(db, "ai.rca")
     user.require_perm(_AI_USE)
     filters = dict(filters or {})
@@ -98,20 +113,32 @@ def aggregate(db: Session, user, filters: dict | None = None, page: int = 1, siz
     if filters.get("severity"):
         rows = [a for a in rows if a.severity == filters["severity"]]
 
-    by_entity: dict[str, dict] = {}
+    by_window: dict[tuple, dict] = {}
     for a in rows:
         entity = a.entity or {}
-        key = str(entity.get("entity_id"))
-        bucket = by_entity.setdefault(
-            key,
-            {"entity_id": key, "entity_type": entity.get("entity_type"), "count": 0,
-             "max_severity": None, "alert_ids": []},
-        )
+        rule = _window_rule(a)
+        key = (entity.get("entity_type"), str(entity.get("entity_id")), rule)
+        bucket = by_window.get(key)
+        if bucket is None:
+            bucket = {
+                "entity_type": entity.get("entity_type"),
+                "entity_id": str(entity.get("entity_id")),
+                "rule": rule,
+                "count": 0,
+                "max_severity": None,
+                "alert_ids": [],
+            }
+            by_window[key] = bucket
         bucket["count"] += 1
         bucket["alert_ids"].append(a.id)
-        bucket["max_severity"] = bucket["max_severity"] or a.severity
+        rank = _SEVERITY_RANK.get(a.severity, -1)
+        if rank > _SEVERITY_RANK.get(bucket["max_severity"], -1):
+            bucket["max_severity"] = a.severity if rank >= 0 else None
 
-    grouped = sorted(by_entity.values(), key=lambda b: b["count"], reverse=True)
+    grouped = sorted(
+        by_window.values(),
+        key=lambda b: (-b["count"], str(b["entity_type"]), b["entity_id"], b["rule"]),
+    )
     total = len(grouped)
     start = (page - 1) * size
     return {

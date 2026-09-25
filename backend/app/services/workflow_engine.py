@@ -245,7 +245,7 @@ def _poll_exec_task(db, node) -> bool:
     if task.status in ("success", "partial"):
         _succeed(node, {"exec_task_id": node.exec_task_id})
         return True
-    if task.status in ("failed", "timed_out", "cancelled"):
+    if task.status in ("failed", "timed_out", "canceled", "cancelled"):
         _fail(node, "exec_task_failed", "exec_task_failed")
         return True
     if task.status == "running" and node.status == "waiting":

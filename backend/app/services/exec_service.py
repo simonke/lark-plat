@@ -356,6 +356,40 @@ def ws_token(db: Session, user, task_id: int, task_host_id: int) -> dict:
     return {"token": create_ws_token(task_host_id)}
 
 
+_EXEC_CANCELLABLE_STATUSES = ("created", "awaiting_approval", "approved", "running", "pending")
+
+
+def cancel_exec_task_record(db: Session, task: ExecTask) -> bool:
+    """Perm-free cancellation core (mirror of ``create_exec_task_record``).
+
+    Drives the task row -> canonical ``canceled`` under CAS, cancels its
+    pending/running host rows, interrupts live agents and closes any
+    still-pending approval. Returns ``True`` when the task moved to ``canceled``;
+    ``False`` when it is already terminal or a concurrent change was detected.
+
+    Reused by ``stop_task`` (caller enforces perm/ownership/state guard) and by
+    the P3-4 workflow engine's cancel propagation, so the exec semantics (host
+    rows, agent stop, orphan approval) are never bypassed by a raw status write
+    (R-复用; @代码reviewer D1).
+    """
+    if task.status not in _EXEC_CANCELLABLE_STATUSES:
+        return False
+    if not ExecTaskRepository(db).optimistic_update(task.id, task.status, "canceled", task.version):
+        return False
+    task.version += 1
+    task.finished_at = datetime.now(timezone.utc)
+    if getattr(task, "approval_id", None):
+        _close_orphan_approval(db, task)
+    th_repo = ExecTaskHostRepository(db)
+    for th in th_repo.by_task(task.id):
+        if th.status in ("pending", "running"):
+            was_running = th.status == "running"
+            th_repo.update_status(th.id, "canceled", finished_at=datetime.now(timezone.utc))
+            if was_running:
+                _send_agent_stop(db, th, task.id)
+    return True
+
+
 def stop_task(db: Session, user, task_id: int) -> dict:
     user.require_perm("exec:task:stop")
     repo = ExecTaskRepository(db)
@@ -366,17 +400,8 @@ def stop_task(db: Session, user, task_id: int) -> dict:
         raise ForbiddenError("no permission to stop this task")
     if task.status not in ("running", "pending"):
         raise BadRequestError("task not running")
-    if not repo.optimistic_update(task.id, task.status, "canceled", task.version):
+    if not cancel_exec_task_record(db, task):
         raise ConflictError("task state changed concurrently")
-    task.version += 1
-    task.finished_at = datetime.now(timezone.utc)
-    th_repo = ExecTaskHostRepository(db)
-    for th in th_repo.by_task(task_id):
-        if th.status in ("pending", "running"):
-            was_running = th.status == "running"
-            th_repo.update_status(th.id, "canceled", finished_at=datetime.now(timezone.utc))
-            if was_running:
-                _send_agent_stop(db, th, task.id)
     db.commit()
     return {"id": task.id, "status": "canceled"}
 

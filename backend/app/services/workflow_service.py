@@ -482,6 +482,7 @@ def cancel_run(db: Session, user, run_id: int) -> dict:
     run.finished_at = datetime.now(timezone.utc)
     now = datetime.now(timezone.utc)
     from app.db.models.exec import ExecTask
+    from app.services import exec_service
 
     for node in db.scalars(
         select(WorkflowNodeRun).where(
@@ -491,8 +492,8 @@ def cancel_run(db: Session, user, run_id: int) -> dict:
     ).all():
         if node.node_type == "exec_task" and node.exec_task_id:
             task = db.get(ExecTask, node.exec_task_id)
-            if task is not None and task.status in ("created", "running", "awaiting_approval"):
-                task.status = "cancelled"
+            if task is not None:
+                exec_service.cancel_exec_task_record(db, task)
         node.status = "skipped"
         node.finished_at = now
     db.commit()

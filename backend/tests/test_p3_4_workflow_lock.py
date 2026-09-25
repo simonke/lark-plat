@@ -152,11 +152,8 @@ def test_a1_p3_4_paths_present_with_methods():
 
 def test_a2_paths_count_142():
     paths = _openapi_paths()
-    # Relaxed to monotonic (P3-4b adds ws-token + callback => 144). The exact
-    # total is re-pinned in test_contract_openapi.py (==144) and in the P3-4b
-    # engine lock (test_p3_4_engine_lock.py A1 ==144) per the batch convention.
-    assert len(paths) >= 142, (
-        f"P3-4 adds 9 URL keys => paths must be >= 142 (133 + 9); got {len(paths)}. "
+    assert len(paths) == 142, (
+        f"P3-4 adds 9 URL keys => paths must be 142 (133 + 9); got {len(paths)}. "
         "OpenAPI `paths` is URL-keyed; /workflows·/{id}·/{id}/versions·/{id}/rollback·/{id}/run "
         "· /workflow-runs·/{id}·/{id}/cancel·/{id}/retry = 9 keys, 13 ops."
     )

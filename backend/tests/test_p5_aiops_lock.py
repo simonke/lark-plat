@@ -657,18 +657,25 @@ def _run_aggregate(monkeypatch, alerts):
     return rca.aggregate(_AggDB(alerts), _AggUser(), {}, 1, 100)
 
 
-def test_b5_aggregate_window_key_is_type_entity_rule(monkeypatch):
-    """E4 window == frozen `(entity_type, entity_id, rule)` (@需求 seq3350 §一).
+def _mon_levels() -> tuple:
+    """Severity rank single source (@架构 3353 §五 / @代码reviewer 3352 C)."""
+    mon = _try("app.db.models.monitor")
+    if isinstance(mon, Exception):
+        pytest.fail(f"P5 lock: app.db.models.monitor unavailable: {mon}")
+    return tuple(mon.MON_LEVELS)
 
-    Rows differing in ANY window component must NOT collapse into one bucket:
-      * same entity + same type, DIFFERENT rule  => 2 buckets
-      * same entity + same rule, DIFFERENT type  => 2 buckets
-    Kills the "bucket by `entity_id` alone" defect (@架构 seq3348).
+
+def test_b5_aggregate_window_key_is_type_entity_rule(monkeypatch):
+    """E4 window == frozen `(entity_type, entity_id, rule)` (@需求 3350 §一 / @架构 3353).
+
+    Covers w1 (same entity, DIFF rule => 2 rows) and w2 (same entity_id, DIFF
+    entity_type, same rule => 2 rows): rows differing in ANY window component must NOT
+    collapse into one bucket. Kills the "bucket by `entity_id` alone" defect (@架构 3348).
     """
     alerts = [
         _AggAlert(1, "host", "h1", 10, "warning"),
-        _AggAlert(2, "host", "h1", 11, "warning"),  # same type+entity, DIFF rule
-        _AggAlert(3, "app", "h1", 10, "warning"),   # same entity+rule, DIFF type
+        _AggAlert(2, "host", "h1", 11, "warning"),  # w1: same type+entity, DIFF rule
+        _AggAlert(3, "app", "h1", 10, "warning"),   # w2: same entity+rule, DIFF type
     ]
     out = _run_aggregate(monkeypatch, alerts)
     rows = out["list"]
@@ -687,8 +694,8 @@ def test_b5_aggregate_window_key_is_type_entity_rule(monkeypatch):
 
 
 def test_b6_aggregate_count_and_true_max_severity(monkeypatch):
-    """Same window triple: N events => 1 bucket `count=N`; `max_severity` = TRUE max over
-    `MON_LEVELS=(info, warning, critical)` (@需求 seq3350 §二); repeated call is stable."""
+    """w3 (same window N events => 1 bucket `count=N`) + w4 (repeated call stable)
+    + w6 (`max_severity` = TRUE max over the `MON_LEVELS` single source)."""
     alerts = [
         _AggAlert(1, "host", "h1", 10, "warning"),
         _AggAlert(2, "host", "h1", 10, "critical"),  # same window triple
@@ -699,17 +706,20 @@ def test_b6_aggregate_count_and_true_max_severity(monkeypatch):
     assert len(rows) == 1, f"one window triple => one bucket; got {len(rows)}"
     bucket = rows[0]
     assert bucket["count"] == 3, f"bucket must count all 3 alerts; got {bucket['count']}"
-    assert bucket["max_severity"] == "critical", (
-        "max_severity must be the true max over (info, warning, critical); got "
-        f"{bucket['max_severity']!r} — first-non-null yields 'warning'"
+    levels = _mon_levels()
+    rank = {lvl: i for i, lvl in enumerate(levels)}
+    expected = max(["warning", "critical", "info"], key=lambda s: rank[s])
+    assert bucket["max_severity"] == expected, (
+        f"max_severity must be the true max over MON_LEVELS={levels}; got "
+        f"{bucket['max_severity']!r} (expected {expected!r}) — first-non-null yields 'warning'"
     )
     out2 = _run_aggregate(monkeypatch, alerts)
     assert out2["list"] == rows, "aggregate must be stable/idempotent across repeated calls"
 
 
 def test_b7_aggregate_rule_fallback_and_none_severity(monkeypatch):
-    """`rule` value = `rule_id` -> `rule_name` -> `""` (@需求 seq3350 §一); all-None
-    severities => `max_severity is None` (unknown == lowest, §二)."""
+    """w5: `rule` value = `rule_id` -> `rule_name` -> `""` (@需求 3350 §一);
+    w6: all-None severities => `max_severity is None` (unknown == lowest, §二)."""
     out = _run_aggregate(monkeypatch, [
         _AggAlert(1, "host", "h1", 5, "warning", rule_name="ignored"),
         _AggAlert(2, "host", "h1", None, "warning", rule_name="named"),
@@ -726,4 +736,18 @@ def test_b7_aggregate_rule_fallback_and_none_severity(monkeypatch):
     assert len(out2["list"]) == 1, f"same window triple => 1 bucket; got {len(out2['list'])}"
     assert out2["list"][0]["max_severity"] is None, (
         f"all-None severities => max_severity None; got {out2['list'][0]['max_severity']!r}"
+    )
+
+
+def test_g4_rca_severity_rank_single_source():
+    """@架构 3353 §五 符号钉: severity rank single source = `MON_LEVELS`
+    (backend/app/db/models/monitor.py); `rca_service` must IMPORT it, not re-declare
+    a local order (@代码reviewer 3352 C)."""
+    rca = _try("app.services.rca_service")
+    if isinstance(rca, Exception):
+        pytest.fail(f"P5 lock: app.services.rca_service unavailable: {rca}")
+    src = inspect.getsource(rca)
+    assert "MON_LEVELS" in src, (
+        "E4 severity rank must use the single source `MON_LEVELS` "
+        "(backend/app/db/models/monitor.py:26), not a re-declared order"
     )

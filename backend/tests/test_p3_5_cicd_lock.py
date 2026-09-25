@@ -624,7 +624,7 @@ def test_r10_action_gate_promote_from_pending_409(cicd_client):
 
 
 def test_r11_action_gate_rollback_from_succeeded_409(cicd_client):
-    """§14.1 state machine: rollback source = `failed`; from terminal `succeeded` -> 409."""
+    """§27.3 ③ state machine (amended @架构 seq3077): rollback source = {deploying, canary, failed}; from terminal `succeeded` -> 409."""
     client, set_user, set_flag, _ = cicd_client
     set_flag(True)
     set_user(_ACTION_PERMS, admin=True)
@@ -638,6 +638,50 @@ def test_r11_action_gate_rollback_from_succeeded_409(cicd_client):
     )
     rb = client.post(f"/api/v1/releases/{rid}/rollback")
     assert rb.status_code == 409, (
-        f"rollback from terminal `succeeded` must be 409 (rollback source = `failed`, §14.1); "
+        f"rollback from terminal `succeeded` must be 409 "
+        f"(rollback source = {{deploying,canary,failed}}, §27.3 ③); "
         f"got {rb.status_code}: {rb.text}"
     )
+
+
+def test_r12_release_transitions_exact_source_sets():
+    """§27.3 ③ (@架构 seq3077 amend): pin RELEASE_TRANSITIONS action->source sets.
+
+    Constant-level assertion (no DB, no unreachable-state construction). `deploy`/
+    `fail` are retained as reserved keys but have NO route (residual, owner @后端)
+    and are intentionally not asserted here.
+    """
+    mod = _try("app.services.cicd_service")
+    if isinstance(mod, Exception):
+        pytest.fail(f"P3-5 lock: app.services.cicd_service unavailable: {mod}")
+    t = getattr(mod, "RELEASE_TRANSITIONS", None)
+    assert isinstance(t, dict), "app.services.cicd_service.RELEASE_TRANSITIONS missing (§14.1)"
+    expected = {
+        "canary": (("pending", "deploying"), "canary"),
+        "promote": (("canary",), "succeeded"),
+        "rollback": (("deploying", "canary", "failed"), "rolled_back"),
+        "cancel": (("pending", "deploying", "canary"), "cancelled"),
+    }
+    for action, exp in expected.items():
+        assert action in t, f"RELEASE_TRANSITIONS missing action {action!r} (§27.3 ③)"
+        assert t[action] == exp, (
+            f"RELEASE_TRANSITIONS[{action!r}] must be exactly {exp!r} "
+            f"(§27.3 ③ @架构 seq3077); got {t[action]!r}"
+        )
+
+
+def test_r13_rollback_from_canary_200_rolled_back(cicd_client):
+    """§27.3 ③ (@架构 seq3077 amend): `canary` ∈ rollback source ⇒ 200 `rolled_back`."""
+    client, set_user, set_flag, _ = cicd_client
+    set_flag(True)
+    set_user(_ACTION_PERMS, admin=True)
+    rid = _seed_release(client, app="svc-j")
+    can = client.post(f"/api/v1/releases/{rid}/canary")
+    assert can.status_code == 200, can.text
+    rb = client.post(f"/api/v1/releases/{rid}/rollback")
+    assert rb.status_code == 200, (
+        f"rollback from `canary` must be allowed (source set includes canary; "
+        f"§27.3 ③ @架构 seq3077); got {rb.status_code}: {rb.text}"
+    )
+    st = (rb.json().get("data") or {}).get("status")
+    assert st == "rolled_back", f"rollback target must be `rolled_back`; got {st!r}"

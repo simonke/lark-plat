@@ -1174,13 +1174,43 @@ def test_f2_resolve_store_config_default_and_invalid(monkeypatch):
         rule_value = {"value": "__bogus_store__"}
 
     monkeypatch.setattr(cls, "by_key", lambda self, *a, **k: _Row(), raising=False)
-    try:
+    with pytest.raises(ValueError):
         resolve(object())
-    except AssertionError:
-        raise
-    except Exception:  # noqa: BLE001
-        return
-    pytest.fail("resolve_store_config must RAISE for an invalid configured value")
+
+
+def test_f2b_resolve_store_config_missing_key_defaults_pg_array(monkeypatch):
+    """(项2 @架构 seq3274): a non-None `db` with a MISSING/None config value must default
+    to `pg_array` (no raise); the prod gate fires ONLY on an explicit `in_memory`."""
+    mod = _emb_mod()
+    resolve = getattr(mod, "resolve_store_config", None)
+    if resolve is None:
+        pytest.fail("P4 lock ⑧: resolve_store_config missing")
+    pg = getattr(mod, "EMBEDDING_STORE_PG_ARRAY", "pg_array")
+
+    repo = _try("app.repositories")
+    cls = None if isinstance(repo, Exception) else getattr(repo, "ConfigRuleRepository", None)
+    if cls is None or not hasattr(cls, "by_key"):
+        pytest.fail("P4 lock ⑧: ConfigRuleRepository.by_key unavailable")
+
+    class _Missing:
+        rule_value = None
+
+    monkeypatch.setattr(cls, "by_key", lambda self, *a, **k: _Missing(), raising=False)
+    got = resolve(object())
+    assert got == pg, f"f2b: None rule_value must default to {pg!r}; got {got!r}"
+
+    monkeypatch.setattr(cls, "by_key", lambda self, *a, **k: None, raising=False)
+    got_absent = resolve(object())
+    assert got_absent == pg, f"f2b: absent rule row must default to {pg!r}; got {got_absent!r}"
+
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    monkeypatch.setattr(mod, "settings", SimpleNamespace(app_env="prod"), raising=False)
+    prod_missing = resolve(object())
+    assert prod_missing == pg, (
+        f"f2b: prod + missing value must still be {pg!r} (gate fires only on an explicit "
+        f"in_memory); got {prod_missing!r}"
+    )
 
 
 def test_f3_build_embedding_store_dispatch_and_no_hardcode():

@@ -1433,4 +1433,128 @@ export interface CmdbImpact {
   truncated: boolean
 }
 
+// ---------------------------------------------------------------- workflow Playbook (P3-4, tuple seq2894 / §13)
+export type WorkflowNodeType = 'exec_task' | 'manual_approval' | 'wait' | 'callback' | 'sleep'
+export type WorkflowRunStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+export type WorkflowNodeRunStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'waiting'
+export type WorkflowTriggerType = 'manual' | 'ticket' | 'schedule' | 'alert' | 'release'
+
+export interface WorkflowDefinitionNode {
+  key: string
+  type: WorkflowNodeType
+  config: Record<string, unknown>
+  depends_on: string[]
+  on_success?: string[]
+  on_failure?: string[]
+}
+
+export interface WorkflowDefinition {
+  nodes: WorkflowDefinitionNode[]
+}
+
+export interface Workflow {
+  id: number
+  name: string
+  description: string
+  current_version: number
+  enabled: number
+  created_by: number | null
+  created_at: string
+  updated_at: string
+}
+
+export interface WorkflowOut extends Workflow {
+  definition: WorkflowDefinition | null
+}
+
+export interface WorkflowCreate {
+  name: string
+  description?: string
+  definition?: WorkflowDefinition | null
+}
+
+export interface WorkflowUpdate {
+  name?: string
+  description?: string
+  enabled?: number
+}
+
+export interface WorkflowVersion {
+  id: number
+  workflow_id: number
+  version: number
+  definition: WorkflowDefinition
+  editor_id: number | null
+  created_at: string
+}
+
+export interface WorkflowVersionList {
+  list: WorkflowVersion[]
+  total: number
+}
+
+export interface WorkflowVersionCreate {
+  definition: WorkflowDefinition
+  change_log?: string
+}
+
+export interface WorkflowRun {
+  id: number
+  workflow_id: number
+  workflow_version: number
+  status: WorkflowRunStatus
+  trigger_type: WorkflowTriggerType
+  trigger_ref: Record<string, unknown> | null
+  context: Record<string, unknown> | null
+  started_at: string | null
+  finished_at: string | null
+  error: string | null
+  created_by: number | null
+  created_at: string
+}
+
+export interface WorkflowNodeRun {
+  id: number
+  run_id: number
+  node_key: string
+  node_type: WorkflowNodeType
+  status: WorkflowNodeRunStatus
+  exec_task_id: number | null
+  approval_id: number | null
+  attempt: number
+  output: Record<string, unknown> | null
+  error: string | null
+  started_at: string | null
+  finished_at: string | null
+}
+
+export interface WorkflowRunDetail {
+  run: WorkflowRun
+  nodes: WorkflowNodeRun[]
+}
+
+export interface WorkflowRunIn {
+  trigger_type?: WorkflowTriggerType
+  trigger_ref?: Record<string, unknown> | null
+  context?: Record<string, unknown> | null
+}
+
+export interface WorkflowRunId {
+  run_id: number
+}
+
+export interface WorkflowQuery {
+  name?: string
+  enabled?: number
+  page?: number
+  size?: number
+}
+
+export interface WorkflowRunQuery {
+  workflow_id?: number
+  status?: string
+  page?: number
+  size?: number
+}
+
 

@@ -78,72 +78,92 @@ def _executor_ssh_fallback(db: Session) -> bool:
     return bool(rule.rule_value.get("value", False))
 
 
-def create_task(db: Session, user, data: schemas.ExecTaskCreate) -> dict:
-    # 1. validate permission
-    user.require_perm("exec:task:run")
-    # 2. validate targets are visible hosts (US-03)
+def create_exec_task_record(
+    db: Session,
+    *,
+    name: str,
+    kind: str,
+    target_host_ids: list[int],
+    script_id: int | None = None,
+    script_version: int | None = None,
+    command: str | None = None,
+    params: dict | None = None,
+    mode: str = "batch",
+    timeout_sec: int = 300,
+    retry: int = 0,
+    created_by: int | None = None,
+    requester_id: int | None = None,
+    visible_group_ids: list[int] | None = None,
+) -> dict:
+    """Shared exec-task core: row build + host validation + sensitive gate +
+    approval linkage + executor resolution (caller dispatches).
+
+    Used by ``create_task`` (caller-perm + US-03 visibility in the wrapper) and by
+    the P3-4 workflow engine (system driver: ``visible_group_ids=None`` skips the
+    US-03 gate exactly as an admin does). Reuse — not a copy — of the一期 exec
+    semantics per §27.2 R-复用 (@架构 seq2956 / @需求 seq2957).
+    """
+    # 1. validate targets (existence always; US-03 visibility when scoped)
     host_repo = HostRepository(db)
     hosts: dict[int, Host] = {}
-    for hid in data.target_host_ids:
+    for hid in target_host_ids:
         host = host_repo.get(hid)
         if host is None:
             raise NotFoundError(f"host {hid} not found")
-        if not user.is_admin and host.group_id not in user.visible_group_ids:
+        if visible_group_ids is not None and host.group_id not in visible_group_ids:
             raise ForbiddenError(f"no data permission for host {hid}")
         hosts[hid] = host
 
     script_content = None
-    if data.kind == "script":
-        if not data.script_id:
+    if kind == "script":
+        if not script_id:
             raise BadRequestError("script_id required for kind=script")
-        script = ScriptRepository(db).get(data.script_id)
+        script = ScriptRepository(db).get(script_id)
         if script is None:
             raise NotFoundError("script not found")
-        version = data.script_version or script.current_version
+        version = script_version or script.current_version
         sv = ScriptVersionRepository(db).by_script_version(script.id, version)
         if sv is None:
             raise NotFoundError("script version not found")
         script_content = sv.content
-    elif data.kind == "command":
-        if not data.command:
+    elif kind == "command":
+        if not command:
             raise BadRequestError("command required for kind=command")
     else:
         raise BadRequestError("invalid kind")
 
-    # 3. sensitive detection -> approval linkage (US-06, US-09)
-    sensitive, reason = detect_sensitive(db, data.command, script_content, len(hosts))
-    rules = _sensitive_rules(db)
+    # 2. sensitive detection -> approval linkage (US-06, US-09)
+    sensitive, reason = detect_sensitive(db, command, script_content, len(hosts))
     approve_required = 1 if sensitive else 0
 
     task = ExecTask(
         task_no=_task_no(db),
-        name=data.name,
-        kind=data.kind,
-        script_id=data.script_id,
-        script_version=data.script_version,
-        command=data.command,
-        params=data.params,
-        target_host_ids={"ids": data.target_host_ids},
-        mode=data.mode,
-        timeout_sec=data.timeout_sec,
-        retry=data.retry,
+        name=name,
+        kind=kind,
+        script_id=script_id,
+        script_version=script_version,
+        command=command,
+        params=params,
+        target_host_ids={"ids": target_host_ids},
+        mode=mode,
+        timeout_sec=timeout_sec,
+        retry=retry,
         sensitive_flag=1 if sensitive else 0,
         approve_required=approve_required,
         status="created",
-        created_by=user.id,
+        created_by=created_by,
     )
     task_repo = ExecTaskRepository(db)
     task_repo.add(task)
     db.flush()
 
-    host_repo = HostRepository(db)
     task_host_repo = ExecTaskHostRepository(db)
     # P2-SS: the executor is the connector unless the ssh_fallback routing switch
     # is on and ssh is usable. Flag off (default) => value == host.connector,
     # byte-identical to the pre-P2-SS behaviour; approval/sensitivity gates below
     # are untouched.
     ssh_fallback = _executor_ssh_fallback(db)
-    for hid in data.target_host_ids:
+    for hid in target_host_ids:
         h = hosts[hid]
         task_host_repo.add(ExecTaskHost(
             exec_task_id=task.id, host_id=h.id, hostname=h.hostname, ip=h.ip,
@@ -159,7 +179,7 @@ def create_task(db: Session, user, data: schemas.ExecTaskCreate) -> dict:
             biz_id=task.id,
             title=f"执行审批：{task.name}",
             reason=f"敏感操作需审批：{reason}",
-            requester_id=user.id,
+            requester_id=requester_id if requester_id is not None else (created_by or 0),
             sensitive_hit=reason,
             status="pending",
         )
@@ -175,19 +195,45 @@ def create_task(db: Session, user, data: schemas.ExecTaskCreate) -> dict:
         return {"id": task.id, "task_no": task.task_no, "status": "awaiting_approval",
                 "approve_required": True, "approval_id": approval_id, "sensitive_flag": True}
 
-    # 4. direct dispatch
+    # 3. mark running (caller dispatches: create_task -> _kick_off_exec; the
+    #    P3-4 engine -> in-process exec_dispatch, host ①)
     if not task_repo.optimistic_update(task.id, "created", "running", task.version):
         raise ConflictError("task state changed concurrently")
     task.version += 1
     task.started_at = datetime.now(timezone.utc)
     db.commit()
 
-    _kick_off_exec(db, task.id)
     return {"id": task.id, "task_no": task.task_no, "status": "running",
             "approve_required": False, "approval_id": None, "sensitive_flag": False}
 
 
-def _kick_off_exec(db: Session, task_id: int) -> None:
+def create_task(db: Session, user, data: schemas.ExecTaskCreate) -> dict:
+    # 1. validate permission
+    user.require_perm("exec:task:run")
+    # 2. delegate to the shared core (US-03 visibility enforced for non-admins)
+    result = create_exec_task_record(
+        db,
+        name=data.name,
+        kind=data.kind,
+        target_host_ids=data.target_host_ids,
+        script_id=data.script_id,
+        script_version=data.script_version,
+        command=data.command,
+        params=data.params,
+        mode=data.mode,
+        timeout_sec=data.timeout_sec,
+        retry=data.retry,
+        created_by=user.id,
+        requester_id=user.id,
+        visible_group_ids=None if getattr(user, "is_admin", False) else list(user.visible_group_ids),
+    )
+    # 3. dispatch (approval-gated tasks are dispatched by the approval linkage)
+    if result.get("status") == "running":
+        _kick_off_exec(db, result["id"])
+    return result
+
+
+def _kick_off_exec(db: Session, task_id: int, *, in_process: bool = False) -> None:
     """Dispatch an exec task.
 
     Targets with a live agent in THIS process require in-process dispatch so the
@@ -195,8 +241,13 @@ def _kick_off_exec(db: Session, task_id: int) -> None:
     separate process with an empty agent registry). Otherwise fall back to the
     celery worker (mock/degraded loop), and to an in-process run when the broker
     is unavailable (existing degraded-mode intent).
+
+    ``in_process=True`` forces the in-process path (P3-4 engine host ①): the
+    workflow driver must not depend on a celery worker being up — a
+    reachable-but-unconsumed broker would enqueue the task and leave exec_task
+    nodes hanging (D2-class false-green).
     """
-    if task_has_inprocess_agent(db, task_id):
+    if in_process or task_has_inprocess_agent(db, task_id):
         exec_dispatch(task_id)
         return
     try:
@@ -310,6 +361,40 @@ def ws_token(db: Session, user, task_id: int, task_host_id: int) -> dict:
     return {"token": create_ws_token(task_host_id)}
 
 
+_EXEC_CANCELLABLE_STATUSES = ("created", "awaiting_approval", "approved", "running", "pending")
+
+
+def cancel_exec_task_record(db: Session, task: ExecTask) -> bool:
+    """Perm-free cancellation core (mirror of ``create_exec_task_record``).
+
+    Drives the task row -> canonical ``canceled`` under CAS, cancels its
+    pending/running host rows, interrupts live agents and closes any
+    still-pending approval. Returns ``True`` when the task moved to ``canceled``;
+    ``False`` when it is already terminal or a concurrent change was detected.
+
+    Reused by ``stop_task`` (caller enforces perm/ownership/state guard) and by
+    the P3-4 workflow engine's cancel propagation, so the exec semantics (host
+    rows, agent stop, orphan approval) are never bypassed by a raw status write
+    (R-复用; @代码reviewer D1).
+    """
+    if task.status not in _EXEC_CANCELLABLE_STATUSES:
+        return False
+    if not ExecTaskRepository(db).optimistic_update(task.id, task.status, "canceled", task.version):
+        return False
+    task.version += 1
+    task.finished_at = datetime.now(timezone.utc)
+    if getattr(task, "approval_id", None):
+        _close_orphan_approval(db, task)
+    th_repo = ExecTaskHostRepository(db)
+    for th in th_repo.by_task(task.id):
+        if th.status in ("pending", "running"):
+            was_running = th.status == "running"
+            th_repo.update_status(th.id, "canceled", finished_at=datetime.now(timezone.utc))
+            if was_running:
+                _send_agent_stop(db, th, task.id)
+    return True
+
+
 def stop_task(db: Session, user, task_id: int) -> dict:
     user.require_perm("exec:task:stop")
     repo = ExecTaskRepository(db)
@@ -320,17 +405,8 @@ def stop_task(db: Session, user, task_id: int) -> dict:
         raise ForbiddenError("no permission to stop this task")
     if task.status not in ("running", "pending"):
         raise BadRequestError("task not running")
-    if not repo.optimistic_update(task.id, task.status, "canceled", task.version):
+    if not cancel_exec_task_record(db, task):
         raise ConflictError("task state changed concurrently")
-    task.version += 1
-    task.finished_at = datetime.now(timezone.utc)
-    th_repo = ExecTaskHostRepository(db)
-    for th in th_repo.by_task(task_id):
-        if th.status in ("pending", "running"):
-            was_running = th.status == "running"
-            th_repo.update_status(th.id, "canceled", finished_at=datetime.now(timezone.utc))
-            if was_running:
-                _send_agent_stop(db, th, task.id)
     db.commit()
     return {"id": task.id, "status": "canceled"}
 

@@ -96,11 +96,19 @@ def _approve_exec(db: Session, a: ApprovalRequest) -> None:
 
 
 def _approve_linkages(db: Session, a: ApprovalRequest) -> None:
-    """Route approval side-effects by biz_type. Exec -> dispatch; terminal -> open."""
+    """Route approval side-effects by biz_type. Exec -> dispatch; terminal -> open.
+
+    P3-4 adds the ``workflow`` routing branch (engine tuple D): approvals raised
+    by a workflow ``manual_approval`` node have no exec_task/terminal session to
+    activate — the workflow engine driver observes ``a.status`` and releases the
+    node. Add-only: ``exec``/``terminal`` behaviour is unchanged.
+    """
     if a.biz_type == "terminal":
         from app.services import terminal_service
 
         terminal_service.activate_on_approval(db, a)
+        return
+    if a.biz_type == "workflow":
         return
     _approve_exec(db, a)
 

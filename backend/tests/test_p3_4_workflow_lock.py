@@ -21,7 +21,7 @@ Scope of THIS lock (name-stable surface)
 ----------------------------------------
 P1  9 permission codes ∈ seed `PERMISSION_TREE`; `workflow:retry` reuses `workflow:run` (NOT a code)
 A1  openapi: 9 new URL keys present with correct methods (param names shape-matched)
-A2  openapi `paths` == 142 (133 + 9 URL keys; URL-keyed, NOT operations; ops 13)
+A2  openapi `paths` == 144 (133 + 9 P3-4 keys + 2 P3-4b keys; URL-keyed, NOT operations)
 M1  4 tables registered: workflow / workflow_version / workflow_run / workflow_node_run
 M2  core columns per table (§13.2)
 M3  module word-lists: RUN_STATUSES / NODE_TYPES / NODE_STATUSES / TERMINAL_RUN_STATUSES / TRIGGER_TYPES
@@ -150,12 +150,18 @@ def test_a1_p3_4_paths_present_with_methods():
     assert not problems, "P3-4 openapi surface incomplete: " + "; ".join(problems)
 
 
-def test_a2_paths_count_142():
+def test_a2_paths_count_144():
     paths = _openapi_paths()
-    assert len(paths) == 142, (
-        f"P3-4 adds 9 URL keys => paths must be 142 (133 + 9); got {len(paths)}. "
+    # Superseded by P3-4b (engine/WS): the batch adds 2 further URL keys
+    # (GET …/ws-token + POST …/callback/{node_key}) => 142 + 2 == 144.
+    # Lock-owner decision (@单元 seq2954): keep EXACT equality, NOT a monotonic
+    # `>=`, so a future accidental 145 still fails. The 9 P3-4 keys stay pinned by A1.
+    assert len(paths) == 144, (
+        f"P3-4/P3-4b paths must be exactly 144 (133 + 9 P3-4 + 2 P3-4b); got {len(paths)}. "
         "OpenAPI `paths` is URL-keyed; /workflows·/{id}·/{id}/versions·/{id}/rollback·/{id}/run "
-        "· /workflow-runs·/{id}·/{id}/cancel·/{id}/retry = 9 keys, 13 ops."
+        "· /workflow-runs·/{id}·/{id}/cancel·/{id}/retry = 9 keys, 13 ops; P3-4b adds "
+        "GET /api/v1/workflow-runs/{id}/ws-token + POST …/callback/{node_key} "
+        "(the WS endpoint itself is NOT in openapi)."
     )
 
 

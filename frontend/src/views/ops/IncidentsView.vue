@@ -86,9 +86,12 @@
         <el-card class="panel">
           <template #header>
             <div class="toolbar">
-              <span class="title">AI 副驾</span>
+              <span class="title">
+                AI 副驾
+                <el-tag size="small" type="info" effect="plain">检索域：kb</el-tag>
+              </span>
               <el-button v-perm="'ai:use'" size="small" type="primary" :loading="aiLoading" :disabled="!selected" @click="runAi">
-                在知识库中检索
+                在知识库检索相关依据
               </el-button>
             </div>
           </template>

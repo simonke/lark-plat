@@ -47,6 +47,9 @@
           <template #default="{ row }">{{ row.entity_type ?? '-' }}</template>
         </el-table-column>
         <el-table-column prop="entity_id" label="实体" min-width="160" show-overflow-tooltip />
+        <el-table-column label="规则" width="120" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.rule ? row.rule : '—' }}</template>
+        </el-table-column>
         <el-table-column label="告警数" width="90">
           <template #default="{ row }">
             <el-tag size="small" effect="plain">{{ row.count }}</el-tag>

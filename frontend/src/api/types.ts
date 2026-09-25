@@ -1781,6 +1781,8 @@ export interface AiFeedbackIn {
 export interface AlertAggregateItem {
   entity_id: string
   entity_type: string | null
+  // `rule` is the additive window key (rule_id -> rule_name -> ""); tolerate absence.
+  rule?: string | null
   count: number
   max_severity: MonSeverity | null
   alert_ids: number[]

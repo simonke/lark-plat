@@ -49,6 +49,14 @@
           <el-menu-item index="/tickets" v-if="auth.hasPerm('ticket:list')">工单管理</el-menu-item>
           <el-menu-item index="/kb/articles" v-if="auth.hasPerm('kb:article:list')">知识库</el-menu-item>
         </el-sub-menu>
+        <el-sub-menu index="workflow" v-if="auth.hasPerm('workflow:list') || auth.hasPerm('workflow:view')">
+          <template #title>
+            <el-icon><Share /></el-icon>
+            <span>编排中心</span>
+          </template>
+          <el-menu-item index="/workflows" v-if="auth.hasPerm('workflow:list')">编排 Playbook</el-menu-item>
+          <el-menu-item index="/workflow-runs" v-if="auth.hasPerm('workflow:view')">运行记录</el-menu-item>
+        </el-sub-menu>
         <el-sub-menu index="monitoring" v-if="auth.hasPerm('monitor:metric:view') || auth.hasPerm('monitor:alert:list') || auth.hasPerm('monitor:rule:list')">
           <template #title>
             <el-icon><DataLine /></el-icon>
@@ -106,7 +114,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { DataBoard, Setting, ArrowDown, Monitor, Promotion, Finished, DataLine } from '@element-plus/icons-vue'
+import { DataBoard, Setting, ArrowDown, Monitor, Promotion, Finished, DataLine, Share } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 import { changePassword } from '../api/auth'
 import { extractError } from '../api/http'

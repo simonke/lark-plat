@@ -145,6 +145,26 @@ const routes: RouteRecordRaw[] = [
         name: 'kb-article',
         component: () => import('../views/kb/KbArticleView.vue'),
       },
+      {
+        path: 'workflows',
+        name: 'workflows',
+        component: () => import('../views/workflow/WorkflowsView.vue'),
+      },
+      {
+        path: 'workflows/:id',
+        name: 'workflow-detail',
+        component: () => import('../views/workflow/WorkflowDetailView.vue'),
+      },
+      {
+        path: 'workflow-runs',
+        name: 'workflow-runs',
+        component: () => import('../views/workflow/WorkflowRunsView.vue'),
+      },
+      {
+        path: 'workflow-runs/:id',
+        name: 'workflow-run-detail',
+        component: () => import('../views/workflow/WorkflowRunDetailView.vue'),
+      },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/' },

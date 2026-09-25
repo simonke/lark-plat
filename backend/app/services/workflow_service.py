@@ -108,6 +108,7 @@ def _workflow_out(wf: Workflow, definition: dict | None) -> dict:
         "id": wf.id,
         "name": wf.name,
         "description": wf.description,
+        "kind": wf.kind,
         "current_version": wf.current_version,
         "enabled": wf.enabled,
         "definition": definition,
@@ -345,6 +346,7 @@ def create_workflow(db: Session, user, data: sch.WorkflowCreate) -> dict:
     wf = Workflow(
         name=data.name,
         description=data.description or "",
+        kind=data.kind or "workflow",
         current_version=1,
         enabled=1,
         created_by=getattr(user, "id", None),

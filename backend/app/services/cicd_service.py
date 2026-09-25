@@ -54,11 +54,16 @@ _RELEASE_DEFINITION = {
 
 # action -> (allowed_from, target_status) — mirrors WORKFLOW_TRANSITIONS (action-keyed).
 # pending->deploying->canary->succeeded ; failed->rolled_back ; terminal cancelled.
+# `deploy`/`fail` are *reserved* (declared for the full lifecycle) but have NO route:
+# `deploying`/`failed` stay API-unreachable until the run-系 seam (release `failed` <-
+# workflow_run) lands — a post-P3-5 add-only residual (@架构 ③ amend). Because `failed`
+# is unreachable, `rollback` also accepts a reachable `canary` source (amended authority)
+# so rollback stays reachable, while `promote` is narrowed to `canary` only.
 RELEASE_TRANSITIONS = {
-    "deploy": (("pending",), "deploying"),
+    "deploy": (("pending",), "deploying"),  # reserved (no route)
     "canary": (("pending", "deploying"), "canary"),
-    "promote": (("deploying", "canary"), "succeeded"),
-    "fail": (("deploying", "canary"), "failed"),
+    "promote": (("canary",), "succeeded"),
+    "fail": (("deploying", "canary"), "failed"),  # reserved (no route)
     "rollback": (("deploying", "canary", "failed"), "rolled_back"),
     "cancel": (("pending", "deploying", "canary"), "cancelled"),
 }

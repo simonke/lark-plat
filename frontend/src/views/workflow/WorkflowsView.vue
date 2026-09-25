@@ -30,6 +30,11 @@
       <el-table :data="rows" v-loading="loading" border @row-click="openDetail">
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="name" label="名称" min-width="180" show-overflow-tooltip />
+        <el-table-column label="类型" width="90">
+          <template #default="{ row }">
+            <el-tag :type="kindTag(row.kind)" size="small" effect="plain">{{ kindLabel(row.kind) }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
         <el-table-column label="当前版本" width="100">
           <template #default="{ row }">v{{ row.current_version }}</template>
@@ -96,7 +101,7 @@ import { listWorkflows, createWorkflow, deleteWorkflow } from '../../api/workflo
 import { extractError } from '../../api/http'
 import { useAuthStore } from '../../stores/auth'
 import type { Workflow, WorkflowDefinition, WorkflowQuery } from '../../api/types'
-import { formatDefinition, formatTime, parseDefinition } from './helpers'
+import { formatDefinition, formatTime, kindLabel, kindTag, parseDefinition } from './helpers'
 import PlaybookSuggestDialog from './PlaybookSuggestDialog.vue'
 
 const router = useRouter()

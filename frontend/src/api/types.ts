@@ -1452,10 +1452,14 @@ export interface WorkflowDefinition {
   nodes: WorkflowDefinitionNode[]
 }
 
+export type WorkflowKind = 'workflow' | 'playbook'
+
 export interface Workflow {
   id: number
   name: string
   description: string
+  // `kind` discriminates the single engine (P5): 'playbook' for adopted AI drafts.
+  kind?: WorkflowKind
   current_version: number
   enabled: number
   created_by: number | null
@@ -1471,6 +1475,8 @@ export interface WorkflowCreate {
   name: string
   description?: string
   definition?: WorkflowDefinition | null
+  // E5 (P5): adopted AI playbooks set this to 'playbook'; omit -> server default 'workflow'.
+  kind?: WorkflowKind
 }
 
 export interface WorkflowUpdate {

@@ -124,7 +124,12 @@ async function adopt() {
   }
   adopting.value = true
   try {
-    await createWorkflow({ name: name.value.trim(), description: `AI 预案草案（${suggestion.value.goal}）`, definition })
+    await createWorkflow({
+      name: name.value.trim(),
+      description: `AI 预案草案（${suggestion.value.goal}）`,
+      definition,
+      kind: 'playbook',
+    })
     ElMessage.success('已采纳并创建（需人工运行）')
     emit('update:modelValue', false)
     emit('created')

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseDefinition, callbackOutput, formatDefinition, runStatusTag } from '../src/views/workflow/helpers'
+import { parseDefinition, callbackOutput, formatDefinition, runStatusTag, kindLabel, kindTag } from '../src/views/workflow/helpers'
 
 describe('workflow helpers (P3-4)', () => {
   it('parseDefinition accepts {"nodes":[]}', () => {
@@ -35,5 +35,13 @@ describe('workflow helpers (P3-4)', () => {
     expect(runStatusTag('succeeded')).toBe('success')
     expect(runStatusTag('failed')).toBe('danger')
     expect(runStatusTag('cancelled')).toBe('info')
+  })
+
+  it('kindLabel/kindTag discriminate playbook vs workflow (P5)', () => {
+    expect(kindLabel('playbook')).toBe('预案')
+    expect(kindLabel('workflow')).toBe('编排')
+    expect(kindLabel(undefined)).toBe('编排')
+    expect(kindTag('playbook')).toBe('warning')
+    expect(kindTag('workflow')).toBe('primary')
   })
 })

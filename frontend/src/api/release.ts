@@ -21,6 +21,16 @@ export async function canaryRelease(id: number): Promise<Release> {
   return data.data
 }
 
+export async function deployRelease(id: number): Promise<Release> {
+  const { data } = await http.post<Result<Release>>(`/releases/${id}/deploy`)
+  return data.data
+}
+
+export async function failRelease(id: number): Promise<Release> {
+  const { data } = await http.post<Result<Release>>(`/releases/${id}/fail`)
+  return data.data
+}
+
 export async function promoteRelease(id: number): Promise<Release> {
   const { data } = await http.post<Result<Release>>(`/releases/${id}/promote`)
   return data.data

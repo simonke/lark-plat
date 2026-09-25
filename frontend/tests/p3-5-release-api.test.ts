@@ -3,7 +3,9 @@ import {
   listReleases,
   createRelease,
   getRelease,
+  deployRelease,
   canaryRelease,
+  failRelease,
   promoteRelease,
   rollbackRelease,
   cancelRelease,
@@ -75,6 +77,20 @@ describe('release API (P3-5)', () => {
     const result = await canaryRelease(7)
     expect(http.post).toHaveBeenCalledWith('/releases/7/canary')
     expect(result.status).toBe('canary')
+  })
+
+  it('deploys (POST /releases/{id}/deploy) -> deploying', async () => {
+    vi.mocked(http.post).mockResolvedValue(ok({ ...RELEASE, status: 'deploying' }))
+    const result = await deployRelease(7)
+    expect(http.post).toHaveBeenCalledWith('/releases/7/deploy')
+    expect(result.status).toBe('deploying')
+  })
+
+  it('fails (POST /releases/{id}/fail) -> failed', async () => {
+    vi.mocked(http.post).mockResolvedValue(ok({ ...RELEASE, status: 'failed' }))
+    const result = await failRelease(7)
+    expect(http.post).toHaveBeenCalledWith('/releases/7/fail')
+    expect(result.status).toBe('failed')
   })
 
   it('promotes (POST /releases/{id}/promote)', async () => {

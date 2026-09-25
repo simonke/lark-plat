@@ -1348,11 +1348,11 @@ def test_b21_release_run_failed_flips_linked_release(env, monkeypatch):
     )
 
 
-def test_b21b_release_seam_gated_by_trigger_type_and_success(env, monkeypatch):
-    """① negatives (@代码reviewer seq3155): the seam is gated, not "any failed run flips a release".
+def test_b22_non_release_run_failed_does_not_flip_release(env, monkeypatch):
+    """① negative (@架构 seq3156 / @需求 seq3157): gate = `trigger_type=='release'` AND failed.
 
-    (a) a NON-release run reaching `failed` must NOT touch a linked release;
-    (b) a release run reaching `succeeded` must NOT flip its release (promote收口).
+    A NON-release run reaching `failed` must NOT touch a linked release — else any
+    failed run would mutate releases (false-green).
     """
     session, set_flag = env
     _set_config(session, "feature.cicd", True)
@@ -1362,32 +1362,44 @@ def test_b21b_release_seam_gated_by_trigger_type_and_success(env, monkeypatch):
     monkeypatch.setattr(eng, "DRIVER_AUTOSTART", False, raising=False)
     from app.db.models.cicd import Release  # noqa: PLC0415
 
-    # (a) non-release run -> failed; the release it points at must stay `canary`
     fail_def = {
         "nodes": [
             {"key": "e", "type": "exec_task", "config": {"host_ids": [1], "command": "true"}, "depends_on": []}
         ]
     }
-    rid_a = _seed_release_triggered_run(session, fail_def, trigger_type="manual")
-    rel_a = _seed_release_linked_to_run(session, rid_a, status="canary")
-    _force_run_running(session, rid_a)
-    _force_node(session, rid_a, "e", status="running", exec_task_id=987654321)
+    rid = _seed_release_triggered_run(session, fail_def, trigger_type="manual")
+    rel = _seed_release_linked_to_run(session, rid, status="canary")
+    _force_run_running(session, rid)
+    _force_node(session, rid, "e", status="running", exec_task_id=987654321)
     eng.recover_runs()
-    assert _step_until_done(session, rid_a) == "failed", "non-release run must still reach failed"
+    assert _step_until_done(session, rid) == "failed", "non-release run must still reach failed"
     session.expire_all()
-    assert session.get(Release, rel_a).status == "canary", (
+    assert session.get(Release, rel).status == "canary", (
         "P3-6 ①: a NON-release run (`trigger_type!='release'`) reaching `failed` must NOT "
-        "flip a release — else any failed run would mutate releases (false-green)"
+        "flip a release — the seam is gated by trigger_type=='release'"
     )
 
-    # (b) release run -> succeeded; release must NOT auto-change (still `promote`收口)
-    rid_b = _seed_release_triggered_run(session, {"nodes": [_sleep("s")]})
-    rel_b = _seed_release_linked_to_run(session, rid_b, status="canary")
-    assert _step_until_done(session, rid_b) == "succeeded", "release run must succeed here"
+
+def test_b23_release_run_succeeded_does_not_flip_release(env, monkeypatch):
+    """① negative (@架构 seq3156 / @需求 seq3157): a succeeded release-run must not auto-flip.
+
+    `succeeded` stays收口 by `promote`; the seam must NOT fire on the `:400` branch.
+    """
+    session, set_flag = env
+    _set_config(session, "feature.cicd", True)
+    eng = _try("app.services.workflow_engine")
+    if isinstance(eng, Exception):
+        pytest.fail(f"P3-6 lock: workflow_engine unavailable: {eng}")
+    monkeypatch.setattr(eng, "DRIVER_AUTOSTART", False, raising=False)
+    from app.db.models.cicd import Release  # noqa: PLC0415
+
+    rid = _seed_release_triggered_run(session, {"nodes": [_sleep("s")]})  # trigger_type='release'
+    rel = _seed_release_linked_to_run(session, rid, status="canary")
+    assert _step_until_done(session, rid) == "succeeded", "release run must succeed here"
     session.expire_all()
-    assert session.get(Release, rel_b).status == "canary", (
+    assert session.get(Release, rel).status == "canary", (
         "P3-6 ①: a release run reaching `succeeded` must NOT auto-flip the release "
-        "(only `promote`收口)"
+        "(only `promote`收口; seam is on the `failed` branch)"
     )
 
 

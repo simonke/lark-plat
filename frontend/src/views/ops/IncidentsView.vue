@@ -88,7 +88,7 @@
             <div class="toolbar">
               <span class="title">AI 副驾</span>
               <el-button v-perm="'ai:use'" size="small" type="primary" :loading="aiLoading" :disabled="!selected" @click="runAi">
-                分析此事件
+                在知识库中检索
               </el-button>
             </div>
           </template>
@@ -169,6 +169,7 @@ async function runAi() {
     aiResult.value = await kbAnswer({
       q: `${selected.value.entity_type} ${selected.value.entity_id} ${selected.value.action}`,
       limit: 5,
+      entity_type: 'kb',
     })
   } catch (e) {
     aiResult.value = { answer: '', citations: [], authoritative: false, fail_closed: true }

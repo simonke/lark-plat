@@ -40,6 +40,12 @@ async def lifespan(app: FastAPI):
         logger.exception("seed data failed; continuing startup")
     finally:
         db.close()
+    try:
+        from app.services import workflow_engine
+
+        workflow_engine.recover_runs()
+    except Exception:
+        logging.getLogger(__name__).exception("workflow driver recovery failed; continuing")
     yield
     close_redis()
 
@@ -163,7 +169,7 @@ from app.api.v1.endpoints import (  # noqa: E402
     transfer,
     workflow,
 )
-from app.ws import agent_ws, exec_ws, monitor_ws, terminal_ws, transfer_ws  # noqa: E402
+from app.ws import agent_ws, exec_ws, monitor_ws, terminal_ws, transfer_ws, workflow_ws  # noqa: E402
 
 for router in (
     auth.router,
@@ -188,6 +194,12 @@ app.include_router(workflow.run_router, prefix=settings.api_prefix)
 
 app.include_router(exec_ws.router, prefix=settings.api_prefix)
 app.include_router(transfer_ws.router, prefix=settings.api_prefix)
+# P3-4b WS: registered directly so the route object is a first-class
+# WebSocketRoute on `app.routes` (FastAPI 0.141 lazily wraps include_router
+# entries in `_IncludedRouter`, which route-introspection contracts cannot see).
+app.add_api_websocket_route(
+    f"{settings.api_prefix}/ws/workflow-runs/{{run_id}}", workflow_ws.ws_workflow_run
+)
 app.include_router(agent_ws.router, prefix=settings.api_prefix)
 app.include_router(terminal_ws.router, prefix=settings.api_prefix)
 app.include_router(monitor_ws.router, prefix=settings.api_prefix)

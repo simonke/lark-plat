@@ -12,19 +12,24 @@ baseline caps (nodes<=100 / edges<=500) all raise **422**.
 
 from __future__ import annotations
 
+import json
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from jose import JWTError, jwt
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.exceptions import (
     BadRequestError,
     ConflictError,
     NotFoundError,
+    UnauthorizedError,
     ValidationError,
 )
+from app.core.security import create_token
 from app.db.models.workflow import (
     NODE_TYPES,
     TRIGGER_TYPES,
@@ -38,6 +43,7 @@ from app.schemas import workflow as sch
 
 _MAX_NODES = 100
 _MAX_EDGES = 500
+_MAX_CALLBACK_PAYLOAD = 65536
 
 # action -> (allowed_from, target_status) — mirrors TICKET_TRANSITIONS (action-keyed).
 # run: pending -> running -> (succeeded|failed|cancelled); cancel only pre-terminal.
@@ -249,6 +255,10 @@ def _start_run(
         )
     db.commit()
     db.refresh(run)
+    from app.services import workflow_engine
+
+    if workflow_engine.DRIVER_AUTOSTART:
+        workflow_engine.start_driver(run.id)
     return run
 
 
@@ -470,6 +480,21 @@ def cancel_run(db: Session, user, run_id: int) -> dict:
         raise NotFoundError("workflow run not found")
     _apply_run_transition(run, "cancel")
     run.finished_at = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
+    from app.db.models.exec import ExecTask
+
+    for node in db.scalars(
+        select(WorkflowNodeRun).where(
+            WorkflowNodeRun.run_id == run_id,
+            WorkflowNodeRun.status.in_(("pending", "running", "waiting")),
+        )
+    ).all():
+        if node.node_type == "exec_task" and node.exec_task_id:
+            task = db.get(ExecTask, node.exec_task_id)
+            if task is not None and task.status in ("created", "running", "awaiting_approval"):
+                task.status = "cancelled"
+        node.status = "skipped"
+        node.finished_at = now
     db.commit()
     db.refresh(run)
     return _run_out(run)
@@ -489,3 +514,71 @@ def retry_run(db: Session, user, run_id: int) -> dict:
         {"retry_of": run.id}, run.context,
     )
     return {"run_id": new_run.id}
+
+
+def run_ws_token(db: Session, user, run_id: int) -> dict:
+    """Short-lived (5min) WS token bound to the run (mirror exec/transfer)."""
+    _require_feature(db)
+    user.require_perm("workflow:view")
+    run = db.get(WorkflowRun, run_id)
+    if run is None:
+        raise NotFoundError("workflow run not found")
+    return {"token": create_token(run_id, "ws", timedelta(minutes=5))}
+
+
+def callback_node(
+    db: Session, run_id: int, node_key: str, token: str | None, payload: Any
+) -> dict:
+    """Node-level callback activation (tuple K/seq2923).
+
+    Gate order: feature FIRST (flag off -> 400 for any caller), then run (404),
+    then node token (401), then node state (409). The token is single-use in
+    effect: once the node leaves ``waiting`` a second callback is 409.
+    """
+    _require_feature(db)
+    run = db.get(WorkflowRun, run_id)
+    if run is None:
+        raise NotFoundError("workflow run not found")
+    if not token:
+        raise UnauthorizedError("callback token required")
+    try:
+        claims = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+    except JWTError:
+        raise UnauthorizedError("invalid callback token")
+    if claims.get("type") != "wf_callback":
+        raise UnauthorizedError("invalid callback token")
+    try:
+        bound = int(claims.get("run_id")) == run_id and claims.get("node_key") == node_key
+    except (TypeError, ValueError):
+        bound = False
+    if not bound:
+        raise UnauthorizedError("invalid callback token")
+
+    node = db.scalar(
+        select(WorkflowNodeRun).where(
+            WorkflowNodeRun.run_id == run_id, WorkflowNodeRun.node_key == node_key
+        )
+    )
+    if node is None:
+        raise NotFoundError("workflow node not found")
+    if node.node_type != "callback" or node.status != "waiting":
+        raise ConflictError("node is not awaiting callback")
+
+    raw = json.dumps(payload if payload is not None else None).encode("utf-8")
+    if len(raw) > _MAX_CALLBACK_PAYLOAD:
+        raise ValidationError("callback_payload_too_large")
+
+    out = dict(node.output or {})
+    out["payload"] = payload
+    node.output = out
+    node.status = "succeeded"
+    node.finished_at = datetime.now(timezone.utc)
+    node.error = None
+    db.commit()
+    db.refresh(node)
+
+    from app.services import workflow_engine
+
+    if workflow_engine.DRIVER_AUTOSTART:
+        workflow_engine.start_driver(run_id)
+    return {"run_id": run_id, "node_key": node_key, "status": "succeeded"}

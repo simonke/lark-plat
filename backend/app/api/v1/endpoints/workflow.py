@@ -7,9 +7,9 @@ and the feature gate runs FIRST for any caller).
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Header, Query
+from fastapi import APIRouter, Body, Header, Query
 
 from app.api.deps import DbDep, UserDep
 from app.core.response import Result
@@ -100,6 +100,24 @@ def list_runs(
 @run_router.get("/{run_id}", response_model=Result)
 def get_run(db: DbDep, user: UserDep, run_id: int):
     return Result.ok(workflow_service.get_run(db, user, run_id))
+
+
+@run_router.get("/{run_id}/ws-token", response_model=Result)
+def run_ws_token(db: DbDep, user: UserDep, run_id: int):
+    return Result.ok(workflow_service.run_ws_token(db, user, run_id))
+
+
+@run_router.post("/{run_id}/callback/{node_key}", response_model=Result)
+def callback_node(
+    db: DbDep,
+    run_id: int,
+    node_key: str,
+    x_callback_token: Annotated[str | None, Header(alias="X-Callback-Token")] = None,
+    payload: Any = Body(default=None),
+):
+    return Result.ok(
+        workflow_service.callback_node(db, run_id, node_key, x_callback_token, payload)
+    )
 
 
 @run_router.post("/{run_id}/cancel", response_model=Result)

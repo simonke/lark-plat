@@ -59,7 +59,11 @@ P3_4_REV = "a1b2c3d4e5f7"
 # NB: `b2c3d4e5f6a8` is one char from the B-set rev `b2c3d4e5f6a7` — do NOT inline the
 # literal into C (reference the named symbol; @架构 seq3053 item 1).
 P3_5_REV = "b2c3d4e5f6a8"
-MIGRATION_LIVE_FORBIDDEN = {CLOSEOUT_REV, P3_REV, P3X_REV, P3_3_REV, P3_4_REV, P3_5_REV}
+# P4 (AIOps) migration (descends from the P3-5 head) -> also forbidden on shared live.
+# NB: `e9d8c7b6a5f4` must be the NAMED symbol (no inline literal); the earlier
+# candidate `d4e5f6a7b8c9` was already a P2-MA rev in B (@架构 seq3207 勘误#1).
+P4_REV = "e9d8c7b6a5f4"
+MIGRATION_LIVE_FORBIDDEN = {CLOSEOUT_REV, P3_REV, P3X_REV, P3_3_REV, P3_4_REV, P3_5_REV, P4_REV}
 SENTINEL_NAME = "SHARED_LIVE_DB_FORBIDDEN"
 
 
@@ -113,10 +117,10 @@ def test_s1_closeout_migration_declares_shared_db_forbidden_sentinel():
 
 def test_s1b_forbidden_set_exactly_closeout_p3_and_p3x_disjoint_from_allowed():
     assert MIGRATION_LIVE_FORBIDDEN == {
-        CLOSEOUT_REV, P3_REV, P3X_REV, P3_3_REV, P3_4_REV, P3_5_REV,
+        CLOSEOUT_REV, P3_REV, P3X_REV, P3_3_REV, P3_4_REV, P3_5_REV, P4_REV,
     }, (
         f"C must be exactly {{{CLOSEOUT_REV}, {P3_REV}, {P3X_REV}, {P3_3_REV}, "
-        f"{P3_4_REV}, {P3_5_REV}}}; got {sorted(MIGRATION_LIVE_FORBIDDEN)}"
+        f"{P3_4_REV}, {P3_5_REV}, {P4_REV}}}; got {sorted(MIGRATION_LIVE_FORBIDDEN)}"
     )
     assert CLOSEOUT_REV not in LIVE_REV_ALLOWED, (
         f"{CLOSEOUT_REV} (close-out) MUST NOT be in A LIVE_REV_ALLOWED (seq2140)"
@@ -126,7 +130,7 @@ def test_s1b_forbidden_set_exactly_closeout_p3_and_p3x_disjoint_from_allowed():
     )
     for rev, label in (
         (P3_REV, "P3"), (P3X_REV, "P3.x"), (P3_3_REV, "P3.3"),
-        (P3_4_REV, "P3.4"), (P3_5_REV, "P3.5"),
+        (P3_4_REV, "P3.4"), (P3_5_REV, "P3.5"), (P4_REV, "P4"),
     ):
         assert rev not in LIVE_REV_ALLOWED and rev not in MIGRATION_LIVE_APPLICABLE, (
             f"{rev} ({label}) MUST NOT be in A/B: it descends from the close-out and is "
@@ -148,8 +152,8 @@ def test_s2_sets_are_complete_and_disjoint():
         f"only-in-chain={sorted(chain - (MIGRATION_LIVE_APPLICABLE | MIGRATION_LIVE_FORBIDDEN))}, "
         f"only-in-classification={sorted((MIGRATION_LIVE_APPLICABLE | MIGRATION_LIVE_FORBIDDEN) - chain)}"
     )
-    assert len(chain) == 17 and len(MIGRATION_LIVE_APPLICABLE) == 11 and len(MIGRATION_LIVE_FORBIDDEN) == 6, (
-        f"17 == 11 + 6 expected; got chain={len(chain)}, B={len(MIGRATION_LIVE_APPLICABLE)}, "
+    assert len(chain) == 18 and len(MIGRATION_LIVE_APPLICABLE) == 11 and len(MIGRATION_LIVE_FORBIDDEN) == 7, (
+        f"18 == 11 + 7 expected; got chain={len(chain)}, B={len(MIGRATION_LIVE_APPLICABLE)}, "
         f"C={len(MIGRATION_LIVE_FORBIDDEN)}"
     )
     downs = {d for _, d in revs if d}

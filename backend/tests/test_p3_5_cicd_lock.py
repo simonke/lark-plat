@@ -193,15 +193,16 @@ def test_a1_p3_5_paths_present_with_methods():
     assert not problems, "P3-5 openapi surface incomplete: " + "; ".join(problems)
 
 
-def test_a2_paths_count_156():
+def test_a2_paths_count_at_least_156():
     paths = _openapi_paths()
-    # Base == M6 (`a0131456`), P3-4 收口 == 144, P3-5 == 154, P3-6 收尾批 == 156
-    # (@架构 P3-6 tuple v1: +/releases/{id}/deploy·/fail). EXACT equality (NOT
-    # `>=`): a future accidental 157 must still fail.
-    assert len(paths) == 156, (
-        f"P3-6 paths must be exactly 156 (P3-5 154 + 2 deploy/fail URL keys); got {len(paths)}. "
-        "OpenAPI `paths` is URL-keyed; the 2 new keys are /releases/{id}/deploy and "
-        "/releases/{id}/fail."
+    # P3-6 收尾批 anchored EXACTLY 156 (@架构 P3-6 tuple v1). P4 (AIOps) is
+    # add-only on top; the P3-5/P3-6 floor is now a MONOTONIC no-shrink check
+    # (>=156) with the exact count pinned at the newest batch lock
+    # (test_p4_aiops_lock::test_a2_paths_count_164 + test_contract_openapi==164).
+    # Must NOT shrink below 156.
+    assert len(paths) >= 156, (
+        f"paths must be >= 156 (P3-6 floor: P3-5 154 + 2 deploy/fail URL keys); got {len(paths)}. "
+        "OpenAPI `paths` is URL-keyed."
     )
     # layer ④ (@架构 seq3057): no-shrink against the FROZEN M6 baseline key set — a
     # net-zero substitution (drop 1 old key, add 1 extra new key, still ==154) would

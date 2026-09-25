@@ -13,6 +13,7 @@ baseline caps (nodes<=100 / edges<=500) all raise **422**.
 from __future__ import annotations
 
 import json
+import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -44,6 +45,12 @@ from app.schemas import workflow as sch
 _MAX_NODES = 100
 _MAX_EDGES = 500
 _MAX_CALLBACK_PAYLOAD = 65536
+
+logger = logging.getLogger(__name__)
+
+_EXEC_TERMINAL_STATUSES = (
+    "success", "partial", "failed", "canceled", "cancelled", "timed_out",
+)
 
 # action -> (allowed_from, target_status) — mirrors TICKET_TRANSITIONS (action-keyed).
 # run: pending -> running -> (succeeded|failed|cancelled); cancel only pre-terminal.
@@ -493,7 +500,14 @@ def cancel_run(db: Session, user, run_id: int) -> dict:
         if node.node_type == "exec_task" and node.exec_task_id:
             task = db.get(ExecTask, node.exec_task_id)
             if task is not None:
-                exec_service.cancel_exec_task_record(db, task)
+                if not exec_service.cancel_exec_task_record(db, task):
+                    # invariant (@架构 seq3012): never silently drop the core result.
+                    # A terminal task is a legitimate no-op; anything else is a bug.
+                    if task.status not in _EXEC_TERMINAL_STATUSES:
+                        logger.warning(
+                            "workflow cancel: exec_task %s not cancelled (status=%s)",
+                            task.id, task.status,
+                        )
         node.status = "skipped"
         node.finished_at = now
     db.commit()
@@ -571,10 +585,27 @@ def callback_node(
 
     out = dict(node.output or {})
     out["payload"] = payload
-    node.output = out
-    node.status = "succeeded"
-    node.finished_at = datetime.now(timezone.utc)
-    node.error = None
+    # Atomic single-use transition (§27.2): only the request that wins the
+    # conditional UPDATE may succeed; a concurrent duplicate loses the row and
+    # gets 409 (previously a bare ORM write let two requests both return 200).
+    result = db.execute(
+        WorkflowNodeRun.__table__.update()
+        .where(
+            WorkflowNodeRun.run_id == run_id,
+            WorkflowNodeRun.node_key == node_key,
+            WorkflowNodeRun.node_type == "callback",
+            WorkflowNodeRun.status == "waiting",
+        )
+        .values(
+            output=out,
+            status="succeeded",
+            finished_at=datetime.now(timezone.utc),
+            error=None,
+        )
+    )
+    if result.rowcount != 1:
+        db.rollback()
+        raise ConflictError("node is not awaiting callback")
     db.commit()
     db.refresh(node)
 

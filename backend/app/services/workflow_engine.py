@@ -224,9 +224,12 @@ def _create_exec_task(db, run, node, defnode) -> None:
         node.started_at = node.started_at or _now()
         node.status = "waiting"
     else:
-        # Dispatch through the existing exec primitive (D4, @架构 seq2986):
-        # engine host ① forces the in-process branch so the driver never depends
-        # on a celery worker consuming the broker.
+        # Mechanism A (@架构 seq3012): commit `node.exec_task_id` BEFORE dispatch so
+        # an external `cancel_run` landing in the running window can resolve the
+        # linked exec_task instead of orphaning it. Dispatch through the一期 exec
+        # primitive (D4, @架构 seq2986): engine host ① forces the in-process branch
+        # so the driver never depends on a celery worker consuming the broker.
+        db.commit()
         try:
             exec_service._kick_off_exec(db, resolved["id"], in_process=True)
         except Exception:  # noqa: BLE001

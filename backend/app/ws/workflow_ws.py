@@ -85,6 +85,10 @@ def _verify_ws_token(token: str, run_id: int) -> bool:
 
 @router.websocket("/ws/workflow-runs/{run_id}")
 async def ws_workflow_run(websocket: WebSocket, run_id: int, token: str):
+    # (a) contract fidelity (@架构 seq3012): accept the handshake BEFORE closing
+    # with an application code; a pre-accept close is translated by uvicorn into
+    # an HTTP 403 and the 4401/4404 close codes would be lost.
+    await websocket.accept()
     if not _verify_ws_token(token, run_id):
         await websocket.close(code=4401)
         return
@@ -98,7 +102,6 @@ async def ws_workflow_run(websocket: WebSocket, run_id: int, token: str):
     finally:
         db.close()
 
-    await websocket.accept()
     global _app_loop
     _app_loop = asyncio.get_running_loop()
     async with _lock:

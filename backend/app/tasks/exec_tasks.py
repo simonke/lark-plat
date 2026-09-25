@@ -88,9 +88,13 @@ def _execute_via_mock(task: ExecTask, th: ExecTaskHost, content: str, timeout_se
             db.close()
     db = _new_session()
     try:
-        th.status = "success"
-        th.exit_code = 0
-        th.finished_at = datetime.now(timezone.utc)
+        # CAS guard (mechanism B): only finalise a host row that is still running,
+        # so a concurrent cancel cannot be clobbered back to success.
+        db.execute(
+            ExecTaskHost.__table__.update()
+            .where(ExecTaskHost.id == th.id, ExecTaskHost.status == "running")
+            .values(status="success", exit_code=0, finished_at=datetime.now(timezone.utc))
+        )
         db.commit()
     finally:
         db.close()
@@ -106,10 +110,19 @@ def _run_ssh_executor(db, task: ExecTask, th: ExecTaskHost, content: str, host_c
     from app.services.executors.orchestrator import run_exec
 
     result = run_exec(db, task, th, content, host_count=host_count)
-    th.status = "success" if result.get("ok") else "failed"
-    th.exit_code = 0 if result.get("ok") else 1
-    th.finished_at = datetime.now(timezone.utc)
+    ok = bool(result.get("ok"))
+    # CAS guard (mechanism B): never resurrect a host row cancelled concurrently.
+    db.execute(
+        ExecTaskHost.__table__.update()
+        .where(ExecTaskHost.id == th.id, ExecTaskHost.status == "running")
+        .values(
+            status="success" if ok else "failed",
+            exit_code=0 if ok else 1,
+            finished_at=datetime.now(timezone.utc),
+        )
+    )
     db.commit()
+    db.refresh(th)
 
 
 @celery_app.task(name="app.tasks.exec_tasks.exec_dispatch")
@@ -170,8 +183,20 @@ def exec_dispatch(task_id: int) -> dict:
                 release_semaphore(f"exec:host:{th.host_id}")
                 release_semaphore("exec:global")
 
+        # mechanism B fix (@架构 seq3012): a concurrent cancel (exec stop_task /
+        # workflow cancel_run) or timeout sweep may have driven the task terminal
+        # while this worker was executing. Never clobber it: re-read, bail out if
+        # already terminal, and write the aggregate under CAS.
+        if hasattr(db, "expire_all"):
+            db.expire_all()
+        task = ExecTaskRepository(db).get(task_id)
+        if task is None or task.status != "running":
+            return {"ok": True, "task_id": task_id, "status": None if task is None else task.status}
+
         # aggregate status only when no host is still executing (G5/G6: pending or
         # in-flight agent runs must not flip the task to failed prematurely)
+        if hasattr(db, "expire_all"):
+            db.expire_all()
         stats = th_repo.stats(task_id)
         active = stats.get("running", 0) + stats.get("pending", 0)
         if active > 0:
@@ -189,6 +214,14 @@ def exec_dispatch(task_id: int) -> dict:
             new_status = "partial"
         else:
             new_status = "failed"
+        repo = ExecTaskRepository(db)
+        if hasattr(repo, "optimistic_update"):
+            if not repo.optimistic_update(task_id, "running", new_status, task.version):
+                # lost the race to a concurrent terminal transition (canceled/timed_out)
+                db.rollback()
+                return {"ok": True, "task_id": task_id, "status": "state-changed"}
+            if hasattr(task, "version"):
+                task.version += 1
         task.status = new_status
         task.finished_at = datetime.now(timezone.utc)
         db.commit()

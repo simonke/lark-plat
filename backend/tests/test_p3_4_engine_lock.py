@@ -51,6 +51,13 @@ B14 cancel propagates to a node whose一期 exec_task is still `running` (D3):
 B14b cancel propagates to a sensitive `awaiting_approval` exec_task (D1/D3):
     exec_task -> `canceled` and its pending exec approval closed (no orphan);
     node -> skipped; run cancelled
+B14c cancel landing DURING in-process dispatch (mechanism A, @架构 seq3012): the
+    engine sets `node.exec_task_id` and dispatches in the SAME step, committing only
+    at step end, so an external `cancel_run` in that window used to read
+    `node.exec_task_id == NULL` (`workflow_service.py:493`), SKIP the exec_task and
+    orphan it (live F RED). Fix = commit `node.exec_task_id` (node=running) BEFORE
+    dispatch. Deterministic lock: the inner `exec_dispatch` seam runs the external
+    cancel at dispatch time; no orphan allowed -> linked exec_task must be `canceled`
 B15 `exec_task` sensitive command is gated (fail-closed, @架构 seq2957): a sensitive
     `command` -> REAL exec_task row with `sensitive_flag`/`approve_required`=1 +
     `awaiting_approval` + linked pending `exec` approval_request (never silently
@@ -1210,6 +1217,60 @@ def test_b14b_cancel_awaiting_approval_exec_task_closes_pending_approval(env, mo
     assert ap is not None and ap.status == "canceled", (
         "cancelling an awaiting_approval exec_task must close its pending approval "
         f"(reuse `_close_orphan_approval`, no orphan); got {None if ap is None else ap.status!r}"
+    )
+
+
+# ── B14c: cancel landing DURING in-process dispatch (mechanism A) ─────────────
+# @架构 seq3012 mechanism A: `_create_exec_task` sets `node.exec_task_id` and calls
+# `_kick_off_exec(in_process=True)` in the SAME step, committing only at `step()`
+# end (`workflow_engine.py:219/231/401`). An external `cancel_run` in that window
+# read `node.exec_task_id == NULL` (`workflow_service.py:493`, live F:
+# `exec_task_id=null`), skipped the exec_task and left it orphaned. The fix commits
+# `node.exec_task_id` (node=running) BEFORE dispatch. This lock is a deterministic
+# proxy for "real slow executor + real driver thread": the inner `exec_dispatch`
+# seam runs the external cancel exactly at dispatch time (own session), no threads.
+
+def test_b14c_cancel_during_dispatch_leaves_no_orphan_exec_task(env, monkeypatch):
+    session, set_flag = env
+    set_flag(True)
+    eng = _try("app.services.workflow_engine")
+    svc = _try("app.services.workflow_service")
+    ex = _try("app.services.exec_service")
+    if isinstance(eng, Exception) or isinstance(svc, Exception) or isinstance(ex, Exception):
+        pytest.fail(f"P3-4b lock: services unavailable: {eng}/{svc}/{ex}")
+    host_id = _seed_host(session)
+    rid = _seed_run(session, _exec_task_definition(host_id))
+    captured: dict = {}
+
+    def _dispatch_hook(task_id):
+        # External cancel lands exactly at the dispatch point, in its own session.
+        # Mechanism A: it only sees the exec_task if `node.exec_task_id` was
+        # COMMITTED before dispatch (not merely set on the step session).
+        captured["task_id"] = task_id
+        s2 = _dbs.SessionLocal()
+        try:
+            svc.cancel_run(s2, _U(), rid)
+            s2.commit()
+        finally:
+            s2.close()
+
+    monkeypatch.setattr(ex, "exec_dispatch", _dispatch_hook)
+
+    eng.step(session, rid)  # activate the exec node -> running
+    eng.step(session, rid)  # build exec_task + dispatch (hook -> external cancel)
+    session.expire_all()
+
+    task_id = captured.get("task_id")
+    assert task_id, "the dispatch seam must be reached with an exec_task id"
+    assert _run_status(session, rid) == "cancelled", (
+        "external cancel must drive the run to cancelled"
+    )
+    row = _exec_task_row(session, task_id)
+    assert row is not None and row.status == "canceled", (
+        "mechanism A (@架构 seq3012): a cancel landing during in-process dispatch "
+        "must still reach the linked exec_task (commit `node.exec_task_id` before "
+        f"dispatch) -> canonical `canceled` (no orphan); got "
+        f"{None if row is None else row.status!r}"
     )
 
 

@@ -261,6 +261,16 @@ def test_m2b_eval_tables_core_columns():
             problems.append(f"{name}: missing columns {sorted(miss)}")
     assert not problems, "P4 eval-table contract: " + "; ".join(problems)
 
+    case = tables.get("ai_eval_case")
+    if case is not None and "is_neg_control" in case.columns:
+        from sqlalchemy import Boolean  # noqa: PLC0415
+
+        ctype = case.columns["is_neg_control"].type
+        assert isinstance(ctype, Boolean), (
+            "ai_eval_case.is_neg_control must be Boolean (@架构 seq3248 ⑧; frozen as "
+            f"`bool`); got {ctype!r}"
+        )
+
 
 def test_m3_ops_event_indexes():
     t = _tables().get("ops_event")
@@ -1080,4 +1090,171 @@ def test_b5_embedding_store_config_key_symbols():
     assert entry is not None, f"`{key}` must be seeded in DEFAULT_CONFIG_RULES (add-only)"
     assert entry.get("value") == pg, (
         f"`{key}` default must be `pg_array` ({pg!r}); got {entry.get('value')!r}"
+    )
+
+
+# ── ⑧ store resolver / fail-fast (@架构 seq3248) ──────────────────────────────
+
+def _emb_mod():
+    mod = _try("app.services.embedding_store")
+    if isinstance(mod, Exception):
+        pytest.fail(f"P4 lock ⑧: app.services.embedding_store unavailable: {mod}")
+    return mod
+
+
+def _call_build(build, db, value):
+    for call in (
+        lambda: build(db, value=value),
+        lambda: build(db, value),
+        lambda: build(value),
+    ):
+        try:
+            return call()
+        except TypeError:
+            continue
+    return build(db, value=value)
+
+
+def _no_hardcoded_pg_store() -> bool:
+    """⑧: `PostgresArrayEmbeddingStore(` must be constructed only in embedding_store.py."""
+    try:
+        import app  # noqa: PLC0415
+    except Exception:  # noqa: BLE001
+        return False
+    root = pathlib.Path(app.__file__).resolve().parent
+    allowed = (root / "services" / "embedding_store.py").resolve()
+    for py in root.rglob("*.py"):
+        if py.resolve() == allowed:
+            continue
+        try:
+            txt = py.read_text(encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            continue
+        if re.search(r"\bPostgresArrayEmbeddingStore\s*\(", txt):
+            return False
+    return True
+
+
+def test_s9_store_resolver_symbols():
+    """⑧ @架构 seq3248: named resolver/builder + VALID_STORES tuple."""
+    mod = _emb_mod()
+    for name in ("resolve_store_config", "build_embedding_store"):
+        assert callable(getattr(mod, name, None)), (
+            f"P4 lock ⑧: embedding_store.{name} must be defined"
+        )
+    valid = getattr(mod, "VALID_STORES", None)
+    pg = getattr(mod, "EMBEDDING_STORE_PG_ARRAY", None)
+    mem = getattr(mod, "EMBEDDING_STORE_IN_MEMORY", None)
+    assert valid and pg and mem, "P4 lock ⑧: VALID_STORES + both enum values required"
+    assert set(valid) == {pg, mem}, (
+        f"VALID_STORES must be exactly {{{pg!r}, {mem!r}}}; got {valid!r}"
+    )
+
+
+def test_f2_resolve_store_config_default_and_invalid(monkeypatch):
+    """⑧: default => pg_array; an invalid configured value => raise (no silent fallback)."""
+    mod = _emb_mod()
+    resolve = getattr(mod, "resolve_store_config", None)
+    if resolve is None:
+        pytest.fail("P4 lock ⑧: resolve_store_config missing")
+    pg = getattr(mod, "EMBEDDING_STORE_PG_ARRAY", "pg_array")
+
+    try:
+        default = resolve()
+    except TypeError:
+        default = resolve(None)
+    assert default == pg, f"resolve_store_config default must be {pg!r}; got {default!r}"
+
+    repo = _try("app.repositories")
+    cls = None if isinstance(repo, Exception) else getattr(repo, "ConfigRuleRepository", None)
+    if cls is None or not hasattr(cls, "by_key"):
+        pytest.fail("P4 lock ⑧: ConfigRuleRepository.by_key unavailable to drive invalid-config")
+
+    class _Row:
+        rule_value = {"value": "__bogus_store__"}
+
+    monkeypatch.setattr(cls, "by_key", lambda self, *a, **k: _Row(), raising=False)
+    try:
+        resolve(object())
+    except AssertionError:
+        raise
+    except Exception:  # noqa: BLE001
+        return
+    pytest.fail("resolve_store_config must RAISE for an invalid configured value")
+
+
+def test_f3_build_embedding_store_dispatch_and_no_hardcode():
+    """⑧: build dispatches by value; invalid => raise; no PG store hardcode outside the seam."""
+    mod = _emb_mod()
+    build = getattr(mod, "build_embedding_store", None)
+    if build is None:
+        pytest.fail("P4 lock ⑧: build_embedding_store missing")
+    pg = getattr(mod, "EMBEDDING_STORE_PG_ARRAY", "pg_array")
+    mem = getattr(mod, "EMBEDDING_STORE_IN_MEMORY", "in_memory")
+    inmem_cls = _require("InMemoryEmbeddingStore")
+    pg_cls = _require("PostgresArrayEmbeddingStore")
+
+    got_mem = _call_build(build, None, mem)
+    assert isinstance(got_mem, inmem_cls), (
+        f"build_embedding_store({mem!r}) must return InMemoryEmbeddingStore; "
+        f"got {type(got_mem)!r}"
+    )
+
+    got_pg = _call_build(build, lambda: _FakeSession(), pg)
+    assert isinstance(got_pg, pg_cls), (
+        f"build_embedding_store({pg!r}) must return PostgresArrayEmbeddingStore; "
+        f"got {type(got_pg)!r}"
+    )
+
+    try:
+        _call_build(build, lambda: _FakeSession(), "__bogus_store__")
+    except Exception:  # noqa: BLE001
+        pass
+    else:
+        pytest.fail("build_embedding_store must RAISE on an invalid value (no silent fallback)")
+
+    assert _no_hardcoded_pg_store(), (
+        "⑧: `PostgresArrayEmbeddingStore(` must not be constructed outside "
+        "embedding_store.py (ai_service must call build_embedding_store)"
+    )
+
+
+# ── ⑨ NULL entity_scope must be fail-closed (@架构 seq3244/3250) ─────────────
+
+def test_b6_null_entity_scope_fail_closed():
+    """⑨: kb_embedding.entity_scope NOT NULL; a NULL/absent scope never matches a
+    non-empty scope (InMemory behaviour + the PG compiled predicate)."""
+    t = _tables().get("kb_embedding")
+    if t is None:
+        pytest.fail("P4 lock ⑨: table `kb_embedding` missing")
+    col = t.columns.get("entity_scope")
+    assert col is not None, "P4 lock ⑨: kb_embedding.entity_scope missing"
+    assert col.nullable is False, (
+        "⑨ fail-closed: kb_embedding.entity_scope must be nullable=False (no NULL=global)"
+    )
+
+    inmem = _require("InMemoryEmbeddingStore")
+    scope_cls = _require("ScopeFilter")
+    store = inmem()
+    try:
+        store.upsert([
+            _make_record(doc_ref="nul", chunk_ref="nul#0", embedding=[1.0, 0.0, 0.0],
+                         entity_scope=None, dim=3),
+        ])
+    except Exception:  # noqa: BLE001
+        pass  # rejecting NULL at ingest is also fail-closed
+    try:
+        hits = store.query([1.0, 0.0, 0.0],
+                           scope=_make_scope(scope_cls, entity_type="host", ids=[7]), limit=10)
+    except Exception as exc:  # noqa: BLE001
+        pytest.fail(f"P4 lock ⑨: InMemory query raised: {exc}")
+    assert ("nul", "nul#0") not in _hit_refs(hits), (
+        "⑨ fail-closed: a NULL/absent entity_scope chunk must NOT match a non-empty scope"
+    )
+
+    pg_cls = _require("PostgresArrayEmbeddingStore")
+    sql = _run_pg_candidates(pg_cls, scope_cls, [7])
+    assert "entity_scope is null" not in sql, (
+        "⑨ fail-closed: PG predicate must not treat NULL entity_scope as global "
+        f"(no `entity_scope IS NULL` pass branch); compiled={sql[:300]}"
     )

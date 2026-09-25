@@ -369,6 +369,7 @@ def _discover() -> dict[str, tuple[str, object]]:
         "PostgresArrayEmbeddingStore", "InMemoryEmbeddingStore",
         "visible_entity_ids_for", "EvalReport",
         "AI_ACTION_DECISIONS", "AI_DECISIONS", "OPS_EVENT_SOURCES",
+        "EmbeddingRecord", "EmbeddingUpsert", "EmbeddingDoc", "UpsertRecord",
     }
     for info in pkgutil.walk_packages(app.__path__, prefix="app."):
         try:
@@ -724,4 +725,97 @@ def test_r2_ai_actions_admin_only_403(ai_client):
     r = client.get("/api/v1/ai/actions")
     assert r.status_code == 403, (
         f"/ai/actions requires ai:admin; got {r.status_code} {r.text}"
+    )
+
+
+# ── B2: US-03 behavioural NEGATIVE (retrieve-then-filter must be impossible) ──
+
+def _make_record(**kw):
+    for cls_name in ("EmbeddingRecord", "EmbeddingUpsert", "EmbeddingDoc", "UpsertRecord"):
+        cls = _discover_one(cls_name)
+        if cls is not None:
+            try:
+                return cls(**kw)
+            except TypeError:
+                continue
+    return dict(kw)
+
+
+def _hit_refs(hits) -> set:
+    out = set()
+    for h in hits:
+        if isinstance(h, dict):
+            out.add((h.get("doc_ref"), h.get("chunk_ref")))
+        else:
+            out.add((getattr(h, "doc_ref", None), getattr(h, "chunk_ref", None)))
+    return out
+
+
+def test_b2_candidates_excludes_out_of_scope_records():
+    """ADR#3 (@架构 seq3216): an out-of-scope record that PHYSICALLY exists must
+    never be returned by `_candidates`/`query` — direct proof of "query-time
+    filtering", not retrieve-then-filter.
+
+    Negative control for B1 (which only proves `scope` is forwarded): a store that
+    accepts `scope` but ignores it (return-all + post-filter) MUST fail HERE.
+    """
+    inmem = _require("InMemoryEmbeddingStore")
+    scope_cls = _require("ScopeFilter")
+    store = inmem()
+    in_rec = _make_record(
+        doc_ref="in", chunk_ref="in#0", embedding=[1.0, 0.0, 0.0], entity_scope=7, dim=3,
+    )
+    out_rec = _make_record(
+        doc_ref="out", chunk_ref="out#0", embedding=[0.0, 1.0, 0.0], entity_scope=9, dim=3,
+    )
+    try:
+        store.upsert([in_rec, out_rec])
+    except Exception as exc:  # noqa: BLE001
+        pytest.fail(f"P4 lock: InMemoryEmbeddingStore.upsert failed: {exc}")
+
+    scope = _make_scope(scope_cls, entity_type="host", ids=[7])
+    qv = [1.0, 0.0, 0.0]
+
+    try:
+        cand = store._candidates(query_vector=qv, scope=scope, limit=10)
+    except Exception as exc:  # noqa: BLE001
+        pytest.fail(f"P4 lock: InMemoryEmbeddingStore._candidates raised: {exc}")
+    refs = _hit_refs(cand)
+    assert ("out", "out#0") not in refs, (
+        "US-03: out-of-scope record leaked from _candidates — store accepted `scope` but "
+        "did not filter at query time (retrieve-then-filter false-green)"
+    )
+    assert ("in", "in#0") in refs, "in-scope record must be returned by _candidates"
+
+    try:
+        hits = store.query(qv, scope=scope, limit=10)
+    except Exception as exc:  # noqa: BLE001
+        pytest.fail(f"P4 lock: InMemoryEmbeddingStore.query raised: {exc}")
+    qrefs = _hit_refs(hits)
+    assert ("out", "out#0") not in qrefs, (
+        "US-03: out-of-scope record leaked from query() (post-filter after retrieve)"
+    )
+    assert ("in", "in#0") in qrefs, "in-scope record must be returned by query()"
+
+
+def test_b3_unknown_entity_type_fails_closed():
+    """ADR#3 (@架构 seq3216 / @需求 3211-6): undefined entity_type => deny-all (0 results)."""
+    inmem = _require("InMemoryEmbeddingStore")
+    scope_cls = _require("ScopeFilter")
+    store = inmem()
+    try:
+        store.upsert([
+            _make_record(doc_ref="in", chunk_ref="in#0", embedding=[1.0, 0.0, 0.0],
+                         entity_scope=7, dim=3),
+        ])
+    except Exception as exc:  # noqa: BLE001
+        pytest.fail(f"P4 lock: InMemoryEmbeddingStore.upsert failed: {exc}")
+    # an unregistered entity_type must resolve to the empty scope (fail-closed)
+    unknown = _make_scope(scope_cls, entity_type="__unregistered__", ids=[])
+    try:
+        hits = store.query([1.0, 0.0, 0.0], scope=unknown, limit=10)
+    except Exception as exc:  # noqa: BLE001
+        pytest.fail(f"P4 lock: query() raised for unknown entity_type: {exc}")
+    assert not _hit_refs(hits), (
+        "US-03 fail-closed: unknown entity_type must yield 0 results, not放行"
     )

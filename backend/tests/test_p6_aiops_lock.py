@@ -11,8 +11,11 @@ Pinned surface (r1 A–F):
   B flag gate    : routes ALWAYS registered ((A)) => committed/served `paths` == 173;
                    gate order auth(401) -> flag(400|403) -> not-404; flag off != 404
   C① enums/tables: `RISK_LEVELS=("low","medium","high")` in `app/db/models/ai.py`
-                   (re-exported via `__init__`); `APPROVAL_MODES=("auto_policy","manual")`;
-                   `AI_ACTION_DECISIONS` add-only += "dry_run"; L4 gate only `low` => auto
+                   (re-exported via `__init__`); `APPROVAL_MODES=("auto_policy","manual")`
+                   and `L4_AUTO_RISK_LEVELS=("low",)` net-new in the leaf module
+                   `app/services/ai_automation_constants.py`; `AI_ACTION_DECISIONS`
+                   add-only += "dry_run"; L4 gate: `risk_level in L4_AUTO_RISK_LEVELS`
+                   => auto_policy (inline `"low"` forbidden)
      migration   : `revision="P6_REV"`, `down_revision="f5a6b7c8d9e0"` (single head, C set,
                    add-only); 4 NEW tables `remediation_policy`/`automation_whitelist`/
                    `automation_level`/`circuit_breaker_state`; NO `remediation_run`
@@ -90,6 +93,7 @@ _P36_OP_CODES = {
 # frozen vocabularies (r1 C①)
 RISK_LEVELS = ("low", "medium", "high")
 APPROVAL_MODES = ("auto_policy", "manual")
+L4_AUTO_RISK_LEVELS = ("low",)
 AI_ACTION_DECISIONS = ("adopted", "rejected", "auto", "dry_run")
 
 # r1 C①: exactly 4 NEW tables; `remediation_run` is explicitly NOT created.
@@ -425,19 +429,17 @@ def test_e3_leaf_module_approval_modes():
     )
 
 
-def test_e4_only_low_is_l4_eligible():
-    """r1 C①: only `low` may auto-approve. Pins the frozen ordering via the single-source
-    constant (>=1 level maps to auto; the auto set must be exactly {"low"})."""
-    mod = _ai_models()
-    levels = tuple(getattr(mod, "RISK_LEVELS", ()) or ())
-    auto = getattr(mod, "L4_AUTO_RISK_LEVELS", None)
-    if auto is None:
-        # no dedicated symbol frozen by r1: assert the gate is expressible at minimum
-        assert levels == RISK_LEVELS, f"RISK_LEVELS must be {RISK_LEVELS}; got {levels!r}"
-    else:
-        assert tuple(auto) == ("low",), (
-            f"only `low` may map to auto (L4); L4 auto set must be ('low',); got {tuple(auto)!r}"
-        )
+def test_e4_l4_auto_risk_levels_pinned_in_leaf():
+    """r1.6 (@架构 664b07bc): the L4 auto set is a NET-NEW named constant
+    `L4_AUTO_RISK_LEVELS = ("low",)` in the leaf module (same module as APPROVAL_MODES) —
+    only `low` maps to auto_policy; inline `"low"` literals are forbidden (so the lock must
+    pin the symbol, NOT degrade to `RISK_LEVELS`)."""
+    leaf = _require(_LEAF_MODULE)
+    got = getattr(leaf, "L4_AUTO_RISK_LEVELS", None)
+    assert tuple(got or ()) == L4_AUTO_RISK_LEVELS, (
+        f"`{_LEAF_MODULE}.L4_AUTO_RISK_LEVELS` must be {L4_AUTO_RISK_LEVELS} (r1.6, single "
+        f"source = leaf module); got {got!r}"
+    )
 
 
 # ── M: tables / columns (r1 C①/C②) ──────────────────────────────────────────
@@ -698,6 +700,9 @@ def test_s1_leaf_module_is_pure_and_pins_symbols():
     )
     assert tuple(getattr(mod, "APPROVAL_MODES", ()) or ()) == APPROVAL_MODES, (
         f"`{_LEAF_MODULE}.APPROVAL_MODES` must be {APPROVAL_MODES}"
+    )
+    assert tuple(getattr(mod, "L4_AUTO_RISK_LEVELS", ()) or ()) == L4_AUTO_RISK_LEVELS, (
+        f"`{_LEAF_MODULE}.L4_AUTO_RISK_LEVELS` must be {L4_AUTO_RISK_LEVELS} (r1.6)"
     )
     # leaf/pure-constant: must not pull DB/redis/flag/router side effects at import
     src = pathlib.Path(mod.__file__).read_text(encoding="utf-8")

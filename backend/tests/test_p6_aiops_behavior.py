@@ -14,13 +14,21 @@ Groups (all required by @架构 `3616`④):
      `status='approved'`, `policy_ref` set; Δ`ai_action(decision='auto')`==+1
   ③ E6-3 negative: whitelist-miss / risk=high / current!=L4 => stays
      `manual`/`pending`; Δ`ai_action(decision='auto')`==0 (non-vacuous)
+  ③A2 ambiguous policy (@架构 `3623` A2): >1 same-key L4 policy => fail-closed
+     `manual`/`pending`; Δ`decision='auto'`==0
   ③b E6-3 retry (@架构 `3616`①⑦): `retry_task` is ALWAYS manual => new row
      `pending`/`manual`; Δ`decision='auto'`==0
   ④ E6-4 rollback: first rollback => Δexec_task==+1 AND Δapproval_request==+1 AND
      an `ai_action.rollback_ref` set; repeat => Δ0
-  ③s verification fail-closed (@需求 §30.7 ③): PUT level→L4 with an L4 policy
-     missing `verification_ref` => 422 and level unchanged
-  ④s circuit-breaker: `resolve_threshold` single source (+env); FSM values
+  ③s L4 verification fail-closed (@架构 `3623` B): PUT level->L4 is 422 for an
+     empty L4 policy set OR an L4 policy with `verification_ref is None`; level
+     unchanged; success requires >=1 ref'd L4 policy
+  ④s circuit-breaker: `resolve_threshold` single source; FSM values
+
+Hit contract (r1.9, @架构 `3618`): four-way AND —
+`current=='L4'` (derived) ∧ ∃policy(asset_class,op_type,level='L4',whitelist_ref≠None,
+verification_ref≠None) ∧ ∃whitelist(action==policy.whitelist_ref==rem.action ∧ enabled
+∧ risk_level∈L4) ∧ `rem.risk_level∈L4`; any miss => manual.
 
 Audit isolation (@集成 `3614` / @reviewer `3615`④): the legacy P5 path
 `app/services/ai_service.py:161` already writes `ai_action(decision='auto')`, so
@@ -240,11 +248,13 @@ def _set_whitelist(session, action: str, risk_level: str = "low", enabled: bool 
 
 
 def _set_policy(session, asset_class: str, op_type: str, *, level: str = "L4",
-                verification_ref: str | None = "V-1", rollback_window: int = 3600) -> None:
+                verification_ref: str | None = "V-1", whitelist_ref: str | None = "restart",
+                rollback_window: int = 3600) -> None:
     from app.db.models import RemediationPolicy  # noqa: PLC0415
 
     session.add(RemediationPolicy(asset_class=asset_class, op_type=op_type, level=level,
                                   verification_ref=verification_ref,
+                                  whitelist_ref=whitelist_ref,
                                   rollback_window=rollback_window))
     session.commit()
 
@@ -289,11 +299,13 @@ def _create_exec_plain(session, command: str = _SENSITIVE_CMD):
 
 
 def _seed_hit_context(session, level: str = "L4") -> None:
+    """r1.9 (@架构 `3618`): the four-way ∧ precondition for an auto_policy hit."""
     _seed_sensitive(session)
     _make_host(session)
     _enable_level(session, level)
     _set_whitelist(session, "restart", "low", True)
-    _set_policy(session, "app", "restart", level="L4")
+    _set_policy(session, "app", "restart", level="L4",
+                verification_ref="V-1", whitelist_ref="restart")
 
 
 # ── ① put_level r1.8 (frozen; currently GREEN) ───────────────────────────────
@@ -309,6 +321,8 @@ def test_b1_put_level_r1_8_mutual_exclusion(p6_db):
     session, set_user, set_flag, client = p6_db
     set_flag("ai.auto_remediate", True)
     set_user(["ai:use", "ai:admin"], admin=True)
+    # B=422 (@架构 3623): L4 activation needs >=1 L4 policy carrying verification_ref.
+    _set_policy(session, "app", "restart", level="L4", verification_ref="V-1")
 
     body = client.get("/api/v1/ai/automation/level")
     assert body.status_code == 200, body.text
@@ -402,6 +416,20 @@ def test_b5_e6_3_negative_level_not_l4(p6_db):
     _assert_manual_pending(session, auto0)
 
 
+# ── ③A2 ambiguous L4 policies ⇒ fail-closed (@架构 3623 A2) ─────────────────
+def test_b5b_e6_3_ambiguous_l4_policies_fail_closed(p6_db):
+    """FR-E6 A2: >1 same-(asset_class,op_type) L4 policy => fail-closed manual, 0 auto."""
+    session, set_user, set_flag, _c = p6_db
+    set_flag("ai.auto_remediate", True)
+    _seed_hit_context(session)
+    _set_policy(session, "app", "restart", level="L4",
+                verification_ref="V-2", whitelist_ref="restart")  # ambiguity
+
+    auto0 = _auto_count(session)
+    _create_exec(session, remediation=dict(_HIT))
+    _assert_manual_pending(session, auto0)
+
+
 # ── ③b E6-3 retry is ALWAYS manual (@架构 3616①⑦) ───────────────────────────
 
 def test_b6_retry_is_always_manual(p6_db):
@@ -475,28 +503,34 @@ def test_b7_e6_4_rollback_compensates_once(p6_db):
 
 # ── ③s verification fail-closed 422 (@需求 §30.7 ③) ─────────────────────────
 
-def test_b8_l4_activation_requires_verification(p6_db):
+def test_b8_l4_activation_fail_closed(p6_db):
+    """FR-E6 B (@架构 `3623`): PUT level->L4 422 unless >=1 L4 policy carries verification_ref."""
     session, set_user, set_flag, client = p6_db
     set_flag("ai.auto_remediate", True)
     set_user(["ai:use", "ai:admin"], admin=True)
+    url = "/api/v1/ai/automation/level"
 
-    # an L4 policy whose verification_ref is missing => L4 activation must fail-closed.
-    _set_policy(session, "app", "restart", level="L4", verification_ref=None)
-    r = client.put("/api/v1/ai/automation/level", json={"current": "L4"})
+    # ① empty L4 policy set => zero guardrails => fail-closed 422.
+    r = client.put(url, json={"current": "L4"})
     assert r.status_code == 422, (
-        f"L4 activation without complete verification_ref must be 422; got {r.status_code} {r.text}"
+        f"empty L4 policy set must be fail-closed 422; got {r.status_code} {r.text}"
     )
-    assert _data(client.get("/api/v1/ai/automation/level"))["current"] != "L4", (
-        "level must stay unchanged after a failed L4 activation"
-    )
+    assert _data(client.get(url))["current"] != "L4", "level must stay unchanged on 422"
 
-    # once verification is complete, activation succeeds.
+    # ② an L4 policy whose verification_ref is missing => 422.
+    _set_policy(session, "app", "restart", level="L4", verification_ref=None)
+    r = client.put(url, json={"current": "L4"})
+    assert r.status_code == 422, (
+        f"L4 policy without verification_ref must be fail-closed 422; got {r.status_code} {r.text}"
+    )
+    assert _data(client.get(url))["current"] != "L4", "level must stay unchanged on 422"
+
+    # ③ once a ref'd L4 policy exists => activation succeeds.
     from app.db.models import RemediationPolicy  # noqa: PLC0415
 
-    session.query(RemediationPolicy).delete()
+    session.query(RemediationPolicy).one().verification_ref = "V-2"
     session.commit()
-    _set_policy(session, "app", "restart", level="L4", verification_ref="V-2")
-    r = client.put("/api/v1/ai/automation/level", json={"current": "L4"})
+    r = client.put(url, json={"current": "L4"})
     assert r.status_code == 200, r.text
     assert _data(r)["current"] == "L4"
 

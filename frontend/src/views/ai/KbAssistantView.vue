@@ -53,15 +53,16 @@
             </el-table-column>
             <el-table-column label="操作" width="80">
               <template #default="{ row }">
-                <el-button
-                  link
-                  size="small"
-                  :disabled="articleIdFromDocRef(row.doc_ref) === null"
-                  :title="articleIdFromDocRef(row.doc_ref) === null ? '无法定位来源' : ''"
-                  @click="openDoc(row)"
-                >
-                  查看
-                </el-button>
+                <span :title="articleIdFromDocRef(row.doc_ref) === null ? '无法定位来源' : ''">
+                  <el-button
+                    link
+                    size="small"
+                    :disabled="articleIdFromDocRef(row.doc_ref) === null"
+                    @click="openDoc(row)"
+                  >
+                    查看
+                  </el-button>
+                </span>
               </template>
             </el-table-column>
           </el-table>

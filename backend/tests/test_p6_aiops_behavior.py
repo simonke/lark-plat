@@ -23,7 +23,9 @@ Groups (all required by @架构 `3616`④):
   ③s L4 verification fail-closed (@架构 `3623` B): PUT level->L4 is 422 for an
      empty L4 policy set OR an L4 policy with `verification_ref is None`; level
      unchanged; success requires >=1 ref'd L4 policy
-  ④s circuit-breaker: `resolve_threshold` single source; FSM values
+  ④s circuit-breaker (@架构 `3629` r1.10): `resolve_threshold` single source
+     (env > policy.circuit_threshold > default); `record_verification_result`
+     closed→open→half→closed; `state=='open'` => forced manual (halt)
 
 Hit contract (r1.9, @架构 `3618`): four-way AND —
 `current=='L4'` (derived) ∧ ∃policy(asset_class,op_type,level='L4',whitelist_ref≠None,
@@ -535,30 +537,65 @@ def test_b8_l4_activation_fail_closed(p6_db):
     assert _data(r)["current"] == "L4"
 
 
-# ── ④s circuit-breaker (symbol + env; FSM values) ───────────────────────────
-# NOTE: the FSM *trigger* seam is not yet specified (@需求 §30.7 ④); this pins the
-# threshold single-source and the state vocabulary. Flagged to #team for a ruling.
+# ── ④s circuit-breaker (r1.10 @架构 `3629`: threshold precedence + FSM + halt) ─
 
-def test_b9_circuit_breaker_resolve_threshold_symbol(p6_db):
+def _breaker_state(session) -> str:
+    from app.services import ai_automation_service as svc  # noqa: PLC0415
+
+    return svc.circuit_breaker(session, _User())["state"]
+
+
+def _trip_breaker(session) -> int:
+    """Drive the breaker to `open` using its own threshold (no clock dependency)."""
+    from app.services import ai_automation_service as svc  # noqa: PLC0415
+
+    th = svc.resolve_threshold(session, scope="global", policy=None)
+    for _ in range(th):
+        svc.record_verification_result(session, scope="global", ok=False)
+    return th
+
+
+def test_b9_circuit_breaker_threshold_and_fsm(p6_db):
+    """§30.7 ④ / r1.10: `resolve_threshold` single source + closed→open→half→closed."""
     session, set_user, set_flag, _c = p6_db
-    from app.db.models import CircuitBreakerState  # noqa: PLC0415
+    from app.db.models import RemediationPolicy  # noqa: PLC0415
 
     svc = _require("app.services.ai_automation_service")
-    assert hasattr(svc, "resolve_threshold"), (
-        "breaker threshold must be a single named source `resolve_threshold` (@需求 §30.7 ④)"
-    )
-    assert callable(svc.resolve_threshold), "`resolve_threshold` must be callable"
-
+    assert hasattr(svc, "resolve_threshold"), "breaker threshold must be `resolve_threshold`"
+    assert hasattr(svc, "record_verification_result"), "breaker FSM seam missing"
     set_flag("ai.auto_remediate", True)
 
-    class _Provider:
-        id = 1
-        name = "p"
-
-    got = svc.resolve_threshold(_Provider())
-    assert got is None or isinstance(got, int), f"resolve_threshold must yield int|None; got {got!r}"
-
-    # documented state vocabulary on the governed table.
-    session.add(CircuitBreakerState(scope="provider:1", state="open", current=5, threshold=3))
+    # precedence: an explicit policy threshold wins over the built-in default.
+    pol = RemediationPolicy(asset_class="app", op_type="restart", level="L4",
+                            circuit_threshold=2, verification_ref="V-1", whitelist_ref="restart")
+    session.add(pol)
     session.commit()
-    assert session.query(CircuitBreakerState).one().state in ("closed", "open", "half")
+    assert svc.resolve_threshold(session, scope="global", policy=pol) == 2, (
+        "resolve_threshold must honour policy.circuit_threshold"
+    )
+    assert isinstance(svc.resolve_threshold(session, scope="global", policy=None), int), (
+        "resolve_threshold must yield an int default when no policy/env override"
+    )
+
+    assert _breaker_state(session) == "closed", "breaker starts closed"
+    th = _trip_breaker(session)
+    assert _breaker_state(session) == "open", f"current>=threshold({th}) must open the breaker"
+
+    svc.record_verification_result(session, scope="global", ok=True)   # open -> half
+    assert _breaker_state(session) == "half", "a success from open must half-open"
+    svc.record_verification_result(session, scope="global", ok=True)   # half -> closed
+    assert _breaker_state(session) == "closed", "a success from half must close"
+
+
+def test_b10_open_breaker_halts_auto(p6_db):
+    """§30.7 ④ / r1.10 halt: `state=='open'` forces manual even on a four-way hit."""
+    session, set_user, set_flag, _c = p6_db
+
+    set_flag("ai.auto_remediate", True)
+    _seed_hit_context(session)
+    _trip_breaker(session)
+    assert _breaker_state(session) == "open"
+
+    auto0 = _auto_count(session)
+    _create_exec(session, remediation=dict(_HIT))
+    _assert_manual_pending(session, auto0)

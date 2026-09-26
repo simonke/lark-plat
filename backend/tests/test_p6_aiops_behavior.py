@@ -549,41 +549,48 @@ def _trip_breaker(session) -> int:
     """Drive the breaker to `open` using its own threshold (no clock dependency)."""
     from app.services import ai_automation_service as svc  # noqa: PLC0415
 
-    th = svc.resolve_threshold(session, scope="global", policy=None)
+    th = svc.resolve_threshold(session, policy=None)
     for _ in range(th):
-        svc.record_verification_result(session, scope="global", ok=False)
+        svc.record_verification_result(session, ok=False)
     return th
 
 
 def test_b9_circuit_breaker_threshold_and_fsm(p6_db):
     """§30.7 ④ / r1.10: `resolve_threshold` single source + closed→open→half→closed."""
-    session, set_user, set_flag, _c = p6_db
+    session, set_user, set_flag, client = p6_db
     from app.db.models import RemediationPolicy  # noqa: PLC0415
 
     svc = _require("app.services.ai_automation_service")
     assert hasattr(svc, "resolve_threshold"), "breaker threshold must be `resolve_threshold`"
     assert hasattr(svc, "record_verification_result"), "breaker FSM seam missing"
     set_flag("ai.auto_remediate", True)
+    set_user(["ai:use", "ai:admin"], admin=True)
 
     # precedence: an explicit policy threshold wins over the built-in default.
     pol = RemediationPolicy(asset_class="app", op_type="restart", level="L4",
                             circuit_threshold=2, verification_ref="V-1", whitelist_ref="restart")
     session.add(pol)
     session.commit()
-    assert svc.resolve_threshold(session, scope="global", policy=pol) == 2, (
+    assert svc.resolve_threshold(session, policy=pol) == 2, (
         "resolve_threshold must honour policy.circuit_threshold"
     )
-    assert isinstance(svc.resolve_threshold(session, scope="global", policy=None), int), (
+    assert isinstance(svc.resolve_threshold(session, policy=None), int), (
         "resolve_threshold must yield an int default when no policy/env override"
+    )
+
+    # served observation face: GET /circuit-breaker.threshold == resolve_threshold(db).
+    got = _data(client.get("/api/v1/ai/automation/circuit-breaker"))
+    assert got["threshold"] == svc.resolve_threshold(session, policy=None), (
+        "GET /circuit-breaker.threshold must be resolve_threshold(db), not the raw row value"
     )
 
     assert _breaker_state(session) == "closed", "breaker starts closed"
     th = _trip_breaker(session)
     assert _breaker_state(session) == "open", f"current>=threshold({th}) must open the breaker"
 
-    svc.record_verification_result(session, scope="global", ok=True)   # open -> half
+    svc.record_verification_result(session, ok=True)   # open -> half
     assert _breaker_state(session) == "half", "a success from open must half-open"
-    svc.record_verification_result(session, scope="global", ok=True)   # half -> closed
+    svc.record_verification_result(session, ok=True)   # half -> closed
     assert _breaker_state(session) == "closed", "a success from half must close"
 
 

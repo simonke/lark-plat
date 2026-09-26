@@ -70,14 +70,23 @@ def get_level(db: Session, user) -> dict:
 
 
 def put_level(db: Session, user, level: str) -> dict:
+    """Set the single current automation level (L0..L4), idempotent for the same value.
+
+    Mutual exclusion: the new level becomes the only `current` (all others are
+    cleared), so `get_level.current` is unambiguous. A second confirmation is a FE
+    concern (FR-E6-1); the AI audit surface records the change.
+    """
     _gate(db, user, _AI_ADMIN)
     if level not in _LEVELS:
         raise ValidationError(f"level must be one of {_LEVELS}")
-    row = db.scalars(select(AutomationLevel).where(AutomationLevel.level == level)).first()
-    if row is None:
-        row = AutomationLevel(level=level, capability="", enabled=True)
-        db.add(row)
-    row.enabled = True  # idempotent for the same value
+    rows = {r.level: r for r in db.scalars(select(AutomationLevel)).all()}
+    target = rows.get(level)
+    if target is None:
+        target = AutomationLevel(level=level, capability="", enabled=True)
+        db.add(target)
+    for lvl, row in rows.items():
+        row.enabled = lvl == level
+    target.enabled = True
     db.commit()
     return get_level(db, user)
 

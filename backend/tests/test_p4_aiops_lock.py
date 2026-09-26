@@ -179,9 +179,9 @@ def test_a1_p4_paths_present_with_methods():
 
 
 def test_a2_paths_count_at_least_164():
-    """Base M8 paths == 156; P4 adds 8 URL keys == 164. P5 is add-only on top, so this
-    is a MONOTONIC no-shrink floor; the exact count is pinned at the newest batch lock
-    (test_p5_aiops_lock::test_a2_paths_count_167 + test_contract_openapi==167)."""
+    """Base M8 paths == 156; P4 adds 8 URL keys == 164. P5/P6 are add-only on top, so
+    this is a MONOTONIC no-shrink floor; the exact count is pinned at the newest batch
+    lock (test_p6_aiops_lock::test_a2_paths_count_173_and_no_removed + test_contract_openapi==173)."""
     paths = _openapi_paths()
     assert len(paths) >= 164, (
         f"paths must be >= 164 (P4 floor: M8 156 + 8 AIOps URL keys); got {len(paths)}. "

@@ -200,7 +200,7 @@ def test_a2_paths_count_at_least_156():
     # P3-6 收尾批 anchored EXACTLY 156 (@架构 P3-6 tuple v1). P4 (AIOps) is
     # add-only on top; the P3-5/P3-6 floor is now a MONOTONIC no-shrink check
     # (>=156) with the exact count pinned at the newest batch lock
-    # (test_p5_aiops_lock::test_a2_paths_count_167 + test_contract_openapi==167).
+    # (test_p6_aiops_lock::test_a2_paths_count_173_and_no_removed + test_contract_openapi==173).
     # Must NOT shrink below 156.
     assert len(paths) >= 156, (
         f"paths must be >= 156 (P3-6 floor: P3-5 154 + 2 deploy/fail URL keys); got {len(paths)}. "

@@ -133,7 +133,7 @@ def aggregate(db: Session, user, filters: dict | None = None, page: int = 1, siz
         bucket["alert_ids"].append(a.id)
         rank = _SEVERITY_RANK.get(a.severity, -1)
         if rank > _SEVERITY_RANK.get(bucket["max_severity"], -1):
-            bucket["max_severity"] = a.severity if rank >= 0 else None
+            bucket["max_severity"] = a.severity
 
     grouped = sorted(
         by_window.values(),

@@ -16,7 +16,7 @@ from app.repositories import ConfigRuleRepository
 # ai.* flag vocabulary (all default False; `ai.enabled` is the master switch).
 AI_FLAGS = (
     "ai.enabled", "ai.events", "ai.ticket_assist", "ai.kb_assist",
-    "ai.rca", "ai.playbook",
+    "ai.rca", "ai.playbook", "ai.auto_remediate",
 )
 
 

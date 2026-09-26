@@ -58,6 +58,8 @@ _VERSIONS_DIR = _BACKEND / "alembic" / "versions"
 
 _P4_HEAD = "e9d8c7b6a5f4"
 _P5_REV = "f5a6b7c8d9e0"
+# P6 (AIOps E6) advances the single head again (descends from the P5 rev).
+_P6_REV = "P6_REV"
 
 P5_FLAGS = ("ai.rca", "ai.playbook")
 P4_FLAGS = ("ai.enabled", "ai.events", "ai.ticket_assist", "ai.kb_assist")
@@ -134,11 +136,13 @@ def test_a1_p5_paths_present_with_methods():
     assert not problems, "P5 openapi surface incomplete: " + "; ".join(problems)
 
 
-def test_a2_paths_count_167():
-    """Base M9 paths == 164; P5 adds 3 URL keys == 167. EXACT equality (not `>=`)."""
+def test_a2_paths_count_at_least_167():
+    """Base M9 paths == 164; P5 adds 3 URL keys == 167. MONOTONIC no-shrink floor
+    (P6 raises it, add-only); the exact count is pinned at the newest batch lock
+    (test_p6_aiops_lock::test_a2_paths_count_173 + test_contract_openapi==173)."""
     paths = _openapi_paths()
-    assert len(paths) == 167, (
-        f"P5 paths must be exactly 167 (164 + 3 E4/E5 URL keys); got {len(paths)}. "
+    assert len(paths) >= 167, (
+        f"paths must be >= 167 (P5 floor: M9 164 + 3 E4/E5 URL keys); got {len(paths)}. "
         "New keys: /monitor/alerts/aggregate, /monitor/alerts/{alert_id}/ai/rca, "
         "/workflows/ai/suggest."
     )
@@ -166,9 +170,9 @@ def test_g1_migration_single_head_is_p5_rev():
     heads = sorted(r for r in revs if r not in downs)
     assert len(heads) == 1, f"migration must keep a single head; got {heads}"
     head = heads[0]
-    assert head == _P5_REV, f"P5 head must be the frozen rev `{_P5_REV}`; got {head}"
-    assert revs[head] == _P4_HEAD, (
-        f"P5 head must descend directly from P4 head {_P4_HEAD}; got parent {revs[head]!r}"
+    assert head == _P6_REV, f"P6 head must be the frozen rev `{_P6_REV}`; got {head}"
+    assert revs[head] == _P5_REV, (
+        f"P6 head must descend directly from P5 rev {_P5_REV}; got parent {revs[head]!r}"
     )
     assert revs.get(_P4_HEAD) == "b2c3d4e5f6a8", "P4 head must still descend from P3-5 rev"
 

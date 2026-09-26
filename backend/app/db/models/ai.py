@@ -21,7 +21,11 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base
 
 # E7 governance vocabulary.
-AI_ACTION_DECISIONS = ("adopted", "rejected", "auto")
+AI_ACTION_DECISIONS = ("adopted", "rejected", "auto", "dry_run")
+
+# P6 (E6) risk vocabulary for automated remediation (lowercase, single source).
+# Governed DB validation source: `risk_level not in RISK_LEVELS => reject`.
+RISK_LEVELS = ("low", "medium", "high")
 
 # E8 eval case kinds.
 AI_EVAL_CASE_KINDS = ("case", "negative_control")
@@ -64,6 +68,13 @@ class AiAction(Base):
     trace_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     actor: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    # P6 (E6) governance add-only columns. Plain String + comment enum, never a
+    # CHECK/Enum referencing the services-layer APPROVAL_MODES (avoids a
+    # models -> services reverse dependency; same shape as `decision`).
+    approval_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)  # auto_policy|manual
+    policy_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    verification_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    rollback_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -4,17 +4,17 @@
 - 用途：**环境-代码契约检查**——判定共享 live PG 的 `alembic_version` 是否合规，并为 `code-required` 推导提供已分类上界。
 - 边界：本清单是**权威常量源**；静态离线锁据此写常量，但**不得断言 live 的实际值**（静态锁不连 live）；live 值判定归**动态闸**（`backend/tools/live_readiness_smoke.py`）。
 
-## 迁移链（单头线性，19 版）
+## 迁移链（单头线性，20 版）
 
 ```
 e70f471cb518 → a1c7e9d24b60 → c4f7a1d20e91 → a7b3c5d9f2e1
 → d1e2f3a4b5c6 → f5e010c0a100 → e6f7a8b9c0d1 → a1b2c3d4e5f6
 → b2c3d4e5f6a7 → d4e5f6a7b8c9 → c3d4e5f6a7b8 → e8a1b2c3d4f5 → c9e3f1a2b4d6
 → e1f2a3b4c5d7 → f2a3b4c5d6e7 → a1b2c3d4e5f7 → b2c3d4e5f6a8
-→ e9d8c7b6a5f4 → f5a6b7c8d9e0
+→ e9d8c7b6a5f4 → f5a6b7c8d9e0 → P6_REV
 ```
 
-head = `f5a6b7c8d9e0`（唯一；P5 AIOps E3/E4/E5，add-only `workflow.kind` + `ix_ops_event_entity_action_ts`，无新表）。
+head = `P6_REV`（唯一；P6 AIOps E6 受控自动处置·L4，add-only：4 新表 `remediation_policy`/`automation_whitelist`/`automation_level`/`circuit_breaker_state` + `ai_action`/`approval_request` 增列）。
 
 ## 三集合（A / B / C；命名固定，禁互换）
 
@@ -22,11 +22,11 @@ head = `f5a6b7c8d9e0`（唯一；P5 AIOps E3/E4/E5，add-only `workflow.kind` + 
 | --- | --- | --- | --- |
 | **A** | `LIVE_REV_ALLOWED` | live `alembic_version` **允许停留值**（**live 合法性**判据） | `{d4e5f6a7b8c9, c3d4e5f6a7b8}` |
 | **B** | `MIGRATION_LIVE_APPLICABLE` | **可被应用**到共享库的迁移全集 | 11 版（链上 ≤ `c3d4e5f6a7b8`） |
-| **C** | `MIGRATION_LIVE_FORBIDDEN` | **禁落**共享库的迁移 | `{e8a1b2c3d4f5, c9e3f1a2b4d6, e1f2a3b4c5d7, f2a3b4c5d6e7, a1b2c3d4e5f7, b2c3d4e5f6a8, e9d8c7b6a5f4, f5a6b7c8d9e0}` |
+| **C** | `MIGRATION_LIVE_FORBIDDEN` | **禁落**共享库的迁移 | `{e8a1b2c3d4f5, c9e3f1a2b4d6, e1f2a3b4c5d7, f2a3b4c5d6e7, a1b2c3d4e5f7, b2c3d4e5f6a8, e9d8c7b6a5f4, f5a6b7c8d9e0, P6_REV}` |
 
 > ⚠️ **A ≠ B**：A 是「当前可停留的最高两版」，B 是「可被应用的迁移全集」。**不可互换**。
 
-## 全 19 版显式分类
+## 全 20 版显式分类
 
 | # | 版本 | 迁移 | ∈B 可落 | ∈A 可停留 | ∈C 禁落 |
 | --- | --- | --- | --- | --- | --- |
@@ -49,12 +49,13 @@ head = `f5a6b7c8d9e0`（唯一；P5 AIOps E3/E4/E5，add-only `workflow.kind` + 
 | 17 | `b2c3d4e5f6a8` | P3.5 CI/CD 集成 `cicd_provider`/`release` | | | ✓（descends from the P3.4 head ⇒ 不可落共享库） |
 | 18 | `e9d8c7b6a5f4` | P4 AIOps `ops_event`/`kb_embedding`/`ai_action`/`ai_eval_case`/`ai_eval_run` | | | ✓（descends from the P3.5 head ⇒ 不可落共享库） |
 | 19 | `f5a6b7c8d9e0` | P5 AIOps E3/E4/E5 `workflow.kind` + `ix_ops_event_entity_action_ts`（add-only，无新表） | | | ✓（descends from the P4 head ⇒ 不可落共享库） |
+| 20 | `P6_REV` | P6 AIOps E6 受控自动处置·L4（add-only：4 新表 + `ai_action`/`approval_request` 增列） | | | ✓（descends from the P5 head ⇒ 不可落共享库） |
 
 ## 不变式（按集分述）
 
-1. **完备性**：`链 ⊆ B ∪ C` 且 `B ∩ C = ∅`（19 = 11 + 8，**零空洞**）。
+1. **完备性**：`链 ⊆ B ∪ C` 且 `B ∩ C = ∅`（20 = 11 + 9，**零空洞**）。
 2. **可停留性**：`A ⊆ B`，且 A 在链上**连续**（`d4e5f6a7b8c9 → c3d4e5f6a7b8`），为 B 内「当前允许停留」的显式子集。
-3. **已分类**：`head ∈ B ∪ C`（本批 head `f5a6b7c8d9e0` ∈ C）。
+3. **已分类**：`head ∈ B ∪ C`（本批 head `P6_REV` ∈ C）。
 
 > ⚠️ 完备性**必须**用 `B ∪ C`。**严禁**用 `A ∪ C`（仅 3/19 覆盖 ⇒ 必误红）。
 
@@ -92,4 +93,4 @@ head = `f5a6b7c8d9e0`（唯一；P5 AIOps E3/E4/E5，add-only `workflow.kind` + 
 ## 来源
 
 - 后端 seq2338/2344/2346/2351/2369；架构 seq2328/2349/2371（`1286aa8` 落 (a) 上界=B）；需求 seq2326/2337/2339/2352/2370/2373/2375；单元 seq2345/2347/2350；评审 seq2340/2348/2367/2372/2375。
-- 迁移文件：`backend/alembic/versions/{c3d4e5f6a7b8_p23_auth_provider,d4e5f6a7b8c9_p2ma_mon_alert_last_event_at,e8a1b2c3d4f5_p2_closeout_mon_alert_dedup,c9e3f1a2b4d6_p3_ticket_kb,e1f2a3b4c5d7_p3x_ticket_no,f2a3b4c5d6e7_p3_3_cmdb_relation,a1b2c3d4e5f7_p3_4_workflow,b2c3d4e5f6a8_p3_5_cicd,e9d8c7b6a5f4_p4_aiops,f5a6b7c8d9e0_p5_aiops}.py`。
+- 迁移文件：`backend/alembic/versions/{c3d4e5f6a7b8_p23_auth_provider,d4e5f6a7b8c9_p2ma_mon_alert_last_event_at,e8a1b2c3d4f5_p2_closeout_mon_alert_dedup,c9e3f1a2b4d6_p3_ticket_kb,e1f2a3b4c5d7_p3x_ticket_no,f2a3b4c5d6e7_p3_3_cmdb_relation,a1b2c3d4e5f7_p3_4_workflow,b2c3d4e5f6a8_p3_5_cicd,e9d8c7b6a5f4_p4_aiops,f5a6b7c8d9e0_p5_aiops,p6_rev_p6_aiops}.py`。

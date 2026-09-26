@@ -285,6 +285,8 @@ _P35_REV = "b2c3d4e5f6a8"
 _P4_REV = "e9d8c7b6a5f4"
 # P5 (AIOps E3/E4/E5, @架构 tuple v1->r2 seq3332): add-only rev on top of the P4 head.
 _P5_REV = "f5a6b7c8d9e0"
+# P6 (AIOps E6) advances the single head again (descends from the P5 rev).
+_P6_REV = "P6_REV"
 # 形近陷阱: `b2c3d4e5f6a7` is the EXISTING P2-1 transfer-table rev (docs §14.3) — must NOT be reused.
 _P21_TRANSFER_REV = "b2c3d4e5f6a7"
 
@@ -309,13 +311,13 @@ def test_g1_migration_single_head_descends_from_p34():
     heads = sorted(r for r in revs if r not in downs)
     assert len(heads) == 1, f"migration must keep a single head; got {heads}"
     head = heads[0]
-    # P4 (@架构 tuple v1 seq3203) advances the single head to the AIOps rev; the
-    # P3-5 head-only assertion is superseded, but the P3-5 → P3-4 ancestry is kept.
-    assert head == _P5_REV, (
-        f"P5 head must be the suggested rev `{_P5_REV}`; got {head}"
+    # P4 (seq3203) + P5 (seq3332) + P6 (seq3560) each advance the single head; the
+    # newest batch head assertion is kept, and the ancestry below it stays intact.
+    assert head == _P6_REV, (
+        f"P6 head must be the suggested rev `{_P6_REV}`; got {head}"
     )
-    assert revs[head] == _P4_REV, (
-        f"P5 head must descend directly from P4 rev {_P4_REV}; got parent {revs[head]!r}"
+    assert revs[head] == _P5_REV, (
+        f"P6 head must descend directly from P5 rev {_P5_REV}; got parent {revs[head]!r}"
     )
     assert revs.get(_P4_REV) == _P35_REV, (
         f"P4 head must descend directly from P3-5 rev {_P35_REV}; "

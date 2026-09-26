@@ -87,10 +87,17 @@ from app.db.models.ops_event import OPS_EVENT_SOURCES, OpsEvent
 from app.db.models.ai import (
     AI_ACTION_DECISIONS,
     AI_EVAL_CASE_KINDS,
+    RISK_LEVELS,
     AiAction,
     AiEvalCase,
     AiEvalRun,
     KbEmbedding,
+)
+from app.db.models.ai_automation import (
+    AutomationLevel,
+    AutomationWhitelist,
+    CircuitBreakerState,
+    RemediationPolicy,
 )
 
 __all__ = [
@@ -190,4 +197,9 @@ __all__ = [
     "AiEvalRun",
     "AI_ACTION_DECISIONS",
     "AI_EVAL_CASE_KINDS",
+    "RISK_LEVELS",
+    "AutomationWhitelist",
+    "RemediationPolicy",
+    "AutomationLevel",
+    "CircuitBreakerState",
 ]

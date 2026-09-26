@@ -295,7 +295,13 @@ def test_m4_ai_action_decision_enum():
             "P4 lock: ai_action decision vocabulary not expressible — expected a module "
             "constant (AI_ACTION_DECISIONS) or a CHECK/Enum on `ai_action.decision`"
         )
-    assert vals == AI_ACTION_DECISIONS, f"decision enum must be {sorted(AI_ACTION_DECISIONS)}; got {sorted(vals)}"
+    # P4 baseline: {adopted,rejected,auto}. P6 (AIOps E6) is add-only over this
+    # vocabulary and appends "dry_run" (dry-run audit rows). Later batches may only
+    # append; the original trio must stay present.
+    assert AI_ACTION_DECISIONS <= vals, (
+        f"decision enum must include the P4 trio {sorted(AI_ACTION_DECISIONS)}; "
+        f"got {sorted(vals)}"
+    )
 
 
 def _col_enum_values(table: str, col: str) -> set[str] | None:

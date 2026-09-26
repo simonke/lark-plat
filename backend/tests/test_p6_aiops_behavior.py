@@ -24,8 +24,14 @@ Groups (all required by @架构 `3616`④):
      empty L4 policy set OR an L4 policy with `verification_ref is None`; level
      unchanged; success requires >=1 ref'd L4 policy
   ④s circuit-breaker (@架构 `3629` r1.10): `resolve_threshold` single source
-     (env > policy.circuit_threshold > default); `record_verification_result`
-     closed→open→half→closed; `state=='open'` => forced manual (halt)
+      (env > policy.circuit_threshold > default); `record_verification_result`
+      closed→open→half→closed; `state=='open'` => forced manual (halt)
+  ⑤ audit list面 (@架构 `3644` 裁 in-scope): `GET /api/v1/ai/actions` is the ONLY
+      audit face, so its list item must surface the P6 governance keys — A1 直取列
+      (`approval_mode`/`policy_ref`/`verification_ref`/`rollback_ref`) plus the
+      A2(i) readonly aliases (`why_ref := basis_refs`, `result := decision`); an
+      `auto_policy` row must read `approval_mode=='auto_policy'` with non-null
+      `policy_ref`. Zero DDL (serializer-only).
 
 Hit contract (r1.9, @架构 `3618`): four-way AND —
 `current=='L4'` (derived) ∧ ∃policy(asset_class,op_type,level='L4',whitelist_ref≠None,
@@ -611,3 +617,92 @@ def test_b10_open_breaker_halts_auto(p6_db):
     auto0 = _auto_count(session)
     _create_exec(session, remediation=dict(_HIT))
     _assert_manual_pending(session, auto0)
+
+
+# ── ⑤ audit list面 (@架构 `3644` 裁 in-scope) ──────────────────────────────────
+# FR-E7-2/FR-E7-4 + P6 tuple r1①: `/api/v1/ai/actions` is the ONLY audit read face,
+# so its list item must expose the P6 governance columns. A1 = 直取列
+# (`approval_mode`/`policy_ref`/`verification_ref`/`rollback_ref`); A2(i) = readonly
+# projection aliases `why_ref := basis_refs` / `result := decision` (no DDL, no new
+# column). This is a serializer-only change (`ai_service._action_out`).
+
+# @架构 `3644`③ hard-required subset of the audit list item keys.
+_AUDIT_KEYS_REQUIRED = ("approval_mode", "policy_ref", "why_ref", "result")
+# @架构 `3644`② full P6 projection: A1 直取列 (4) + A2(i) aliases (2).
+_AUDIT_KEYS_P6 = ("approval_mode", "policy_ref", "verification_ref", "rollback_ref",
+                  "why_ref", "result")
+
+
+def _seed_ai_action(session, **over):
+    """Append one governed `ai_action` row with known P6 fields (offline)."""
+    from datetime import datetime, timezone
+
+    from app.db.models import AiAction  # noqa: PLC0415
+
+    data = dict(
+        model_name="m1", model_version="1", input_snapshot={"k": 1}, confidence=0.9,
+        basis_refs=["BR-1"], trace_id="TR-1", actor=1, decision="auto",
+        approval_mode="auto_policy", policy_ref="app:restart",
+        verification_ref="V-1", rollback_ref="RB-1",
+        created_at=datetime.now(timezone.utc),
+    )
+    data.update(over)
+    row = AiAction(**data)
+    session.add(row)
+    session.commit()
+    return row
+
+
+def _list_actions(client):
+    body = client.get("/api/v1/ai/actions")
+    assert body.status_code == 200, body.text
+    return _data(body)["list"]
+
+
+def test_b11_audit_list_exposes_p6_projection(p6_db):
+    """FR-E7-2/4 (@架构 `3644`②): list item must carry the P6 governance keys."""
+    session, set_user, set_flag, client = p6_db
+    set_flag("ai.enabled", True)
+    set_user(["ai:use", "ai:admin"], admin=True)
+    _seed_ai_action(session)
+
+    items = _list_actions(client)
+    assert len(items) == 1, f"expected one action item; got {items!r}"
+    item = items[0]
+    missing = [k for k in _AUDIT_KEYS_P6 if k not in item]
+    assert not missing, (
+        f"`GET /ai/actions` list item missing P6 audit projection keys: {missing}; "
+        f"present={sorted(item)}"
+    )
+    for key in _AUDIT_KEYS_REQUIRED:
+        assert key in item, f"required audit key `{key}` absent"
+
+
+def test_b12_audit_aliases_and_auto_policy_row(p6_db):
+    """FR-E7-4 (@架构 `3644`②③): A2(i) aliases + auto_policy row projection.
+
+    `why_ref == basis_refs`, `result == decision`; an `auto_policy` row reflects
+    `approval_mode == 'auto_policy'` with a non-null `policy_ref`, while a `manual`
+    row keeps `approval_mode == 'manual'` / `policy_ref is None` (non-vacuous).
+    """
+    session, set_user, set_flag, client = p6_db
+    set_flag("ai.enabled", True)
+    set_user(["ai:use", "ai:admin"], admin=True)
+    _seed_ai_action(session)
+    _seed_ai_action(session, decision="adopted", approval_mode="manual",
+                    policy_ref=None, basis_refs=["BR-2"], trace_id="TR-2")
+
+    by_trace = {it["trace_id"]: it for it in _list_actions(client)}
+    assert set(by_trace) == {"TR-1", "TR-2"}, f"unexpected audit rows: {sorted(by_trace)}"
+
+    auto = by_trace["TR-1"]
+    assert auto["why_ref"] == auto["basis_refs"], "why_ref must alias basis_refs (A2(i))"
+    assert auto["result"] == auto["decision"], "result must alias decision (A2(i))"
+    assert auto["approval_mode"] == "auto_policy", "auto_policy row must surface approval_mode"
+    assert auto["policy_ref"], "auto_policy row must surface a non-null policy_ref"
+
+    manual = by_trace["TR-2"]
+    assert manual["why_ref"] == manual["basis_refs"], "why_ref alias must be per-row"
+    assert manual["result"] == manual["decision"], "result alias must be per-row"
+    assert manual["approval_mode"] == "manual", "manual row must surface its approval_mode"
+    assert manual["policy_ref"] is None, "manual row must surface a null policy_ref"

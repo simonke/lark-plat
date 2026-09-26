@@ -6,7 +6,8 @@
 import type { OpsEventSource, AiActionDecision } from '../../api/types'
 
 export const OPS_EVENT_SOURCES: readonly OpsEventSource[] = ['monitor', 'exec', 'audit', 'ticket', 'kb']
-export const AI_ACTION_DECISIONS: readonly AiActionDecision[] = ['adopted', 'rejected', 'auto']
+// P6 add-only: mirrors the backend `AI_ACTION_DECISIONS` (+ "dry_run").
+export const AI_ACTION_DECISIONS: readonly AiActionDecision[] = ['adopted', 'rejected', 'auto', 'dry_run']
 
 const SOURCE_LABELS: Record<string, string> = {
   monitor: '监控',
@@ -20,6 +21,7 @@ const DECISION_LABELS: Record<string, string> = {
   adopted: '已采纳',
   rejected: '已否决',
   auto: '自动记录',
+  dry_run: '预演',
 }
 
 const BRANCH_LABELS: Record<string, string> = {
@@ -134,4 +136,100 @@ export function rootEntityLabel(root: { type?: string; id?: string | number | nu
   if (!root) return '-'
   const label = root.name || root.id
   return label === null || label === undefined || label === '' ? '-' : `${root.type ?? '?'}#${label}`
+}
+
+// ---------------------------------------------------------------- P6 E6 (AIOps L4) helpers
+
+/** L0..L4 ladder (display order); the matrix VALUES come from the backend. */
+export const AUTOMATION_LEVELS: readonly string[] = ['L0', 'L1', 'L2', 'L3', 'L4']
+
+/** Highest tier enabled this phase (L5 self-healing is an explicit non-goal). */
+export const AUTOMATION_MAX_LEVEL = 'L4'
+/** Default tier until L4 is explicitly switched on (server default L3). */
+export const AUTOMATION_DEFAULT_LEVEL = 'L3'
+
+/** Mirror of the backend risk vocabulary (lowercase, single source). */
+export const RISK_LEVELS: readonly string[] = ['low', 'medium', 'high']
+/** Mirror of the services-layer leaf constant `APPROVAL_MODES`. */
+export const APPROVAL_MODES: readonly string[] = ['auto_policy', 'manual']
+/** L4 auto set: only `low` may auto-remediate (backend `L4_AUTO_RISK_LEVELS`). */
+export const L4_AUTO_RISK_LEVELS: readonly string[] = ['low']
+
+const RISK_LABELS: Record<string, string> = { low: '低', medium: '中', high: '高' }
+const APPROVAL_MODE_LABELS: Record<string, string> = { auto_policy: '策略自动批准', manual: '人工审批' }
+const CIRCUIT_STATE_LABELS: Record<string, string> = { closed: '正常', half: '半开', open: '熔断' }
+
+export function riskLabel(v: string | null | undefined): string {
+  if (!v) return '-'
+  return RISK_LABELS[v] ?? v
+}
+
+export function riskTag(v: string | null | undefined): string {
+  switch (v) {
+    case 'low':
+      return 'success'
+    case 'medium':
+      return 'warning'
+    case 'high':
+      return 'danger'
+    default:
+      return 'info'
+  }
+}
+
+/** Only `low` may run on L4 (`risk_level in L4_AUTO_RISK_LEVELS`). */
+export function isAutoEligibleRisk(v: string | null | undefined): boolean {
+  return v !== null && v !== undefined && L4_AUTO_RISK_LEVELS.includes(v)
+}
+
+export function approvalModeLabel(v: string | null | undefined): string {
+  if (!v) return '-'
+  return APPROVAL_MODE_LABELS[v] ?? v
+}
+
+export function approvalModeTag(v: string | null | undefined): string {
+  switch (v) {
+    case 'auto_policy':
+      return 'warning'
+    case 'manual':
+      return 'info'
+    default:
+      return 'info'
+  }
+}
+
+export function circuitStateLabel(v: string | null | undefined): string {
+  if (!v) return '-'
+  return CIRCUIT_STATE_LABELS[v] ?? v
+}
+
+export function circuitStateTag(v: string | null | undefined): string {
+  switch (v) {
+    case 'closed':
+      return 'success'
+    case 'half':
+      return 'warning'
+    case 'open':
+      return 'danger'
+    default:
+      return 'info'
+  }
+}
+
+/** Map a tier code (e.g. "L4") to its ladder index, or -1 when unknown. */
+export function levelIndex(v: string | null | undefined): number {
+  if (!v) return -1
+  return AUTOMATION_LEVELS.indexOf(v)
+}
+
+/** True when `level` is at or below `max` on the L0..L4 ladder (fail-closed otherwise). */
+export function isLevelWithin(level: string | null | undefined, max: string = AUTOMATION_MAX_LEVEL): boolean {
+  const a = levelIndex(level)
+  const b = levelIndex(max)
+  return a >= 0 && b >= 0 && a <= b
+}
+
+/** Deterministic dry-run idempotency key (same inputs -> same key; dedupe seam). */
+export function buildDryRunKey(action: string | null | undefined, now: number = Date.now()): string {
+  return `dry-${(action || 'noop').trim() || 'noop'}-${now}`
 }

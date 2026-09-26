@@ -1684,7 +1684,8 @@ export interface OpsEventQuery {
   size?: number
 }
 
-export type AiActionDecision = 'adopted' | 'rejected' | 'auto'
+// P6 add-only: `dry_run` is appended to the frozen decision vocabulary.
+export type AiActionDecision = 'adopted' | 'rejected' | 'auto' | 'dry_run'
 
 export interface AiAction {
   id: number
@@ -1696,6 +1697,15 @@ export interface AiAction {
   trace_id: string | null
   actor: number | null
   decision: AiActionDecision
+  // P6 (E6) add-only governance columns; the row carries them, the current
+  // `/ai/actions` serializer may omit them (render defensively).
+  approval_mode?: AutomationApprovalMode | null
+  policy_ref?: string | null
+  verification_ref?: string | null
+  rollback_ref?: string | null
+  // P6 audit list additive fields (tuple r1③); render defensively if absent.
+  why_ref?: string | null
+  result?: string | null
   created_at: string | null
 }
 
@@ -1851,6 +1861,103 @@ export interface PlaybookSuggestion {
   definition: WorkflowDefinition
   model_name: string
   authoritative: boolean
+}
+
+// ---------------------------------------------------------------- P6 E6 (AIOps L4) ---------------
+// Contract: @架构 P6 tuple r1 (msg e2066572 + notes r1.1-r1.7) + @需求 §30 v0.1.6.
+// Shapes @ backend/app/api/v1/endpoints/ai_automation.py +
+// app/services/ai_automation_service.py (green tip 5417f75). Routes are always
+// registered ((A)); the flag is enforced feature-first server-side (off -> 400/403).
+
+/** Automation ladder L0..L4 (governed; the FE never hardcodes the matrix rows). */
+export type AutomationLevelCode = 'L0' | 'L1' | 'L2' | 'L3' | 'L4'
+
+export interface AutomationLevelEntry {
+  level: string
+  capability: string
+  enabled: boolean
+}
+
+export interface AutomationLevel {
+  current: string
+  matrix: AutomationLevelEntry[]
+}
+
+/** Lowercase, single source (backend `RISK_LEVELS`); only `low` may auto (L4). */
+export type AutomationRiskLevel = 'low' | 'medium' | 'high'
+
+/** Mirrors the services-layer leaf constant `APPROVAL_MODES`. */
+export type AutomationApprovalMode = 'auto_policy' | 'manual'
+
+export interface AutomationWhitelistItem {
+  id: number
+  action: string
+  risk_level: AutomationRiskLevel
+  enabled: boolean
+  updated_by: number | null
+  updated_at: string | null
+}
+
+export interface AutomationWhitelistPage {
+  list: AutomationWhitelistItem[]
+  total: number
+  page: number
+  size: number
+}
+
+export interface AutomationWhitelistQuery {
+  action?: string
+  enabled?: boolean
+  page?: number
+  size?: number
+}
+
+export interface AutomationWhitelistCreate {
+  action: string
+  risk_level: AutomationRiskLevel
+  enabled?: boolean
+}
+
+export interface AutomationWhitelistUpdate {
+  risk_level?: AutomationRiskLevel | null
+  enabled?: boolean | null
+}
+
+export interface DryRunItem {
+  target: string | null
+  params: Record<string, unknown>
+  expected_effect: string
+  risk_level: AutomationRiskLevel
+}
+
+export interface DryRunIn {
+  idempotency_key: string
+  action?: string | null
+  target?: string | null
+}
+
+/** Read-only preview: never writable, one `dry_run` audit row is recorded. */
+export interface DryRunResult {
+  idempotency_key: string
+  writable: false
+  items: DryRunItem[]
+}
+
+export type AutomationRollbackStatus = 'rolled_back' | 'not_rollable'
+
+export interface AutomationRollbackResult {
+  status: AutomationRollbackStatus
+  reason: string | null
+  window_expires_at: string | null
+}
+
+export type CircuitBreakerStateCode = 'open' | 'half' | 'closed'
+
+export interface CircuitBreakerState {
+  state: CircuitBreakerStateCode
+  threshold: number | null
+  current: number
+  last_tripped_at: string | null
 }
 
 

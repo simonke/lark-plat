@@ -200,6 +200,11 @@ const routes: RouteRecordRaw[] = [
         name: 'ai-actions',
         component: () => import('../views/ai/AiActionsView.vue'),
       },
+      {
+        path: 'ai/automation',
+        name: 'ai-automation',
+        component: () => import('../views/ai/AutomationView.vue'),
+      },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/' },

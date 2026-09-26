@@ -28,6 +28,13 @@
             <el-tag size="small" :type="decisionTag(row.decision)">{{ decisionLabel(row.decision) }}</el-tag>
           </template>
         </el-table-column>
+        <el-table-column v-if="hasApprovalMode" label="批准方式" width="130">
+          <template #default="{ row }">
+            <el-tag size="small" :type="approvalModeTag(row.approval_mode)" effect="plain">
+              {{ approvalModeLabel(row.approval_mode) }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="model_name" label="模型" width="140" show-overflow-tooltip />
         <el-table-column label="版本" width="120">
           <template #default="{ row }">{{ row.model_version || '-' }}</template>
@@ -67,6 +74,12 @@
       >
         <el-descriptions :column="1" border size="small">
           <el-descriptions-item label="决策">{{ decisionLabel(current.decision) }}</el-descriptions-item>
+          <el-descriptions-item label="批准方式">{{ approvalModeLabel(current.approval_mode) }}</el-descriptions-item>
+          <el-descriptions-item label="策略引用">{{ current.policy_ref || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="验证锚">{{ current.verification_ref || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="回滚锚">{{ current.rollback_ref || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="依据引用">{{ current.why_ref || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="结果">{{ current.result || '-' }}</el-descriptions-item>
           <el-descriptions-item label="操作人">{{ current.actor ?? '-' }}</el-descriptions-item>
           <el-descriptions-item label="Trace">{{ current.trace_id || '-' }}</el-descriptions-item>
           <el-descriptions-item label="输入快照">
@@ -82,12 +95,20 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { listAiActions } from '../../api/ai'
 import { extractError } from '../../api/http'
 import type { AiAction, AiActionQuery } from '../../api/types'
-import { AI_ACTION_DECISIONS, decisionLabel, decisionTag, confidencePercent, shortTrace } from './helpers'
+import {
+  AI_ACTION_DECISIONS,
+  decisionLabel,
+  decisionTag,
+  confidencePercent,
+  shortTrace,
+  approvalModeLabel,
+  approvalModeTag,
+} from './helpers'
 import EvidenceCard from './EvidenceCard.vue'
 
 const loading = ref(false)
@@ -96,6 +117,8 @@ const total = ref(0)
 const query = reactive<AiActionQuery>({ page: 1, size: 20 })
 const detailVisible = ref(false)
 const current = ref<AiAction | null>(null)
+// P6: the "批准方式" column only appears once `/ai/actions` exposes `approval_mode`.
+const hasApprovalMode = computed(() => rows.value.some((r) => r.approval_mode != null))
 
 function formatTime(v: string | null | undefined): string {
   return v ? new Date(v).toLocaleString() : '-'

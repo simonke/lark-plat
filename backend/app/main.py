@@ -9,6 +9,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.middleware.cors import CORSMiddleware
@@ -138,7 +139,11 @@ async def http_error_handler(request: Request, exc: StarletteHTTPException) -> J
 async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     return JSONResponse(
         status_code=422,
-        content=Result.error(CODE_BAD_REQUEST, "parameter validation failed", exc.errors()).model_dump(),
+        content=Result.error(
+            CODE_BAD_REQUEST,
+            "parameter validation failed",
+            jsonable_encoder(exc.errors()),
+        ).model_dump(),
     )
 
 

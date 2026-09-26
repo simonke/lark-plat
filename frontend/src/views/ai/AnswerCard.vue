@@ -15,11 +15,12 @@
         <el-tag
           v-for="c in result.citations"
           :key="c.chunk_ref"
-          :class="['citation', { 'citation-off': articleIdFromDocRef(c.doc_ref) === null }]"
+          :class="['citation', { 'citation-off': !reachable(c) }]"
           size="small"
           :type="sourceTag('kb')"
-          :title="articleIdFromDocRef(c.doc_ref) === null ? '无法定位来源' : ''"
-          @click="openCitation(c)"
+          :aria-disabled="!reachable(c)"
+          :tabindex="reachable(c) ? undefined : -1"
+          v-on="reachable(c) ? { click: () => openCitation(c) } : {}"
         >
           {{ c.chunk_ref }} · 相关度 {{ c.score.toFixed(3) }}
         </el-tag>
@@ -35,7 +36,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import EvidenceCard from './EvidenceCard.vue'
 import type { KbAnswerResult, KbCitation } from '../../api/types'
 import { sourceTag, articleIdFromDocRef } from './helpers'
@@ -46,10 +46,13 @@ defineEmits<{ (e: 'sink', result: KbAnswerResult): void }>()
 const router = useRouter()
 const failClosed = computed(() => props.result?.fail_closed === true)
 
+function reachable(c: KbCitation): boolean {
+  return articleIdFromDocRef(c.doc_ref) !== null
+}
+
 function openCitation(c: KbCitation) {
   const id = articleIdFromDocRef(c.doc_ref)
   if (id !== null) router.push(`/kb/articles/${id}`)
-  else ElMessage.info('该依据暂不支持跳转到文章')
 }
 </script>
 
@@ -71,7 +74,7 @@ function openCitation(c: KbCitation) {
   cursor: pointer;
 }
 .citation-off {
-  cursor: default;
+  pointer-events: none;
   opacity: 0.6;
 }
 .sink {

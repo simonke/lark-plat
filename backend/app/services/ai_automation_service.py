@@ -46,6 +46,7 @@ DEDUPE_WINDOW_SECONDS = 300
 # builtin default. `resolve_threshold` is the ONE place the precedence lives.
 _THRESHOLD_ENV = "AI_AUTO_REMEDIATE_CIRCUIT_THRESHOLD"
 _DEFAULT_CIRCUIT_THRESHOLD = 3
+_GLOBAL_SCOPE = "global"
 
 
 def _gate(db: Session, user, perm: str) -> None:
@@ -334,38 +335,45 @@ def rollback_run(db: Session, user, run_id: int) -> dict:
 # ---------------------------------------------------------------- circuit breaker
 
 def _breaker_state(db: Session) -> str:
-    row = db.scalars(select(CircuitBreakerState).order_by(CircuitBreakerState.id)).first()
+    row = db.scalars(
+        select(CircuitBreakerState).where(CircuitBreakerState.scope == _GLOBAL_SCOPE)
+    ).first()
     return row.state if row is not None else "closed"
 
 
-def resolve_threshold(db: Session, policy=None) -> int | None:
-    """FR-E6-4 circuit-breaker threshold single source (r1.9 ③ / r1.10): env override
-    > governing `policy.circuit_threshold` > builtin default. Kept in ONE place so the
-    served-level live-F can trigger the FSM deterministically."""
+def resolve_threshold(db: Session, *, policy=None) -> int:
+    """FR-E6-4 circuit-breaker threshold single source (r1.9 ③ / r1.10 @架构 `3635`).
+    Precedence: env override > `policy.circuit_threshold` (non-null) > the global
+    `CircuitBreakerState('global').threshold` row > builtin default. Kept in ONE place
+    so trip / halt / GET cannot drift."""
     raw = os.getenv(_THRESHOLD_ENV)
     if raw not in (None, ""):
         try:
             return int(raw)
         except ValueError:
             pass
-    policy_threshold = getattr(policy, "circuit_threshold", None)
-    if policy_threshold is not None:
-        return int(policy_threshold)
+    if policy is not None and getattr(policy, "circuit_threshold", None) is not None:
+        return int(policy.circuit_threshold)
+    row = db.scalars(
+        select(CircuitBreakerState).where(CircuitBreakerState.scope == _GLOBAL_SCOPE)
+    ).first()
+    if row is not None and row.threshold is not None:
+        return int(row.threshold)
     return _DEFAULT_CIRCUIT_THRESHOLD
 
 
-def record_verification_result(db: Session, policy=None, ok: bool = True) -> dict:
+def record_verification_result(db: Session, *, policy=None, ok: bool) -> dict:
     """FR-E6-4 / r1.10 breaker FSM: closed -> open -> half -> closed.
 
-    A failure at/over the resolved threshold trips the breaker `open`; a success
-    while `open` half-opens it; a success while `half` closes it (and resets the
-    failure counter). The trip threshold is `resolve_threshold(db, policy=…)`, so a
-    matched policy's `circuit_threshold` participates (r1.10, @架构 `3635`). No clock
-    dependency (the caller drives it deterministically)."""
+    A failure at/over `resolve_threshold(db, policy=…)` trips the breaker `open`; a
+    success while `open` half-opens it; a success while `half` closes it (and resets
+    the failure counter). No clock dependency (the caller drives it deterministically)."""
     threshold = resolve_threshold(db, policy=policy)
-    row = db.scalars(select(CircuitBreakerState).order_by(CircuitBreakerState.id)).first()
+    row = db.scalars(
+        select(CircuitBreakerState).where(CircuitBreakerState.scope == _GLOBAL_SCOPE)
+    ).first()
     if row is None:
-        row = CircuitBreakerState(scope="global", state="closed", current=0, threshold=threshold)
+        row = CircuitBreakerState(scope=_GLOBAL_SCOPE, state="closed", current=0, threshold=None)
         db.add(row)
         db.flush()
     if row.state == "half":
@@ -393,7 +401,9 @@ def record_verification_result(db: Session, policy=None, ok: bool = True) -> dic
 def circuit_breaker(db: Session, user) -> dict:
     _gate(db, user, _AI_USE)
     threshold = resolve_threshold(db, policy=None)
-    row = db.scalars(select(CircuitBreakerState).order_by(CircuitBreakerState.id)).first()
+    row = db.scalars(
+        select(CircuitBreakerState).where(CircuitBreakerState.scope == _GLOBAL_SCOPE)
+    ).first()
     if row is None:
         return {"state": "closed", "threshold": threshold, "current": 0,
                 "last_tripped_at": None}

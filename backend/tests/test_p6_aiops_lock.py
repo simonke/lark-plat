@@ -531,6 +531,43 @@ def test_m5_new_approval_columns_plain_string_no_reverse_dep():
     assert not problems, "reverse-dep guard: " + "; ".join(problems)
 
 
+def _grep_files(root: pathlib.Path, needle: str) -> dict[str, int]:
+    hits: dict[str, int] = {}
+    for py in root.rglob("*.py"):
+        try:
+            n = py.read_text(encoding="utf-8").count(needle)
+        except Exception:  # noqa: BLE001
+            continue
+        if n:
+            try:
+                rel = py.relative_to(root).as_posix()
+            except ValueError:  # pragma: no cover
+                rel = py.as_posix()
+            hits[rel] = n
+    return hits
+
+
+def test_m6_check_constraint_baseline_unchanged():
+    """r1.4 (a) (@架构 3572 / @reviewer 3573): in `app/db`, `CheckConstraint` occurs ONLY in
+    `models/cmdb.py` (import + usage) — E6 adds none (new cols are plain String). File-set
+    form (not `== {cmdb.py:34}`) so the import line cannot false-red."""
+    root = pathlib.Path(_require("app").__file__).resolve().parent / "db"
+    hits = _grep_files(root, "CheckConstraint")
+    assert set(hits) == {"models/cmdb.py"}, (
+        "`CheckConstraint` in app/db must remain solely in models/cmdb.py (import + usage); "
+        f"E6 must add none; got {hits}"
+    )
+
+
+def test_m7_models_layer_no_services_reverse_dependency():
+    """r1.4 (b) (@架构 3572 / @reviewer 3573): the models layer must not reference
+    `app.services` (substring form covers from/import/attribute) — `APPROVAL_MODES` stays a
+    leaf in services, not pulled into models."""
+    root = pathlib.Path(_require("app").__file__).resolve().parent / "db" / "models"
+    hits = _grep_files(root, "app.services")
+    assert not hits, f"models layer must not depend on services (reverse dep); hits: {hits}"
+
+
 # ── A: openapi surface (r1 A/B/C③) ───────────────────────────────────────────
 
 def _openapi_paths() -> dict:

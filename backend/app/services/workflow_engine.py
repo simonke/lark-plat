@@ -215,6 +215,7 @@ def _create_exec_task(db, run, node, defnode) -> None:
         created_by=run.created_by,
         requester_id=run.created_by,
         visible_group_ids=None,  # system driver == admin scope (US-03 not narrowed)
+        remediation=(run.context or {}).get("remediation"),  # P6 E6-3 origination seam
     )
     node.exec_task_id = resolved["id"]
     if resolved.get("approve_required"):

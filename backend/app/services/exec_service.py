@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import BadRequestError, BusinessError, ConflictError, ForbiddenError, NotFoundError
 from app.core.redis_helper import get_redis
-from app.db.models import ApprovalRequest, ConfigRule, ExecLog, ExecTask, ExecTaskHost, Host, Script
+from app.db.models import AiAction, ApprovalRequest, ConfigRule, ExecLog, ExecTask, ExecTaskHost, Host, Script
 from app.repositories import (
     ApprovalRepository,
     ConfigRuleRepository,
@@ -94,6 +94,7 @@ def create_exec_task_record(
     created_by: int | None = None,
     requester_id: int | None = None,
     visible_group_ids: list[int] | None = None,
+    remediation: dict | None = None,
 ) -> dict:
     """Shared exec-task core: row build + host validation + sensitive gate +
     approval linkage + executor resolution (caller dispatches).
@@ -191,6 +192,30 @@ def create_exec_task_record(
             raise ConflictError("task state changed concurrently")
         task.version += 1
         db.flush()
+        # FR-E6-3 (P6 r1): silent pre-authorisation through the SHARED core. Flag off
+        # or any miss => the row stays `pending` (byte-identical to P5); a hit reuses
+        # THIS row (no new construction site) and unlocks it via the P5 primitive.
+        from app.services import ai_automation_service  # lazy: avoid a service import cycle
+
+        resolved = ai_automation_service.resolve_auto_policy(db, remediation)
+        if resolved is not None:
+            approval.approval_mode = "auto_policy"
+            approval.status = "approved"
+            approval.policy_ref = resolved["policy_ref"]
+            db.add(AiAction(
+                model_name="e6-auto-remediate", model_version=None, input_snapshot=None,
+                confidence=None, basis_refs=None, trace_id=task.task_no,
+                actor=requester_id if requester_id is not None else (created_by or 0),
+                decision="auto", approval_mode="auto_policy", policy_ref=resolved["policy_ref"],
+                verification_ref=None, rollback_ref=None,
+            ))
+            db.flush()
+            from app.services import approval_service  # reuse the P5 unlock/ dispatch primitive
+
+            approval_service._approve_linkages(db, approval)
+            db.commit()
+            return {"id": task.id, "task_no": task.task_no, "status": "running",
+                    "approve_required": True, "approval_id": approval_id, "sensitive_flag": True}
         db.commit()
         return {"id": task.id, "task_no": task.task_no, "status": "awaiting_approval",
                 "approve_required": True, "approval_id": approval_id, "sensitive_flag": True}

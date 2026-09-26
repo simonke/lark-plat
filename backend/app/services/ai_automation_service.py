@@ -13,6 +13,7 @@ Frozen contract: @架构 P6 tuple r1 (seq3560 + notes r1.1-r1.7) + @需求 §30.
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
@@ -25,10 +26,11 @@ from app.db.models import (
     AutomationLevel,
     AutomationWhitelist,
     CircuitBreakerState,
+    RemediationPolicy,
     WorkflowRun,
 )
 from app.services.ai_automation_constants import L4_AUTO_RISK_LEVELS
-from app.services.ai_gate import require_feature
+from app.services.ai_gate import is_feature_enabled, require_feature
 
 _FEATURE = "ai.auto_remediate"
 _AI_USE = "ai:use"
@@ -39,6 +41,11 @@ _LEVELS = ("L0", "L1", "L2", "L3", "L4")
 # Idempotency seam (FR-E6-8): injectable clock + overridable window, so the
 # served-level live-F can deterministically exercise same-window dedupe vs replay.
 DEDUPE_WINDOW_SECONDS = 300
+
+# Circuit-breaker threshold single source (FR-E6-4): env override > policy value >
+# builtin default. `resolve_threshold` is the ONE place the precedence lives.
+_THRESHOLD_ENV = "AI_AUTO_REMEDIATE_CIRCUIT_THRESHOLD"
+_DEFAULT_CIRCUIT_THRESHOLD = 3
 
 
 def _gate(db: Session, user, perm: str) -> None:
@@ -53,6 +60,58 @@ def _iso(value) -> str | None:
 def _require_risk_level(value: str) -> None:
     if value not in RISK_LEVELS:
         raise ValidationError(f"risk_level must be one of {RISK_LEVELS}")
+
+
+def _current_level(db: Session) -> str:
+    """Derived `current` = the unique enabled `AutomationLevel` row's level (r1.9
+    ①), defaulting to `L3` when none is enabled — never a stored column."""
+    rows = db.scalars(select(AutomationLevel)).all()
+    return next((r.level for r in rows if r.enabled), "L3")
+
+
+# ------------------------------------------------- E6 auto-policy resolution
+
+def resolve_auto_policy(db: Session, remediation: dict | None) -> dict | None:
+    """FR-E6-3 hit test (r1.9 four-way conjunction). Returns `{"policy_ref":…}` on a
+    hit, else `None` (=> the caller leaves the approval row `manual`/`pending`).
+
+    Silent by design: flag off or any miss returns `None` — never raises — so the
+    shared exec core stays byte-identical to P5 when E6 is disabled.
+    """
+    if not remediation or not is_feature_enabled(db, _FEATURE):
+        return None
+    if remediation.get("risk_level") not in L4_AUTO_RISK_LEVELS:
+        return None
+    if _current_level(db) != "L4":
+        return None
+    if _breaker_state(db) == "open":  # r1.10 halt: an open breaker forces manual
+        return None
+    action = remediation.get("action")
+    # A2 (r1.9): ambiguous (>1) OR empty policy set => fail-closed manual.
+    policies = db.scalars(
+        select(RemediationPolicy).where(
+            RemediationPolicy.asset_class == remediation.get("asset_class"),
+            RemediationPolicy.op_type == remediation.get("op_type"),
+            RemediationPolicy.level == "L4",
+            RemediationPolicy.whitelist_ref.is_not(None),
+            RemediationPolicy.verification_ref.is_not(None),
+        )
+    ).all()
+    if len(policies) != 1:
+        return None
+    policy = policies[0]
+    if action != policy.whitelist_ref:  # ④ policy -> whitelist explicit reference
+        return None
+    whitelisted = db.scalars(
+        select(AutomationWhitelist).where(
+            AutomationWhitelist.action == policy.whitelist_ref,  # ⑤ config risk
+            AutomationWhitelist.enabled.is_(True),
+            AutomationWhitelist.risk_level.in_(L4_AUTO_RISK_LEVELS),
+        )
+    ).first()
+    if whitelisted is None:
+        return None
+    return {"policy_ref": f"remediation_policy:{policy.id}"}
 
 
 # ---------------------------------------------------------------- level matrix
@@ -79,6 +138,15 @@ def put_level(db: Session, user, level: str) -> dict:
     _gate(db, user, _AI_ADMIN)
     if level not in _LEVELS:
         raise ValidationError(f"level must be one of {_LEVELS}")
+    if level == "L4":
+        # FR-E6-4 fail-closed (r1.9 B): L4 activation needs a governed policy set
+        # whose every `level=='L4'` row carries a verification_ref. Empty set is
+        # NOT "vacuously ok" — enabling L4 with no policy is refused (422).
+        l4_policies = db.scalars(
+            select(RemediationPolicy).where(RemediationPolicy.level == "L4")
+        ).all()
+        if not l4_policies or any(p.verification_ref is None for p in l4_policies):
+            raise ValidationError("L4 requires governed policies with verification_ref")
     rows = {r.level: r for r in db.scalars(select(AutomationLevel)).all()}
     target = rows.get(level)
     if target is None:
@@ -224,22 +292,110 @@ def rollback_run(db: Session, user, run_id: int) -> dict:
                 "window_expires_at": None}
     context = dict(run.context or {})
     window = context.get("rollback_window")
+    remediation = context.get("remediation")
+    rollback_ref = None
+    if remediation and is_feature_enabled(db, _FEATURE):
+        # FR-E6-4 (r1.1/r1.6): the FIRST rollback creates a NEW compensating
+        # exec_task through the existing exec+approval primitive (never a new
+        # construction site); the reversal command comes from the original run's
+        # `context["remediation"]`. Repeat rollback returns early above => Δ0.
+        from app.services import exec_service  # lazy import: avoid a service cycle
+
+        comp = exec_service.create_exec_task_record(
+            db,
+            name=str(remediation.get("name") or f"rollback:{run_id}")[:128],
+            kind=remediation.get("kind") or ("script" if remediation.get("script_id") else "command"),
+            target_host_ids=list(remediation.get("target_host_ids") or []),
+            script_id=remediation.get("script_id"),
+            script_version=remediation.get("script_version"),
+            command=remediation.get("command"),
+            params=remediation.get("params"),
+            created_by=run.created_by,
+            requester_id=run.created_by,
+            visible_group_ids=None,
+        )
+        rollback_ref = f"exec_task:{comp['id']}"
+        db.add(AiAction(
+            model_name="e6-rollback", model_version=None, input_snapshot=None,
+            confidence=None, basis_refs=None, trace_id=f"rollback:{run_id}",
+            actor=run.created_by, decision="adopted", approval_mode="manual",
+            policy_ref=None, rollback_ref=rollback_ref,
+        ))
+        db.flush()
     compiled = {"status": "rolled_back", "reason": None,
                 "window_expires_at": context.get("window_expires_at")}
     run.status = "rolled_back"
-    run.context = {**context, "rollback": compiled, "rollback_window": window}
+    run.context = {**context, "rollback": compiled, "rollback_window": window,
+                   **({"rollback_ref": rollback_ref} if rollback_ref else {})}
     db.commit()
     return compiled
 
 
 # ---------------------------------------------------------------- circuit breaker
 
+def _breaker_state(db: Session) -> str:
+    row = db.scalars(select(CircuitBreakerState).order_by(CircuitBreakerState.id)).first()
+    return row.state if row is not None else "closed"
+
+
+def resolve_threshold(db: Session, policy=None) -> int | None:
+    """FR-E6-4 circuit-breaker threshold single source (r1.9 ③ / r1.10): env override
+    > governing `policy.circuit_threshold` > builtin default. Kept in ONE place so the
+    served-level live-F can trigger the FSM deterministically."""
+    raw = os.getenv(_THRESHOLD_ENV)
+    if raw not in (None, ""):
+        try:
+            return int(raw)
+        except ValueError:
+            pass
+    policy_threshold = getattr(policy, "circuit_threshold", None)
+    if policy_threshold is not None:
+        return int(policy_threshold)
+    return _DEFAULT_CIRCUIT_THRESHOLD
+
+
+def record_verification_result(db: Session, policy=None, ok: bool = True) -> dict:
+    """FR-E6-4 / r1.10 breaker FSM: closed -> open -> half -> closed.
+
+    A failure at/over the resolved threshold trips the breaker `open`; a success
+    while `open` half-opens it; a success while `half` closes it (and resets the
+    failure counter). The trip threshold is `resolve_threshold(db, policy=…)`, so a
+    matched policy's `circuit_threshold` participates (r1.10, @架构 `3635`). No clock
+    dependency (the caller drives it deterministically)."""
+    threshold = resolve_threshold(db, policy=policy)
+    row = db.scalars(select(CircuitBreakerState).order_by(CircuitBreakerState.id)).first()
+    if row is None:
+        row = CircuitBreakerState(scope="global", state="closed", current=0, threshold=threshold)
+        db.add(row)
+        db.flush()
+    if row.state == "half":
+        if ok:
+            row.state, row.current, row.last_tripped_at = "closed", 0, None
+        else:
+            row.state = "open"
+            row.last_tripped_at = datetime.now(timezone.utc)
+    elif row.state == "open":
+        if ok:  # open -> half
+            row.state = "half"
+    else:  # closed
+        if ok:
+            row.current = 0
+        else:
+            row.current = (row.current or 0) + 1
+            if row.current >= threshold:
+                row.state = "open"
+                row.threshold = threshold
+                row.last_tripped_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"state": row.state, "current": row.current, "threshold": row.threshold}
+
 
 def circuit_breaker(db: Session, user) -> dict:
     _gate(db, user, _AI_USE)
+    threshold = resolve_threshold(db, policy=None)
     row = db.scalars(select(CircuitBreakerState).order_by(CircuitBreakerState.id)).first()
     if row is None:
-        return {"state": "closed", "threshold": None, "current": 0,
+        return {"state": "closed", "threshold": threshold, "current": 0,
                 "last_tripped_at": None}
-    return {"state": row.state, "threshold": row.threshold, "current": row.current,
+    return {"state": row.state, "threshold": threshold, "current": row.current,
             "last_tripped_at": _iso(row.last_tripped_at)}

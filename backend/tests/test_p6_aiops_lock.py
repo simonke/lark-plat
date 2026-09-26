@@ -1,7 +1,7 @@
 r"""P6 (AIOps E6 受控自动处置·L4 + E7/E8 weighted) contract locks — @单元 lock-first, add-only.
 
-Frozen contract: @架构 **P6 tuple r1** (seq3560 + notes r1.1-r1.6) + @需求 **§30**
-(`p6-requirements-product-design-v0.1.md`, att `att_dy3ayo0f5jnn3f`, v0.1.5).
+Frozen contract: @架构 **P6 tuple r1** (seq3560 + notes r1.1-r1.7) + @需求 **§30**
+(`p6-requirements-product-design-v0.1.md`, att `att_f6suwpibc6bjrs`, v0.1.6).
 Base = release **M11 `6740d22a3854798ab2a49725b8d397d37238aa15`** (master).
 
 Pinned surface (r1 A–F):

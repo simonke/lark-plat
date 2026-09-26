@@ -496,6 +496,41 @@ def test_m4_whitelist_columns():
     )
 
 
+def test_m5_new_approval_columns_plain_string_no_reverse_dep():
+    """r1.2 / @reviewer 3570: `approval_mode`/`policy_ref` (and ai_action's) are plain
+    String columns (comment-enum), NOT CheckConstraint/Enum referencing the services-layer
+    `APPROVAL_MODES` (avoids a models->services reverse dependency; same shape as
+    `AiAction.decision`)."""
+    from sqlalchemy import CheckConstraint, String  # noqa: PLC0415
+
+    tables = _tables()
+    targets = (
+        ("approval_request", APPROVAL_NEW_COLS),
+        ("ai_action", {"approval_mode", "policy_ref"}),
+    )
+    problems = []
+    for tname, cols in targets:
+        t = tables.get(tname)
+        if t is None:
+            problems.append(f"{tname}: table missing")
+            continue
+        for c in cols:
+            col = t.columns.get(c)
+            if col is None:
+                problems.append(f"{tname}.{c}: missing")
+                continue
+            if not isinstance(col.type, String):
+                problems.append(
+                    f"{tname}.{c}: must be plain String (comment-enum), got {col.type!r}"
+                )
+        for cons in t.constraints:
+            if isinstance(cons, CheckConstraint) and "APPROVAL_MODES" in str(cons.sqltext):
+                problems.append(
+                    f"{tname}: CheckConstraint references APPROVAL_MODES (models->services dep)"
+                )
+    assert not problems, "reverse-dep guard: " + "; ".join(problems)
+
+
 # ── A: openapi surface (r1 A/B/C③) ───────────────────────────────────────────
 
 def _openapi_paths() -> dict:

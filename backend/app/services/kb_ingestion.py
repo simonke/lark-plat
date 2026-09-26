@@ -14,6 +14,8 @@ Frozen contract: @架构 P5 tuple v1->r2 (seq3332) + @需求 §29.1.
 
 from __future__ import annotations
 
+import logging
+
 from sqlalchemy.orm import Session
 
 from app.db.models import KbEmbedding
@@ -21,9 +23,18 @@ from app.services.ai_scope import GLOBAL_SCOPE_TOKEN
 from app.services.embedding_store import build_embedding_store
 from app.services.llm_client import EchoLLMClient, LLMClient
 
+logger = logging.getLogger(__name__)
+
 # Chunk width (characters) for the deterministic offline chunker; a real
 # tokenizer is an add-only subclass, the seam (doc_ref/chunk_ref) stays frozen.
 DEFAULT_CHUNK_SIZE = 512
+
+# Cost/limit guard (P5.1 ④): bound the number of chunks embedded per publish so a
+# pathological document cannot fan out into an unbounded embed call. Over-cap is a
+# GRACEFUL degradation — the first `_MAX_EMBED_CHUNKS` chunks are embedded, the rest
+# are skipped with a WARNING audit line, and the publish still succeeds (no raise,
+# no new error code). Within-cap behaviour is unchanged.
+_MAX_EMBED_CHUNKS = 200
 
 
 def _client() -> LLMClient:
@@ -75,6 +86,18 @@ def ingest_article(
     chunks = _chunk_text(content, chunk_size)
     if not chunks:
         return 0
+    if len(chunks) > _MAX_EMBED_CHUNKS:
+        skipped = len(chunks) - _MAX_EMBED_CHUNKS
+        logger.warning(
+            "kb_ingestion: doc_ref=%s produced %d chunks > cap %d; embedding first %d, "
+            "skipping %d (graceful degradation, publish still succeeds)",
+            doc_ref,
+            len(chunks),
+            _MAX_EMBED_CHUNKS,
+            _MAX_EMBED_CHUNKS,
+            skipped,
+        )
+        chunks = chunks[:_MAX_EMBED_CHUNKS]
     vectors = _client().embed(chunks)
     scope = _entity_scope(article)
     records = [

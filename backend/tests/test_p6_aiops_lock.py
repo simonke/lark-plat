@@ -371,6 +371,19 @@ def test_f3_prior_ai_flags_still_false():
         assert rules.get(flag, {}).get("value") is False, f"{flag} must remain default False"
 
 
+def test_f4_p6_flag_registered_in_ai_gate():
+    """r1 C④ / @后端 3563: the single flag must join `ai_gate.AI_FLAGS` (feature-first gate
+    vocabulary) and NOT be a shadow sub-flag."""
+    mod = _require("app.services.ai_gate")
+    flags = tuple(getattr(mod, "AI_FLAGS", ()) or ())
+    assert _P6_FLAG in flags, (
+        f"`{_P6_FLAG}` must be registered in `ai_gate.AI_FLAGS` (feature-first gate); "
+        f"got {flags!r}"
+    )
+    offenders = [f for f in flags if "shadow" in f.lower() or f.startswith(_P6_FLAG + ".")]
+    assert not offenders, f"no shadow sub-flag allowed (r1 C④); got {offenders}"
+
+
 # ── E: frozen vocabularies (r1 C①) ───────────────────────────────────────────
 
 def _ai_models():
@@ -670,6 +683,19 @@ def test_n2_exec_gate_and_dispatch_anchors_present():
     assert "def _approve_exec" in appr_src, "approval_service must define `_approve_exec`"
     assert "def _approve_linkages" in appr_src, "approval_service must define `_approve_linkages`"
     assert "exec_dispatch.delay" in appr_src, "dispatch must go through `exec_dispatch.delay`"
+
+
+def test_n3_biz_type_whitelist_unchanged():
+    """r1.2 item 4 (@架构 3565 / @后端 3563): E6 adds NO `biz_type`; the authoritative set
+    is exactly {exec, terminal, workflow} and rollback reuses `exec`."""
+    mod = _require("app.services.approval_service")
+    got = getattr(mod, "_KNOWN_BIZ_TYPES", None)
+    assert got is not None, "approval_service must define `_KNOWN_BIZ_TYPES` (biz_type gate)"
+    assert set(got) == {"exec", "terminal", "workflow"}, (
+        "E6 must not add a biz_type (rollback reuses `exec`); expected "
+        f"{{'exec','terminal','workflow'}}, got {sorted(got)}"
+    )
+    assert hasattr(mod, "_assert_biz_type"), "biz_type validation seam `_assert_biz_type` missing"
 
 
 # ── R: flag gate order, offline (r1 B) ───────────────────────────────────────

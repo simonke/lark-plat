@@ -302,6 +302,11 @@ def test_m4_ai_action_decision_enum():
         f"decision enum must include the P4 trio {sorted(AI_ACTION_DECISIONS)}; "
         f"got {sorted(vals)}"
     )
+    # Non-vacuous: the relaxed superset above must still be pinned exactly elsewhere.
+    assert "dry_run" in vals, (
+        "P6 (E6) appends `dry_run`; the exact 4-set is pinned by "
+        "test_p6_aiops_lock::test_e2_ai_action_decisions_add_only_dry_run"
+    )
 
 
 def _col_enum_values(table: str, col: str) -> set[str] | None:

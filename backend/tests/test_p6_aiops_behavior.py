@@ -545,13 +545,17 @@ def _breaker_state(session) -> str:
     return svc.circuit_breaker(session, _User())["state"]
 
 
-def _trip_breaker(session) -> int:
-    """Drive the breaker to `open` using its own threshold (no clock dependency)."""
+def _trip_breaker(session, policy=None) -> int:
+    """Drive the breaker to `open` using its own threshold (no clock dependency).
+
+    Per r1.10 (@架构 `3635`) the trip threshold is `resolve_threshold(db, policy=…)`,
+    so a matched policy's `circuit_threshold` participates in opening.
+    """
     from app.services import ai_automation_service as svc  # noqa: PLC0415
 
-    th = svc.resolve_threshold(session, policy=None)
+    th = svc.resolve_threshold(session, policy=policy)
     for _ in range(th):
-        svc.record_verification_result(session, ok=False)
+        svc.record_verification_result(session, policy=policy, ok=False)
     return th
 
 
@@ -585,7 +589,8 @@ def test_b9_circuit_breaker_threshold_and_fsm(p6_db):
     )
 
     assert _breaker_state(session) == "closed", "breaker starts closed"
-    th = _trip_breaker(session)
+    th = _trip_breaker(session, policy=pol)           # per-policy trip threshold (=2)
+    assert th == 2, "trip must use the matched policy's circuit_threshold"
     assert _breaker_state(session) == "open", f"current>=threshold({th}) must open the breaker"
 
     svc.record_verification_result(session, ok=True)   # open -> half

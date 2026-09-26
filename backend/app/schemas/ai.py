@@ -23,6 +23,11 @@ class AiAnswerIn(BaseModel):
     entity_type: str | None = None
 
 
+class RcaRunIn(BaseModel):
+    # Depth domain is owned by cmdb_service (`0..3`, default 2; `<0`/`>3` -> 422).
+    depth: int | None = None
+
+
 class AiFeedbackIn(BaseModel):
     trace_id: str | None = None
     decision: str = "auto"  # adopted | rejected | auto

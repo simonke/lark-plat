@@ -87,3 +87,51 @@ export function articleIdFromDocRef(docRef: string | null | undefined): number |
   const id = Number(docRef)
   return Number.isInteger(id) && id > 0 ? id : null
 }
+
+// ---------------------------------------------------------------- P5 E4/E5 helpers
+
+/** E4 depth domain mirrors cmdb_service._clamp_depth: 0..3, default 2, 0 legal. */
+export const RCA_DEPTH_MIN = 0
+export const RCA_DEPTH_MAX = 3
+export const RCA_DEPTH_DEFAULT = 2
+
+/** E5 reuses the P3-4 workflow engine; `kind` discriminates, no second executor. */
+export const PLAYBOOK_KINDS: readonly string[] = ['workflow', 'playbook']
+
+/** Coerce any inbound/UI depth to a legal `0..3` value, falling back to default 2. */
+export function normalizeRcaDepth(value: number | null | undefined): number {
+  if (value === null || value === undefined) return RCA_DEPTH_DEFAULT
+  const n = Number(value)
+  if (!Number.isInteger(n) || n < RCA_DEPTH_MIN || n > RCA_DEPTH_MAX) return RCA_DEPTH_DEFAULT
+  return n
+}
+
+const SEVERITY_LABELS: Record<string, string> = {
+  critical: '严重',
+  warning: '警告',
+  info: '信息',
+}
+
+export function severityLabel(v: string | null | undefined): string {
+  if (!v) return '-'
+  return SEVERITY_LABELS[v] ?? v
+}
+
+export function severityTag(v: string | null | undefined): string {
+  switch (v) {
+    case 'critical':
+      return 'danger'
+    case 'warning':
+      return 'warning'
+    case 'info':
+      return 'info'
+    default:
+      return 'info'
+  }
+}
+
+export function rootEntityLabel(root: { type?: string; id?: string | number | null; name?: string | null } | null | undefined): string {
+  if (!root) return '-'
+  const label = root.name || root.id
+  return label === null || label === undefined || label === '' ? '-' : `${root.type ?? '?'}#${label}`
+}

@@ -14,7 +14,10 @@ from app.core.exceptions import BadRequestError
 from app.repositories import ConfigRuleRepository
 
 # ai.* flag vocabulary (all default False; `ai.enabled` is the master switch).
-AI_FLAGS = ("ai.enabled", "ai.events", "ai.ticket_assist", "ai.kb_assist")
+AI_FLAGS = (
+    "ai.enabled", "ai.events", "ai.ticket_assist", "ai.kb_assist",
+    "ai.rca", "ai.playbook",
+)
 
 
 def require_feature(db: Session, flag: str) -> None:

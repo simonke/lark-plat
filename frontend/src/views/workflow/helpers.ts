@@ -82,6 +82,14 @@ export function triggerLabel(v: string): string {
   return TRIGGER_TYPE_OPTIONS.find((o) => o.value === v)?.label ?? v
 }
 
+export function kindLabel(v: string | null | undefined): string {
+  return v === 'playbook' ? '预案' : '编排'
+}
+
+export function kindTag(v: string | null | undefined): TagType {
+  return v === 'playbook' ? 'warning' : 'primary'
+}
+
 export function formatTime(v: string | null | undefined): string {
   return v ? new Date(v).toLocaleString() : '-'
 }

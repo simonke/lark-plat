@@ -20,6 +20,11 @@ import type {
   KbAnswerIn,
   KbAnswerResult,
   AiFeedbackIn,
+  AlertAggregateQuery,
+  AlertAggregateResult,
+  RcaReport,
+  PlaybookSuggestIn,
+  PlaybookSuggestion,
 } from './types'
 
 // ---------------------------------------------------------------- E1 ops events
@@ -70,5 +75,28 @@ export async function aiFeedback(payload: AiFeedbackIn): Promise<AiAction> {
 
 export async function listAiActions(params?: AiActionQuery): Promise<Page<AiAction>> {
   const { data } = await http.get<Result<Page<AiAction>>>('/ai/actions', { params })
+  return data.data
+}
+
+// ---------------------------------------------------------------- P5 E4 alert aggregation / RCA
+
+/** E4: read-time alert aggregation (flag `ai.rca` + perm `ai:use`; off -> 400). */
+export async function aggregateAlerts(params?: AlertAggregateQuery): Promise<AlertAggregateResult> {
+  const { data } = await http.get<Result<AlertAggregateResult>>('/monitor/alerts/aggregate', { params })
+  return data.data
+}
+
+/** E4: root-cause candidates for one alert (depth 0..3, default 2; `<0`/`>3` -> 422). */
+export async function alertRca(alertId: number, depth?: number): Promise<RcaReport> {
+  const body = depth === undefined ? {} : { depth }
+  const { data } = await http.post<Result<RcaReport>>(`/monitor/alerts/${alertId}/ai/rca`, body)
+  return data.data
+}
+
+// ---------------------------------------------------------------- P5 E5 playbook suggestion
+
+/** E5: advisory playbook draft (flag `ai.playbook` + perm `ai:use`; adoption reuses /workflows). */
+export async function suggestPlaybook(payload: PlaybookSuggestIn): Promise<PlaybookSuggestion> {
+  const { data } = await http.post<Result<PlaybookSuggestion>>('/workflows/ai/suggest', payload)
   return data.data
 }

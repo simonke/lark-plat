@@ -28,6 +28,11 @@ class OpsEvent(Base):
     __table_args__ = (
         Index("ix_ops_event_source_ts", "source", "ts"),
         Index("ix_ops_event_entity_ts", "entity_type", "entity_id", "ts"),
+        # P5 E4 (tuple v1->r2 seq3332): entity+action timeline index for RCA aggregation.
+        Index(
+            "ix_ops_event_entity_action_ts",
+            "entity_type", "entity_id", "action", "ts",
+        ),
         # GIN only takes effect on PostgreSQL; other dialects (e.g. sqlite locks)
         # ignore the dialect kwarg and create a plain index.
         Index("ix_ops_event_refs_gin", "refs", postgresql_using="gin"),

@@ -190,6 +190,21 @@ def _current_version(db: Session, article: KbArticle) -> KbArticleVersion | None
     )
 
 
+def _maybe_ingest(db: Session, article: KbArticle, version: KbArticleVersion) -> None:
+    """E3 (P5): forward the new version to the vector store when `ai.kb_assist` is on.
+
+    Runs in the SAME transaction as the business change (the ingestion seam never
+    commits); `ai.kb_assist` defaults to False, so ordinary KB CRUD is unchanged
+    until AI KB ingestion is explicitly enabled.
+    """
+    rule = ConfigRuleRepository(db).by_key("ai.kb_assist")
+    if not (rule and (rule.rule_value or {}).get("value", False)):
+        return
+    from app.services import kb_ingestion
+
+    kb_ingestion.ingest_article(db, article, version)
+
+
 def _article_out(article: KbArticle) -> dict:
     return {
         "id": article.id,
@@ -221,12 +236,14 @@ def create_article(db: Session, user, data: schemas.KbArticleCreate) -> dict:
     )
     db.add(article)
     db.flush()
-    db.add(KbArticleVersion(
+    version_row = KbArticleVersion(
         article_id=article.id, version=1, title=article.title,
         content=data.content, change_log="initial", editor_id=user.id,
-    ))
+    )
+    db.add(version_row)
     for tag in data.tags or []:
         db.add(KbArticleTag(article_id=article.id, tag=tag))
+    _maybe_ingest(db, article, version_row)
     db.commit()
     return _article_out(article)
 
@@ -294,10 +311,12 @@ def update_article(db: Session, user, article_id: int, data: schemas.KbArticleUp
         article.summary = data.summary
     new_version = article.current_version + 1
     article.current_version = new_version
-    db.add(KbArticleVersion(
+    version_row = KbArticleVersion(
         article_id=article.id, version=new_version, title=article.title,
         content=content, change_log=data.change_log or "", editor_id=user.id,
-    ))
+    )
+    db.add(version_row)
+    _maybe_ingest(db, article, version_row)
     db.commit()
     return _article_out(article)
 
@@ -368,11 +387,13 @@ def rollback_article(db: Session, user, article_id: int, data: schemas.KbRollbac
         raise NotFoundError("article version not found")
     new_version = article.current_version + 1
     article.current_version = new_version
-    db.add(KbArticleVersion(
+    version_row = KbArticleVersion(
         article_id=article.id, version=new_version, title=article.title,
         content=target.content, change_log=f"rollback to v{target.version}",
         editor_id=user.id,
-    ))
+    )
+    db.add(version_row)
+    _maybe_ingest(db, article, version_row)
     db.commit()
     return _article_out(article)
 

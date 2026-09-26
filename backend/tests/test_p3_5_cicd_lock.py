@@ -200,7 +200,7 @@ def test_a2_paths_count_at_least_156():
     # P3-6 收尾批 anchored EXACTLY 156 (@架构 P3-6 tuple v1). P4 (AIOps) is
     # add-only on top; the P3-5/P3-6 floor is now a MONOTONIC no-shrink check
     # (>=156) with the exact count pinned at the newest batch lock
-    # (test_p4_aiops_lock::test_a2_paths_count_164 + test_contract_openapi==164).
+    # (test_p5_aiops_lock::test_a2_paths_count_167 + test_contract_openapi==167).
     # Must NOT shrink below 156.
     assert len(paths) >= 156, (
         f"paths must be >= 156 (P3-6 floor: P3-5 154 + 2 deploy/fail URL keys); got {len(paths)}. "
@@ -283,6 +283,8 @@ _P34_HEAD = "a1b2c3d4e5f7"
 _P35_REV = "b2c3d4e5f6a8"
 # P4 (AIOps, @架构 tuple v1 seq3203): add-only rev on top of the P3-5 head.
 _P4_REV = "e9d8c7b6a5f4"
+# P5 (AIOps E3/E4/E5, @架构 tuple v1->r2 seq3332): add-only rev on top of the P4 head.
+_P5_REV = "f5a6b7c8d9e0"
 # 形近陷阱: `b2c3d4e5f6a7` is the EXISTING P2-1 transfer-table rev (docs §14.3) — must NOT be reused.
 _P21_TRANSFER_REV = "b2c3d4e5f6a7"
 
@@ -309,11 +311,15 @@ def test_g1_migration_single_head_descends_from_p34():
     head = heads[0]
     # P4 (@架构 tuple v1 seq3203) advances the single head to the AIOps rev; the
     # P3-5 head-only assertion is superseded, but the P3-5 → P3-4 ancestry is kept.
-    assert head == _P4_REV, (
-        f"P4 head must be the suggested rev `{_P4_REV}`; got {head}"
+    assert head == _P5_REV, (
+        f"P5 head must be the suggested rev `{_P5_REV}`; got {head}"
     )
-    assert revs[head] == _P35_REV, (
-        f"P4 head must descend directly from P3-5 rev {_P35_REV}; got parent {revs[head]!r}"
+    assert revs[head] == _P4_REV, (
+        f"P5 head must descend directly from P4 rev {_P4_REV}; got parent {revs[head]!r}"
+    )
+    assert revs.get(_P4_REV) == _P35_REV, (
+        f"P4 head must descend directly from P3-5 rev {_P35_REV}; "
+        f"got parent {revs.get(_P4_REV)!r}"
     )
     assert revs.get(_P35_REV) == _P34_HEAD, (
         f"P3-5 rev must descend directly from P3-4 rev {_P34_HEAD}; "

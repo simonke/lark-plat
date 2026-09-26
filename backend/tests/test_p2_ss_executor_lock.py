@@ -207,7 +207,10 @@ def test_a1_paths_count_109_and_monitor_19():
     # per-batch locks assert their own exact value).
     assert len(paths) >= 109, (
         f"openapi paths must be >= 109 after P2-SS (2 new URL keys); got {len(paths)}")
-    assert len(monitor) == 19, f"/monitor/* must stay 19; got {len(monitor)}"
+    # P5 supersession (tuple v1->r2 seq3332): P5 add-only adds 2 monitor URL keys
+    # (/monitor/alerts/aggregate, /monitor/alerts/{alert_id}/ai/rca) => 19 -> 21.
+    # Assert no regression below the P2-MA floor (monotonic).
+    assert len(monitor) >= 19, f"/monitor/* must not regress below 19; got {len(monitor)}"
 
 
 def _path_entry(paths, regex: str):

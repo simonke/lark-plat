@@ -4,7 +4,10 @@
       <template #header>
         <div class="toolbar">
           <span class="title">编排 Playbook</span>
-          <el-button type="primary" v-perm="'workflow:add'" @click="openCreate">新建编排</el-button>
+          <div class="actions">
+            <el-button v-if="auth.hasPerm('ai:use')" @click="suggestVisible = true">AI 生成预案</el-button>
+            <el-button type="primary" v-perm="'workflow:add'" @click="openCreate">新建编排</el-button>
+          </div>
         </div>
       </template>
 
@@ -27,6 +30,11 @@
       <el-table :data="rows" v-loading="loading" border @row-click="openDetail">
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="name" label="名称" min-width="180" show-overflow-tooltip />
+        <el-table-column label="类型" width="90">
+          <template #default="{ row }">
+            <el-tag :type="kindTag(row.kind)" size="small" effect="plain">{{ kindLabel(row.kind) }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
         <el-table-column label="当前版本" width="100">
           <template #default="{ row }">v{{ row.current_version }}</template>
@@ -80,6 +88,8 @@
         <el-button type="primary" :loading="saving" @click="onCreate">提交</el-button>
       </template>
     </el-dialog>
+
+    <PlaybookSuggestDialog v-model="suggestVisible" @created="load(1)" />
   </div>
 </template>
 
@@ -89,10 +99,13 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { listWorkflows, createWorkflow, deleteWorkflow } from '../../api/workflow'
 import { extractError } from '../../api/http'
+import { useAuthStore } from '../../stores/auth'
 import type { Workflow, WorkflowDefinition, WorkflowQuery } from '../../api/types'
-import { formatDefinition, formatTime, parseDefinition } from './helpers'
+import { formatDefinition, formatTime, kindLabel, kindTag, parseDefinition } from './helpers'
+import PlaybookSuggestDialog from './PlaybookSuggestDialog.vue'
 
 const router = useRouter()
+const auth = useAuthStore()
 const loading = ref(false)
 const saving = ref(false)
 const rows = ref<Workflow[]>([])
@@ -100,6 +113,7 @@ const total = ref(0)
 const query = reactive<WorkflowQuery>({ page: 1, size: 10 })
 
 const createVisible = ref(false)
+const suggestVisible = ref(false)
 const form = reactive({ name: '', description: '', definition: formatDefinition(null) })
 
 async function load(page?: number) {
@@ -190,6 +204,10 @@ onMounted(() => load(1))
 }
 .title {
   font-weight: 600;
+}
+.actions {
+  display: flex;
+  gap: 8px;
 }
 .pager {
   margin-top: 12px;

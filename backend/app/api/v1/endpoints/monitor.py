@@ -9,7 +9,8 @@ from fastapi import APIRouter, Query
 from app.api.deps import DbDep, UserDep
 from app.core.response import Result
 from app import schemas
-from app.services import monitor_service
+from app.schemas import ai as ai_sch
+from app.services import monitor_service, rca_service
 
 router = APIRouter(prefix="/monitor", tags=["monitor"])
 
@@ -77,6 +78,31 @@ def list_alerts(
     if end:
         filters["end"] = end
     return Result.ok(monitor_service.list_alerts(db, user, filters, page, size))
+
+
+# ── P5 E4: RCA read-time aggregation (fix (a): static route BEFORE `{alert_id}`) ──
+
+
+@router.get("/alerts/aggregate", response_model=Result)
+def aggregate_alerts(
+    db: DbDep,
+    user: UserDep,
+    status: str | None = None,
+    severity: str | None = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    size: Annotated[int, Query(ge=1, le=100)] = 20,
+):
+    filters = {}
+    if status:
+        filters["status"] = status
+    if severity:
+        filters["severity"] = severity
+    return Result.ok(rca_service.aggregate(db, user, filters, page, size))
+
+
+@router.post("/alerts/{alert_id}/ai/rca", response_model=Result)
+def alert_rca(db: DbDep, user: UserDep, alert_id: int, data: ai_sch.RcaRunIn | None = None):
+    return Result.ok(rca_service.run(db, user, alert_id, data.depth if data else None))
 
 
 @router.get("/alerts/{alert_id}", response_model=Result)

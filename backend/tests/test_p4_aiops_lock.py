@@ -178,13 +178,14 @@ def test_a1_p4_paths_present_with_methods():
     assert not problems, "P4 openapi surface incomplete: " + "; ".join(problems)
 
 
-def test_a2_paths_count_164():
-    """Base M8 paths == 156; P4 adds 8 URL keys == 164. EXACT equality (not `>=`)."""
+def test_a2_paths_count_at_least_164():
+    """Base M8 paths == 156; P4 adds 8 URL keys == 164. P5 is add-only on top, so this
+    is a MONOTONIC no-shrink floor; the exact count is pinned at the newest batch lock
+    (test_p5_aiops_lock::test_a2_paths_count_167 + test_contract_openapi==167)."""
     paths = _openapi_paths()
-    assert len(paths) == 164, (
-        f"P4 paths must be exactly 164 (156 + 8 AIOps URL keys); got {len(paths)}. "
-        "OpenAPI `paths` is URL-keyed: /events, /events/{id}, /tickets/{id}/ai/suggest, "
-        "/tickets/{id}/ai/similar, /kb/search/semantic, /kb/ai/answer, /ai/feedback, /ai/actions."
+    assert len(paths) >= 164, (
+        f"paths must be >= 164 (P4 floor: M8 156 + 8 AIOps URL keys); got {len(paths)}. "
+        "OpenAPI `paths` is URL-keyed."
     )
     removed = set(M6_P3_4_KEYS) - set(paths)
     assert not removed, (
@@ -355,6 +356,15 @@ def _revision_graph() -> dict[str, str | None]:
     return revs
 
 
+def _down_chain(revs: dict[str, str | None], head: str) -> list[str]:
+    seen: list[str] = []
+    cur: str | None = head
+    while cur is not None and cur not in seen:
+        seen.append(cur)
+        cur = revs.get(cur)
+    return seen
+
+
 def test_g1_migration_single_head_descends_from_p35():
     revs = _revision_graph()
     assert _P35_HEAD in revs, f"P3-5 head {_P35_HEAD} missing from versions dir"
@@ -362,9 +372,13 @@ def test_g1_migration_single_head_descends_from_p35():
     heads = sorted(r for r in revs if r not in downs)
     assert len(heads) == 1, f"migration must keep a single head; got {heads}"
     head = heads[0]
-    assert head == _P4_REV, f"P4 head must be the frozen rev `{_P4_REV}`; got {head}"
-    assert revs[head] == _P35_HEAD, (
-        f"P4 head must descend directly from P3-5 rev {_P35_HEAD}; got parent {revs[head]!r}"
+    chain = _down_chain(revs, head)
+    assert _P4_REV in chain, (
+        f"P4 rev {_P4_REV} must remain on the head's ancestry (later batches add-only); "
+        f"chain={chain}"
+    )
+    assert revs.get(_P4_REV) == _P35_HEAD, (
+        f"P4 rev must descend directly from P3-5 rev {_P35_HEAD}; got parent {revs.get(_P4_REV)!r}"
     )
 
 
@@ -1392,18 +1406,21 @@ def test_b7_scope_for_failclosed_and_admin_bypass():
 
 # ── ④ FTS scope comparison must be str-cast (@架构 seq3250/3252) ─────────────
 
-def test_s10_fts_scope_uses_str_cast():
-    """④: `_fts_hits` must compare scope ids as strings — no `int()` (host ip/hostname
-    enter the scope) and no `integer = text` PG error."""
+def test_s10_fts_scope_uses_pk_index_and_non_numeric_no_throw():
+    """④ (P4) originally required a str-cast (`cast(KbArticle.id, String)`) so non-numeric
+    scope ids (host ip/hostname) would not raise. P5 (D perf, @架构 tuple v1->r2 seq3332)
+    reverses that: stop str-casting the PK so the integer index is usable, while STILL
+    tolerating non-numeric ids. This test now pins the P5 form (supersedes the P4 ④)."""
     svc = _try("app.services.ai_service")
     if isinstance(svc, Exception):
         pytest.fail(f"P4 lock ④: app.services.ai_service unavailable: {svc}")
     fts = getattr(svc, "_fts_hits", None)
     if fts is None:
         pytest.fail("P4 lock ④: ai_service._fts_hits missing")
-    assert "int(" not in inspect.getsource(fts), (
-        "④: `_fts_hits` must not coerce scope ids with int() (v1.2: all str; host "
-        "ip/hostname are non-numeric)"
+    src = inspect.getsource(fts)
+    assert not re.search(r"cast\(\s*KbArticle\.id", src), (
+        "P5/D: `_fts_hits` must not str-cast the PK column (kills the PK index); "
+        "prefer `KbArticle.id.in_([...])` (non-numeric ids filtered, not coerced blindly)"
     )
 
     scope_cls = _require("ScopeFilter")
@@ -1411,7 +1428,7 @@ def test_s10_fts_scope_uses_str_cast():
     try:
         out = fts(_FakeSession(), "q", scope, "kb", 5)
     except Exception as exc:  # noqa: BLE001
-        pytest.fail(f"④: `_fts_hits` must not raise on non-numeric scope ids: {exc}")
+        pytest.fail(f"P5/D: `_fts_hits` must not raise on non-numeric scope ids: {exc}")
     assert isinstance(out, list)
 
 

@@ -39,6 +39,12 @@ def create_workflow(db: DbDep, user: UserDep, data: sch.WorkflowCreate):
     return Result.ok(workflow_service.create_workflow(db, user, data))
 
 
+# P5 E5: static segment MUST precede `/{workflow_id}` (avoids the int-coerce 422).
+@router.post("/ai/suggest", response_model=Result)
+def suggest_playbook(db: DbDep, user: UserDep, data: sch.PlaybookSuggestIn):
+    return Result.ok(workflow_service.suggest_playbook(db, user, data))
+
+
 @router.get("/{workflow_id}", response_model=Result)
 def get_workflow(db: DbDep, user: UserDep, workflow_id: int):
     return Result.ok(workflow_service.get_workflow(db, user, workflow_id))

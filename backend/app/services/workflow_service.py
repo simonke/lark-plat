@@ -34,6 +34,7 @@ from app.core.security import create_token
 from app.db.models.workflow import (
     NODE_TYPES,
     TRIGGER_TYPES,
+    WORKFLOW_KINDS,
     Workflow,
     WorkflowNodeRun,
     WorkflowRun,
@@ -107,6 +108,7 @@ def _workflow_out(wf: Workflow, definition: dict | None) -> dict:
         "id": wf.id,
         "name": wf.name,
         "description": wf.description,
+        "kind": wf.kind,
         "current_version": wf.current_version,
         "enabled": wf.enabled,
         "definition": definition,
@@ -272,6 +274,49 @@ def _start_run(
 # ---------------------------------------------------------------- CRUD / versions
 
 
+def suggest_playbook(db: Session, user, data) -> dict:
+    """E5 (P5): propose a playbook definition by REUSING the workflow engine.
+
+    Advisory only — it never persists or executes anything. The returned
+    definition is validated with the SAME `_validate_definition` primitive the
+    engine uses, so it can be fed verbatim to `create_workflow` / `run_workflow`.
+    No separate playbook executor exists (`kind` discriminates the same engine).
+    """
+    from app.services.ai_gate import require_feature
+
+    require_feature(db, "ai.playbook")
+    user.require_perm("ai:use")
+    goal = getattr(data, "goal", None) or "恢复服务"
+    context = getattr(data, "context", None) or ""
+
+    nodes = [
+        {
+            "key": "diagnose", "type": "wait",
+            "config": {"note": f"诊断: {goal}", "context": context},
+            "depends_on": [], "on_success": [], "on_failure": [],
+        },
+        {
+            "key": "approve", "type": "manual_approval",
+            "config": {"title": f"审批: {goal}"},
+            "depends_on": ["diagnose"], "on_success": [], "on_failure": [],
+        },
+        {
+            "key": "remediate", "type": "exec_task",
+            "config": {"note": f"执行修复: {goal}"},
+            "depends_on": ["approve"], "on_success": [], "on_failure": [],
+        },
+    ]
+    definition = _validate_definition({"nodes": nodes})
+    return {
+        "kind": "playbook",
+        "supported_kinds": list(WORKFLOW_KINDS),
+        "goal": goal,
+        "definition": definition,
+        "model_name": "echo",
+        "authoritative": False,
+    }
+
+
 def list_workflows(db: Session, user, filters: dict[str, Any], page: int, size: int) -> dict:
     _require_feature(db)
     user.require_perm("workflow:list")
@@ -301,6 +346,7 @@ def create_workflow(db: Session, user, data: sch.WorkflowCreate) -> dict:
     wf = Workflow(
         name=data.name,
         description=data.description or "",
+        kind=data.kind or "workflow",
         current_version=1,
         enabled=1,
         created_by=getattr(user, "id", None),

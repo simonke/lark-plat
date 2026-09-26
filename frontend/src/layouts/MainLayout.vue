@@ -84,6 +84,7 @@
           <el-menu-item index="/ops/incidents" v-if="auth.hasPerm('ai:use')">运维事件</el-menu-item>
           <el-menu-item index="/ai/kb" v-if="auth.hasPerm('ai:use')">知识助手</el-menu-item>
           <el-menu-item index="/ai/actions" v-if="auth.hasPerm('ai:admin')">AI 审计</el-menu-item>
+          <el-menu-item index="/ai/automation" v-if="auth.hasPerm('ai:admin')">AI 自动化</el-menu-item>
         </el-sub-menu>
       </el-menu>
     </el-aside>

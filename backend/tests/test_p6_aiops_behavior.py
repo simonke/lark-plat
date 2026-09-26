@@ -1,0 +1,708 @@
+r"""P6 (AIOps E6) behaviour tests — @单元 lock-first behaviour RED (non-lock).
+
+Companion to `test_p6_aiops_lock.py` (contract-surface lock; its blob is frozen and
+NOT touched by this file). This file pins the **behavioural semantics** the
+structural lock cannot grep, per @架构 `3602`/`3616` and @reviewer `3615`.
+
+Frozen contract: @架构 P6 tuple r1 + notes r1.1-r1.8 (seq3560…3616) + @需求 §30.
+Base = branch `p6-aiops` at `e944b2a` (which captured the group-① draft); this file
+adds the behaviour groups ②③④ the green structural gate could not cover.
+
+Groups (all required by @架构 `3616`④):
+  ① put_level r1.8 (mutual exclusion / default L3 / no-op)  — currently GREEN floor
+  ② E6-3 positive: hit => SAME approval row `approval_mode='auto_policy'`,
+     `status='approved'`, `policy_ref` set; Δ`ai_action(decision='auto')`==+1
+  ③ E6-3 negative: whitelist-miss / risk=high / current!=L4 => stays
+     `manual`/`pending`; Δ`ai_action(decision='auto')`==0 (non-vacuous)
+  ③A2 ambiguous policy (@架构 `3623` A2): >1 same-key L4 policy => fail-closed
+     `manual`/`pending`; Δ`decision='auto'`==0
+  ③b E6-3 retry (@架构 `3616`①⑦): `retry_task` is ALWAYS manual => new row
+     `pending`/`manual`; Δ`decision='auto'`==0
+  ④ E6-4 rollback: first rollback => Δexec_task==+1 AND Δapproval_request==+1 AND
+     an `ai_action.rollback_ref` set; repeat => Δ0
+  ③s L4 verification fail-closed (@架构 `3623` B): PUT level->L4 is 422 for an
+     empty L4 policy set OR an L4 policy with `verification_ref is None`; level
+     unchanged; success requires >=1 ref'd L4 policy
+  ④s circuit-breaker (@架构 `3629` r1.10): `resolve_threshold` single source
+      (env > policy.circuit_threshold > default); `record_verification_result`
+      closed→open→half→closed; `state=='open'` => forced manual (halt)
+  ⑤ audit list面 (@架构 `3644` 裁 in-scope): `GET /api/v1/ai/actions` is the ONLY
+      audit face, so its list item must surface the P6 governance keys — A1 直取列
+      (`approval_mode`/`policy_ref`/`verification_ref`/`rollback_ref`) plus the
+      A2(i) readonly aliases (`why_ref := basis_refs`, `result := decision`); an
+      `auto_policy` row must read `approval_mode=='auto_policy'` with non-null
+      `policy_ref`. Zero DDL (serializer-only).
+
+Hit contract (r1.9, @架构 `3618`): four-way AND —
+`current=='L4'` (derived) ∧ ∃policy(asset_class,op_type,level='L4',whitelist_ref≠None,
+verification_ref≠None) ∧ ∃whitelist(action==policy.whitelist_ref==rem.action ∧ enabled
+∧ risk_level∈L4) ∧ `rem.risk_level∈L4`; any miss => manual.
+
+Audit isolation (@集成 `3614` / @reviewer `3615`④): the legacy P5 path
+`app/services/ai_service.py:161` already writes `ai_action(decision='auto')`, so
+every `decision='auto'` assertion here is a **Δ count** around the action, never a
+global `==0`.
+
+Offline only (sqlite; no live PG/Redis). The sqlite shim registers a `nextval(name)`
+UDF because `_task_no`/`_approval_no` call PG sequences, and compiles JSONB→JSON /
+BigInteger→INTEGER.
+
+Run (backend checkout, backend venv):
+    python -m pytest tests/test_p6_aiops_behavior.py -p no:cacheprovider -o addopts= -q
+"""
+
+from __future__ import annotations
+
+import importlib
+
+import pytest
+
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+def _try(mod: str):
+    try:
+        return importlib.import_module(mod)
+    except Exception as exc:  # noqa: BLE001
+        return exc
+
+
+def _require(mod: str):
+    obj = _try(mod)
+    if isinstance(obj, Exception):
+        pytest.fail(f"P6 behaviour: `{mod}` unavailable: {obj!r}")
+    return obj
+
+
+def _data(response) -> dict:
+    """Unwrap the `{"code":0,"message":"ok","data":...}` envelope."""
+    body = response.json()
+    assert body.get("code") == 0, f"unexpected envelope: {body!r}"
+    return body["data"]
+
+
+# ── offline harness (sqlite; PG-only bits shimmed) ───────────────────────────
+
+import app.db.session as _dbs  # noqa: E402
+from sqlalchemy import BigInteger, create_engine, event  # noqa: E402
+from sqlalchemy.dialects.postgresql import JSONB  # noqa: E402
+from sqlalchemy.ext.compiler import compiles  # noqa: E402
+from sqlalchemy.orm import sessionmaker  # noqa: E402
+
+
+@compiles(JSONB, "sqlite")
+def _jsonb_as_json(type_, compiler, **kw):  # noqa: ANN001
+    return "JSON"
+
+
+@compiles(BigInteger, "sqlite")
+def _bigint_as_integer(type_, compiler, **kw):  # noqa: ANN001
+    return "INTEGER"
+
+
+_P6_TABLES = (
+    "config_rule",
+    "sys_user",
+    "asset_group",
+    "asset_host",
+    "automation_level",
+    "automation_whitelist",
+    "remediation_policy",
+    "circuit_breaker_state",
+    "approval_request",
+    "approval_record",
+    "ai_action",
+    "exec_task",
+    "exec_task_host",
+    "workflow",
+    "workflow_version",
+    "workflow_run",
+    "workflow_node_run",
+)
+
+
+def _mk_tables():
+    import app.db.models  # noqa: F401,PLC0415
+    from app.db.base import Base  # noqa: PLC0415
+
+    tl = Base.metadata.tables
+    return [tl[n] for n in _P6_TABLES if n in tl]
+
+
+def _install_nextval(engine) -> None:
+    """sqlite lacks PG sequences; `_task_no`/`_approval_no` call
+    `SELECT nextval('seq_...')`. Back it with a per-name monotonic counter."""
+
+    counters: dict[str, int] = {}
+
+    def _nextval(name: str) -> int:
+        counters[name] = counters.get(name, 0) + 1
+        return counters[name]
+
+    @event.listens_for(engine, "connect")
+    def _register(dbapi_conn, _rec):  # noqa: ANN001
+        dbapi_conn.create_function("nextval", 1, _nextval)
+
+
+class _User:
+    """Minimal stand-in for CurrentUser used by service-layer calls."""
+
+    def __init__(self, perms=("ai:use", "ai:admin", "exec:task:retry"), admin=True):
+        self.id = 1
+        self.user_id = 1
+        self.username = "qa"
+        self.is_admin = admin
+        self.permissions = list(perms)
+        self.visible_group_ids = []
+
+    def require_perm(self, perm: str) -> None:
+        from app.core.exceptions import ForbiddenError
+
+        if perm not in self.permissions:
+            raise ForbiddenError(f"missing permission {perm}")
+
+
+@pytest.fixture()
+def p6_db(tmp_path):
+    """Yields ``(session, set_user, set_flag, client)``.
+
+    ``set_user``/``set_flag`` drive the HTTP client; ``session`` is the same
+    sqlite session the app uses (dependency override) so tests can assert on rows.
+    """
+    from app.db.base import Base  # noqa: PLC0415
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'p6b.db'}", future=True)
+    _install_nextval(engine)
+    Base.metadata.create_all(engine, tables=_mk_tables())
+    maker = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, future=True)
+    session = maker()
+
+    prev_bind = getattr(_dbs.SessionLocal, "kw", {}).get("bind")
+    _dbs.SessionLocal.configure(bind=engine)
+
+    import app.main as main  # noqa: PLC0415
+    from app.api.deps import CurrentUser, get_current_user  # noqa: PLC0415
+    from app.db.session import get_db  # noqa: PLC0415
+    from starlette.testclient import TestClient  # noqa: PLC0415
+
+    main.app.dependency_overrides[get_db] = lambda: (yield session)
+
+    def set_user(perms, admin=False):
+        user = CurrentUser(
+            user_id=1, username="qa", is_admin=admin,
+            permissions=list(perms), visible_group_ids=[],
+        )
+        main.app.dependency_overrides[get_current_user] = lambda: user
+        return user
+
+    def set_flag(key: str, on: bool):
+        from app.db.models.notify import ConfigRule  # noqa: PLC0415
+
+        row = session.query(ConfigRule).filter_by(rule_key=key).one_or_none()
+        if row is None:
+            session.add(ConfigRule(rule_key=key, rule_value={"value": on}))
+        else:
+            row.rule_value = {"value": on}
+        session.commit()
+
+    try:
+        yield session, set_user, set_flag, TestClient(main.app)
+    finally:
+        main.app.dependency_overrides.clear()
+        session.close()
+        if prev_bind is not None:
+            _dbs.SessionLocal.configure(bind=prev_bind)
+        engine.dispose()
+
+
+# ── seed helpers ─────────────────────────────────────────────────────────────
+
+_SENSITIVE_WORD = "rm -rf"
+_SENSITIVE_CMD = "rm -rf /tmp/target"
+
+
+def _seed_sensitive(session, word: str = _SENSITIVE_WORD) -> None:
+    from app.db.models.notify import ConfigRule  # noqa: PLC0415
+
+    session.add(ConfigRule(rule_key="exec_sensitive_word", rule_value={"words": [word]}))
+    session.commit()
+
+
+def _make_host(session, hid: int = 1):
+    from app.db.models.asset import Host  # noqa: PLC0415
+
+    h = Host(id=hid, hostname=f"h{hid}", ip=f"10.0.0.{hid}", group_id=None,
+             connector="agent", sensitivity_level="normal", status="online")
+    session.add(h)
+    session.commit()
+    return h
+
+
+def _enable_level(session, level: str) -> None:
+    """Directly materialise the mutual-exclusion matrix (one enabled level)."""
+    from app.db.models import AutomationLevel  # noqa: PLC0415
+
+    for lvl in ("L0", "L1", "L2", "L3", "L4"):
+        session.add(AutomationLevel(level=lvl, capability="", enabled=(lvl == level)))
+    session.commit()
+
+
+def _set_whitelist(session, action: str, risk_level: str = "low", enabled: bool = True) -> None:
+    from app.db.models import AutomationWhitelist  # noqa: PLC0415
+
+    session.add(AutomationWhitelist(action=action, risk_level=risk_level,
+                                    enabled=enabled, updated_by=1))
+    session.commit()
+
+
+def _set_policy(session, asset_class: str, op_type: str, *, level: str = "L4",
+                verification_ref: str | None = "V-1", whitelist_ref: str | None = "restart",
+                rollback_window: int = 3600) -> None:
+    from app.db.models import RemediationPolicy  # noqa: PLC0415
+
+    session.add(RemediationPolicy(asset_class=asset_class, op_type=op_type, level=level,
+                                  verification_ref=verification_ref,
+                                  whitelist_ref=whitelist_ref,
+                                  rollback_window=rollback_window))
+    session.commit()
+
+
+def _count(session, model) -> int:
+    return session.query(model).count()
+
+
+def _auto_count(session) -> int:
+    from app.db.models import AiAction  # noqa: PLC0415
+
+    return session.query(AiAction).filter(AiAction.decision == "auto").count()
+
+
+def _create_exec(session, *, remediation=None, command: str = _SENSITIVE_CMD):
+    """Drive the shared E6 core. Fails loudly (RED) if the seam is absent."""
+    from app.services import exec_service  # noqa: PLC0415
+
+    try:
+        return exec_service.create_exec_task_record(
+            session, name="E6 remediation", kind="command", target_host_ids=[1],
+            command=command, created_by=1, requester_id=1, remediation=remediation,
+        )
+    except TypeError as exc:  # seam not landed yet (lock-first RED)
+        pytest.fail(
+            "E6-3 seam missing: `create_exec_task_record(..., remediation=...)` not "
+            f"implemented yet (@架构 3616②); got {exc!r}"
+        )
+
+
+_HIT = {"action": "restart", "asset_class": "app", "op_type": "restart", "risk_level": "low"}
+
+
+def _create_exec_plain(session, command: str = _SENSITIVE_CMD):
+    """Legacy shared core (no E6 context) — works before the seam lands."""
+    from app.services import exec_service  # noqa: PLC0415
+
+    return exec_service.create_exec_task_record(
+        session, name="plain exec", kind="command", target_host_ids=[1],
+        command=command, created_by=1, requester_id=1,
+    )
+
+
+def _seed_hit_context(session, level: str = "L4") -> None:
+    """r1.9 (@架构 `3618`): the four-way ∧ precondition for an auto_policy hit."""
+    _seed_sensitive(session)
+    _make_host(session)
+    _enable_level(session, level)
+    _set_whitelist(session, "restart", "low", True)
+    _set_policy(session, "app", "restart", level="L4",
+                verification_ref="V-1", whitelist_ref="restart")
+
+
+# ── ① put_level r1.8 (frozen; currently GREEN) ───────────────────────────────
+
+def _enabled_levels(session) -> list[str]:
+    from app.db.models import AutomationLevel  # noqa: PLC0415
+
+    return sorted(r.level for r in session.query(AutomationLevel).all() if r.enabled)
+
+
+def test_b1_put_level_r1_8_mutual_exclusion(p6_db):
+    """FR-E6-1 r1.8: single `current`, PUT mutual exclusion, default L3, same-value no-op."""
+    session, set_user, set_flag, client = p6_db
+    set_flag("ai.auto_remediate", True)
+    set_user(["ai:use", "ai:admin"], admin=True)
+    # B=422 (@架构 3623): L4 activation needs >=1 L4 policy carrying verification_ref.
+    _set_policy(session, "app", "restart", level="L4", verification_ref="V-1")
+
+    body = client.get("/api/v1/ai/automation/level")
+    assert body.status_code == 200, body.text
+    assert _data(body)["current"] == "L3", "empty matrix => default current L3"
+
+    r = client.put("/api/v1/ai/automation/level", json={"current": "L4"})
+    assert r.status_code == 200, r.text
+    got = _data(r)
+    assert got["current"] == "L4"
+    assert next(m for m in got["matrix"] if m["level"] == "L4")["enabled"]
+    assert _enabled_levels(session) == ["L4"], "PUT L4 => exactly one enabled level"
+
+    r = client.put("/api/v1/ai/automation/level", json={"current": "L2"})
+    assert r.status_code == 200, r.text
+    assert _data(r)["current"] == "L2", "PUT L2 => current L2 (two-way symmetric, old bug)"
+    assert _enabled_levels(session) == ["L2"], "L4 must be disabled after PUT L2"
+
+    r = client.put("/api/v1/ai/automation/level", json={"current": "L2"})
+    assert r.status_code == 200, r.text
+    assert _data(r)["current"] == "L2"
+    assert _enabled_levels(session) == ["L2"], "same-value PUT is a no-op"
+
+
+# ── ② E6-3 positive ──────────────────────────────────────────────────────────
+
+def _approvals_auto(session):
+    from app.db.models import ApprovalRequest  # noqa: PLC0415
+
+    return [a for a in session.query(ApprovalRequest).all() if a.approval_mode == "auto_policy"]
+
+
+def test_b2_e6_3_positive_auto_policy(p6_db):
+    """FR-E6-3: whitelist ∧ risk∈L4 ∧ current==L4 ∧ policy hit => pre-authorised row."""
+    session, set_user, set_flag, _client = p6_db
+    set_flag("ai.auto_remediate", True)
+    _seed_hit_context(session)
+
+    auto0 = _auto_count(session)
+    res = _create_exec(session, remediation=dict(_HIT))
+
+    assert res.get("status") in ("running", "approved", "awaiting_approval"), res
+    auto_rows = _approvals_auto(session)
+    assert len(auto_rows) == 1, f"hit must pre-authorise exactly one row; got {len(auto_rows)}"
+    a = auto_rows[0]
+    assert a.status == "approved", f"auto_policy row must be approved; got {a.status!r}"
+    assert a.policy_ref, "auto_policy row must carry policy_ref"
+    assert _auto_count(session) - auto0 == 1, "hit must write exactly one E6 decision='auto'"
+
+
+# ── ③ E6-3 negative (non-vacuous) ────────────────────────────────────────────
+
+def _assert_manual_pending(session, auto0: int) -> None:
+    from app.db.models import ApprovalRequest  # noqa: PLC0415
+
+    rows = session.query(ApprovalRequest).all()
+    assert len(rows) == 1, f"expected exactly one approval row; got {len(rows)}"
+    a = rows[0]
+    assert a.approval_mode == "manual", f"miss must stay manual; got {a.approval_mode!r}"
+    assert a.status == "pending", f"miss must stay pending (HITL); got {a.status!r}"
+    assert _auto_count(session) - auto0 == 0, "miss must write no E6 decision='auto'"
+
+
+def test_b3_e6_3_negative_whitelist_miss(p6_db):
+    session, set_user, set_flag, _c = p6_db
+    set_flag("ai.auto_remediate", True)
+    _seed_hit_context(session)
+    _set_whitelist(session, "other_action", "low", True)  # 'restart' not whitelisted
+
+    auto0 = _auto_count(session)
+    _create_exec(session, remediation={**_HIT, "action": "not_whitelisted"})
+    _assert_manual_pending(session, auto0)
+
+
+def test_b4_e6_3_negative_risk_high(p6_db):
+    session, set_user, set_flag, _c = p6_db
+    set_flag("ai.auto_remediate", True)
+    _seed_hit_context(session)
+
+    auto0 = _auto_count(session)
+    _create_exec(session, remediation={**_HIT, "risk_level": "high"})
+    _assert_manual_pending(session, auto0)
+
+
+def test_b5_e6_3_negative_level_not_l4(p6_db):
+    session, set_user, set_flag, _c = p6_db
+    set_flag("ai.auto_remediate", True)
+    _seed_hit_context(session, level="L3")  # current != L4
+
+    auto0 = _auto_count(session)
+    _create_exec(session, remediation=dict(_HIT))
+    _assert_manual_pending(session, auto0)
+
+
+# ── ③A2 ambiguous L4 policies ⇒ fail-closed (@架构 3623 A2) ─────────────────
+def test_b5b_e6_3_ambiguous_l4_policies_fail_closed(p6_db):
+    """FR-E6 A2: >1 same-(asset_class,op_type) L4 policy => fail-closed manual, 0 auto."""
+    session, set_user, set_flag, _c = p6_db
+    set_flag("ai.auto_remediate", True)
+    _seed_hit_context(session)
+    _set_policy(session, "app", "restart", level="L4",
+                verification_ref="V-2", whitelist_ref="restart")  # ambiguity
+
+    auto0 = _auto_count(session)
+    _create_exec(session, remediation=dict(_HIT))
+    _assert_manual_pending(session, auto0)
+
+
+# ── ③b E6-3 retry is ALWAYS manual (@架构 3616①⑦) ───────────────────────────
+
+def test_b6_retry_is_always_manual(p6_db):
+    session, set_user, set_flag, _c = p6_db
+    from app.db.models import ApprovalRequest, ExecTask  # noqa: PLC0415
+    from app.services import exec_service  # noqa: PLC0415
+
+    set_flag("ai.auto_remediate", True)
+    _seed_sensitive(session)
+    _make_host(session)
+
+    # a terminal (failed) sensitive exec task with no prior approval row, so the
+    # retry insert is not blocked by the pre-existing UNIQUE(approval_request.biz_id).
+    task = ExecTask(task_no="T-1", name="failed remediation", kind="command",
+                    command=_SENSITIVE_CMD, target_host_ids={"ids": [1]},
+                    status="failed", created_by=1, version=0, sensitive_flag=1,
+                    approve_required=1)
+    session.add(task)
+    session.commit()
+
+    auto0 = _auto_count(session)
+    out = exec_service.retry_task(session, _User(["exec:task:retry"], admin=True), task.id)
+    assert out.get("status") == "awaiting_approval", out
+    fresh = session.get(ApprovalRequest, out["approval_id"])
+    assert fresh.status == "pending" and fresh.approval_mode == "manual", (
+        f"retry must be fail-closed manual/pending; got {fresh.approval_mode!r}/{fresh.status!r}"
+    )
+    assert _auto_count(session) - auto0 == 0, "retry must not write an E6 decision='auto'"
+
+
+# ── ④ E6-4 rollback compensation ─────────────────────────────────────────────
+
+def test_b7_e6_4_rollback_compensates_once(p6_db):
+    session, set_user, set_flag, _c = p6_db
+    from app.db.models import AiAction, ApprovalRequest, ExecTask, Workflow, WorkflowRun  # noqa: PLC0415
+    from app.services import ai_automation_service as svc  # noqa: PLC0415
+
+    set_flag("ai.auto_remediate", True)
+    _seed_sensitive(session)
+    _make_host(session)
+    _set_policy(session, "app", "restart", rollback_window=3600)
+
+    wf = Workflow(id=1, name="wf-p6", current_version=1, created_by=1)
+    session.add(wf)
+    run = WorkflowRun(
+        id=1, workflow_id=1, workflow_version=1, status="succeeded", trigger_type="manual",
+        context={
+            "remediation": {"name": "rollback x", "kind": "command",
+                            "command": _SENSITIVE_CMD, "target_host_ids": [1],
+                            "asset_class": "app", "op_type": "restart"},
+            "rollback_window": 3600,
+        },
+        created_by=1,
+    )
+    session.add(run)
+    session.commit()
+
+    e0, a0 = _count(session, ExecTask), _count(session, ApprovalRequest)
+    svc.rollback_run(session, _User(), run.id)
+
+    assert _count(session, ExecTask) - e0 == 1, "first rollback must create ONE compensating exec_task"
+    assert _count(session, ApprovalRequest) - a0 == 1, "compensating exec must create ONE approval row"
+    assert any(getattr(x, "rollback_ref", None) for x in session.query(AiAction).all()), (
+        "compensating ai_action must set rollback_ref"
+    )
+
+    svc.rollback_run(session, _User(), run.id)
+    assert _count(session, ExecTask) - e0 == 1, "repeat rollback must be Δ0"
+    assert _count(session, ApprovalRequest) - a0 == 1, "repeat rollback must be Δ0"
+
+
+# ── ③s verification fail-closed 422 (@需求 §30.7 ③) ─────────────────────────
+
+def test_b8_l4_activation_fail_closed(p6_db):
+    """FR-E6 B (@架构 `3623`): PUT level->L4 422 unless >=1 L4 policy carries verification_ref."""
+    session, set_user, set_flag, client = p6_db
+    set_flag("ai.auto_remediate", True)
+    set_user(["ai:use", "ai:admin"], admin=True)
+    url = "/api/v1/ai/automation/level"
+
+    # ① empty L4 policy set => zero guardrails => fail-closed 422.
+    r = client.put(url, json={"current": "L4"})
+    assert r.status_code == 422, (
+        f"empty L4 policy set must be fail-closed 422; got {r.status_code} {r.text}"
+    )
+    assert _data(client.get(url))["current"] != "L4", "level must stay unchanged on 422"
+
+    # ② an L4 policy whose verification_ref is missing => 422.
+    _set_policy(session, "app", "restart", level="L4", verification_ref=None)
+    r = client.put(url, json={"current": "L4"})
+    assert r.status_code == 422, (
+        f"L4 policy without verification_ref must be fail-closed 422; got {r.status_code} {r.text}"
+    )
+    assert _data(client.get(url))["current"] != "L4", "level must stay unchanged on 422"
+
+    # ③ once a ref'd L4 policy exists => activation succeeds.
+    from app.db.models import RemediationPolicy  # noqa: PLC0415
+
+    session.query(RemediationPolicy).one().verification_ref = "V-2"
+    session.commit()
+    r = client.put(url, json={"current": "L4"})
+    assert r.status_code == 200, r.text
+    assert _data(r)["current"] == "L4"
+
+
+# ── ④s circuit-breaker (r1.10 @架构 `3629`: threshold precedence + FSM + halt) ─
+
+def _breaker_state(session) -> str:
+    from app.services import ai_automation_service as svc  # noqa: PLC0415
+
+    return svc.circuit_breaker(session, _User())["state"]
+
+
+def _trip_breaker(session, policy=None) -> int:
+    """Drive the breaker to `open` using its own threshold (no clock dependency).
+
+    Per r1.10 (@架构 `3635`) the trip threshold is `resolve_threshold(db, policy=…)`,
+    so a matched policy's `circuit_threshold` participates in opening.
+    """
+    from app.services import ai_automation_service as svc  # noqa: PLC0415
+
+    th = svc.resolve_threshold(session, policy=policy)
+    for _ in range(th):
+        svc.record_verification_result(session, policy=policy, ok=False)
+    return th
+
+
+def test_b9_circuit_breaker_threshold_and_fsm(p6_db):
+    """§30.7 ④ / r1.10: `resolve_threshold` single source + closed→open→half→closed."""
+    session, set_user, set_flag, client = p6_db
+    from app.db.models import RemediationPolicy  # noqa: PLC0415
+
+    svc = _require("app.services.ai_automation_service")
+    assert hasattr(svc, "resolve_threshold"), "breaker threshold must be `resolve_threshold`"
+    assert hasattr(svc, "record_verification_result"), "breaker FSM seam missing"
+    set_flag("ai.auto_remediate", True)
+    set_user(["ai:use", "ai:admin"], admin=True)
+
+    # precedence: an explicit policy threshold wins over the built-in default.
+    pol = RemediationPolicy(asset_class="app", op_type="restart", level="L4",
+                            circuit_threshold=2, verification_ref="V-1", whitelist_ref="restart")
+    session.add(pol)
+    session.commit()
+    assert svc.resolve_threshold(session, policy=pol) == 2, (
+        "resolve_threshold must honour policy.circuit_threshold"
+    )
+    assert isinstance(svc.resolve_threshold(session, policy=None), int), (
+        "resolve_threshold must yield an int default when no policy/env override"
+    )
+
+    # served observation face: GET /circuit-breaker.threshold == resolve_threshold(db).
+    got = _data(client.get("/api/v1/ai/automation/circuit-breaker"))
+    assert got["threshold"] == svc.resolve_threshold(session, policy=None), (
+        "GET /circuit-breaker.threshold must be resolve_threshold(db), not the raw row value"
+    )
+
+    assert _breaker_state(session) == "closed", "breaker starts closed"
+    th = _trip_breaker(session, policy=pol)           # per-policy trip threshold (=2)
+    assert th == 2, "trip must use the matched policy's circuit_threshold"
+    assert _breaker_state(session) == "open", f"current>=threshold({th}) must open the breaker"
+
+    svc.record_verification_result(session, ok=True)   # open -> half
+    assert _breaker_state(session) == "half", "a success from open must half-open"
+    svc.record_verification_result(session, ok=True)   # half -> closed
+    assert _breaker_state(session) == "closed", "a success from half must close"
+
+
+def test_b10_open_breaker_halts_auto(p6_db):
+    """§30.7 ④ / r1.10 halt: `state=='open'` forces manual even on a four-way hit."""
+    session, set_user, set_flag, _c = p6_db
+
+    set_flag("ai.auto_remediate", True)
+    _seed_hit_context(session)
+    _trip_breaker(session)
+    assert _breaker_state(session) == "open"
+
+    auto0 = _auto_count(session)
+    _create_exec(session, remediation=dict(_HIT))
+    _assert_manual_pending(session, auto0)
+
+
+# ── ⑤ audit list面 (@架构 `3644` 裁 in-scope) ──────────────────────────────────
+# FR-E7-2/FR-E7-4 + P6 tuple r1①: `/api/v1/ai/actions` is the ONLY audit read face,
+# so its list item must expose the P6 governance columns. A1 = 直取列
+# (`approval_mode`/`policy_ref`/`verification_ref`/`rollback_ref`); A2(i) = readonly
+# projection aliases `why_ref := basis_refs` / `result := decision` (no DDL, no new
+# column). This is a serializer-only change (`ai_service._action_out`).
+
+# @架构 `3644`③ hard-required subset of the audit list item keys.
+_AUDIT_KEYS_REQUIRED = ("approval_mode", "policy_ref", "why_ref", "result")
+# @架构 `3644`② full P6 projection: A1 直取列 (4) + A2(i) aliases (2).
+_AUDIT_KEYS_P6 = ("approval_mode", "policy_ref", "verification_ref", "rollback_ref",
+                  "why_ref", "result")
+
+
+def _seed_ai_action(session, **over):
+    """Append one governed `ai_action` row with known P6 fields (offline)."""
+    from datetime import datetime, timezone
+
+    from app.db.models import AiAction  # noqa: PLC0415
+
+    data = dict(
+        model_name="m1", model_version="1", input_snapshot={"k": 1}, confidence=0.9,
+        basis_refs=["BR-1"], trace_id="TR-1", actor=1, decision="auto",
+        approval_mode="auto_policy", policy_ref="app:restart",
+        verification_ref="V-1", rollback_ref="RB-1",
+        created_at=datetime.now(timezone.utc),
+    )
+    data.update(over)
+    row = AiAction(**data)
+    session.add(row)
+    session.commit()
+    return row
+
+
+def _list_actions(client):
+    body = client.get("/api/v1/ai/actions")
+    assert body.status_code == 200, body.text
+    return _data(body)["list"]
+
+
+def test_b11_audit_list_exposes_p6_projection(p6_db):
+    """FR-E7-2/4 (@架构 `3644`②): list item must carry the P6 governance keys."""
+    session, set_user, set_flag, client = p6_db
+    set_flag("ai.enabled", True)
+    set_user(["ai:use", "ai:admin"], admin=True)
+    _seed_ai_action(session)
+
+    items = _list_actions(client)
+    assert len(items) == 1, f"expected one action item; got {items!r}"
+    item = items[0]
+    missing = [k for k in _AUDIT_KEYS_P6 if k not in item]
+    assert not missing, (
+        f"`GET /ai/actions` list item missing P6 audit projection keys: {missing}; "
+        f"present={sorted(item)}"
+    )
+    for key in _AUDIT_KEYS_REQUIRED:
+        assert key in item, f"required audit key `{key}` absent"
+
+
+def test_b12_audit_aliases_and_auto_policy_row(p6_db):
+    """FR-E7-4 (@架构 `3644`②③): A2(i) aliases + auto_policy row projection.
+
+    `why_ref == basis_refs`, `result == decision`; an `auto_policy` row reflects
+    `approval_mode == 'auto_policy'` with a non-null `policy_ref`, while a `manual`
+    row keeps `approval_mode == 'manual'` / `policy_ref is None` (non-vacuous).
+    """
+    session, set_user, set_flag, client = p6_db
+    set_flag("ai.enabled", True)
+    set_user(["ai:use", "ai:admin"], admin=True)
+    _seed_ai_action(session)
+    _seed_ai_action(session, decision="adopted", approval_mode="manual",
+                    policy_ref=None, basis_refs=["BR-2"], trace_id="TR-2")
+
+    by_trace = {it["trace_id"]: it for it in _list_actions(client)}
+    assert set(by_trace) == {"TR-1", "TR-2"}, f"unexpected audit rows: {sorted(by_trace)}"
+
+    auto = by_trace["TR-1"]
+    assert auto["why_ref"] == auto["basis_refs"], "why_ref must alias basis_refs (A2(i))"
+    assert auto["result"] == auto["decision"], "result must alias decision (A2(i))"
+    assert auto["approval_mode"] == "auto_policy", "auto_policy row must surface approval_mode"
+    assert auto["policy_ref"], "auto_policy row must surface a non-null policy_ref"
+
+    manual = by_trace["TR-2"]
+    assert manual["why_ref"] == manual["basis_refs"], "why_ref alias must be per-row"
+    assert manual["result"] == manual["decision"], "result alias must be per-row"
+    assert manual["approval_mode"] == "manual", "manual row must surface its approval_mode"
+    assert manual["policy_ref"] is None, "manual row must surface a null policy_ref"

@@ -156,7 +156,11 @@ def test_path_count_stable(openapi_spec):
     # 164 -> 167: P5 (AIOps E4/E5) adds 3 URL keys (/monitor/alerts/aggregate,
     # /monitor/alerts/{alert_id}/ai/rca, /workflows/ai/suggest; @架构 P5 tuple
     # v1->r2 seq3332 + @需求 §29 v1.0 seq3333, add-only).
-    assert len(paths) == 167
+    # 167 -> 173: P6 (AIOps E6 controlled auto-remediation·L4) adds 6 URL keys
+    # (/ai/automation/level, /ai/automation/whitelist, /ai/automation/whitelist/{item_id},
+    # /ai/automation/dry-run, /ai/automation/runs/{run_id}/rollback,
+    # /ai/automation/circuit-breaker; @架构 P6 tuple r1 seq3560 + @需求 §30, add-only).
+    assert len(paths) == 173
     # layer-④ committed face (@架构 seq3057 / seq3063, option (a)): the frozen M6
     # key set must not shrink — defeats a "net-zero substitution" (delete 1
     # unnamed P3/P3-3 key + add 1 extra new key keeps len==154 while silently

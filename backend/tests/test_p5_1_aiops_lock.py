@@ -43,6 +43,7 @@ _BACKEND = pathlib.Path(__file__).resolve().parents[1]
 _VERSIONS_DIR = _BACKEND / "alembic" / "versions"
 
 _P5_REV = "f5a6b7c8d9e0"  # P5/P5.1 single head (M10); P5.1 adds NO migration
+_P6_REV = "P6_REV"  # P6 advances the single head (descends from the P5 rev)
 
 
 def _try(mod: str):
@@ -243,7 +244,8 @@ def test_d3_within_cap_behaviour_unchanged(monkeypatch):
 
 
 def test_d4_no_new_migration_single_head():
-    """④/cross-cut: P5.1 is add-only with NO migration — single head stays the M10 rev."""
+    """④/cross-cut: P5.1 is add-only with NO migration. The single head is now the
+    newest batch rev (P6), which still descends from the P5 rev — P5.1 added none."""
     revs: dict[str, str | None] = {}
     for p in _VERSIONS_DIR.glob("*.py"):
         txt = p.read_text(encoding="utf-8")
@@ -253,15 +255,21 @@ def test_d4_no_new_migration_single_head():
             revs[m.group(1)] = d.group(1) if d else None
     downs = {v for v in revs.values() if v}
     heads = sorted(r for r in revs if r not in downs)
-    assert heads == [_P5_REV], (
-        f"P5.1 must add NO migration; single head must stay {_P5_REV}; got {heads}"
+    assert heads == [_P6_REV], (
+        f"single head must be the newest batch rev {_P6_REV} (P5.1 added NO migration); "
+        f"got {heads}"
+    )
+    assert revs[_P6_REV] == _P5_REV, (
+        f"{_P6_REV} must descend directly from the P5.1 rev {_P5_REV}; "
+        f"got parent {revs[_P6_REV]!r}"
     )
 
 
-def test_d5_paths_still_167():
-    """④/cross-cut: contract surface unchanged — openapi paths stay exactly 167."""
+def test_d5_paths_at_least_167():
+    """④/cross-cut: P5.1 did not change the contract (167). P6 raises the surface
+    add-only; this stays a monotonic floor (exact count pinned by the P6 lock)."""
     main = _main()
     paths = main.app.openapi().get("paths", {})
-    assert len(paths) == 167, (
-        f"P5.1 must not change the contract; paths must stay 167; got {len(paths)}"
+    assert len(paths) >= 167, (
+        f"paths must be >= 167 (P5.1 surface; P6 adds add-only); got {len(paths)}"
     )

@@ -76,6 +76,12 @@ def _action_out(a: AiAction) -> dict:
         "trace_id": a.trace_id,
         "actor": a.actor,
         "decision": a.decision,
+        "approval_mode": a.approval_mode,
+        "policy_ref": a.policy_ref,
+        "verification_ref": a.verification_ref,
+        "rollback_ref": a.rollback_ref,
+        "why_ref": a.basis_refs,
+        "result": a.decision,
         "created_at": _iso(a.created_at),
     }
 

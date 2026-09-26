@@ -179,9 +179,9 @@ def test_a1_p4_paths_present_with_methods():
 
 
 def test_a2_paths_count_at_least_164():
-    """Base M8 paths == 156; P4 adds 8 URL keys == 164. P5 is add-only on top, so this
-    is a MONOTONIC no-shrink floor; the exact count is pinned at the newest batch lock
-    (test_p5_aiops_lock::test_a2_paths_count_167 + test_contract_openapi==167)."""
+    """Base M8 paths == 156; P4 adds 8 URL keys == 164. P5/P6 are add-only on top, so
+    this is a MONOTONIC no-shrink floor; the exact count is pinned at the newest batch
+    lock (test_p6_aiops_lock::test_a2_paths_count_173_and_no_removed + test_contract_openapi==173)."""
     paths = _openapi_paths()
     assert len(paths) >= 164, (
         f"paths must be >= 164 (P4 floor: M8 156 + 8 AIOps URL keys); got {len(paths)}. "
@@ -295,7 +295,18 @@ def test_m4_ai_action_decision_enum():
             "P4 lock: ai_action decision vocabulary not expressible — expected a module "
             "constant (AI_ACTION_DECISIONS) or a CHECK/Enum on `ai_action.decision`"
         )
-    assert vals == AI_ACTION_DECISIONS, f"decision enum must be {sorted(AI_ACTION_DECISIONS)}; got {sorted(vals)}"
+    # P4 baseline: {adopted,rejected,auto}. P6 (AIOps E6) is add-only over this
+    # vocabulary and appends "dry_run" (dry-run audit rows). Later batches may only
+    # append; the original trio must stay present.
+    assert AI_ACTION_DECISIONS <= vals, (
+        f"decision enum must include the P4 trio {sorted(AI_ACTION_DECISIONS)}; "
+        f"got {sorted(vals)}"
+    )
+    # Non-vacuous: the relaxed superset above must still be pinned exactly elsewhere.
+    assert "dry_run" in vals, (
+        "P6 (E6) appends `dry_run`; the exact 4-set is pinned by "
+        "test_p6_aiops_lock::test_e2_ai_action_decisions_add_only_dry_run"
+    )
 
 
 def _col_enum_values(table: str, col: str) -> set[str] | None:

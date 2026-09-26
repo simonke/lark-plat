@@ -164,6 +164,7 @@ def health() -> Result:
 
 from app.api.v1.endpoints import (  # noqa: E402
     ai,
+    ai_automation,
     approval,
     asset,
     auth,
@@ -203,6 +204,7 @@ for router in (
     cicd.router,
     ops_event.router,
     ai.router,
+    ai_automation.router,
 ):
     app.include_router(router, prefix=settings.api_prefix)
 

@@ -14,9 +14,9 @@ import {
 } from '../src/views/ai/helpers'
 
 describe('ai helpers (P4)', () => {
-  it('freezes the source / decision vocabularies', () => {
+  it('freezes the source / decision vocabularies (P6 add-only: + dry_run)', () => {
     expect(OPS_EVENT_SOURCES).toEqual(['monitor', 'exec', 'audit', 'ticket', 'kb'])
-    expect(AI_ACTION_DECISIONS).toEqual(['adopted', 'rejected', 'auto'])
+    expect(AI_ACTION_DECISIONS).toEqual(['adopted', 'rejected', 'auto', 'dry_run'])
   })
 
   it('maps source + decision labels', () => {

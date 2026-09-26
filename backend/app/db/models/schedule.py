@@ -62,6 +62,11 @@ class ApprovalRequest(Base, TimestampMixin):
     requester_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
     sensitive_hit: Mapped[str] = mapped_column(String(256), default="")
     status: Mapped[str] = mapped_column(String(16), default="pending", index=True)  # pending/approved/rejected/canceled
+    # P6 (E6) add-only columns: plain String + comment enum (no CHECK/Enum against
+    # the services-layer APPROVAL_MODES). auto_policy sets status=approved via the
+    # existing exec+approval primitive (which stays in force).
+    approval_mode: Mapped[str] = mapped_column(String(16), default="manual", nullable=False)  # auto_policy|manual
+    policy_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
     approver_role_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     approver_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

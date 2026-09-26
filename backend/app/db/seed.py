@@ -607,6 +607,8 @@ DEFAULT_CONFIG_RULES: dict[str, dict] = {
     # P5 (AIOps E4/E5) capability flags (never overwrite existing; default off).
     "ai.rca": {"value": False},
     "ai.playbook": {"value": False},
+    # P6 (AIOps E6) controlled auto-remediation flag (never overwrite; default off).
+    "ai.auto_remediate": {"value": False},
     # P4 embedding-store selection (enum, not a boolean flag; default pg_array).
     "ai.embedding_store": {"value": "pg_array"},
 }
@@ -628,6 +630,7 @@ _CONFIG_RULE_REMARKS: dict[str, str] = {
     "ai.kb_assist": "P4 KB-RAG 助手默认关闭",
     "ai.rca": "P5 告警根因分析（E4）默认关闭",
     "ai.playbook": "P5 AI 编排建议（E5）默认关闭",
+    "ai.auto_remediate": "P6 受控自动处置（E6·L4）默认关闭",
     "ai.embedding_store": "P4 向量存储后端（pg_array|in_memory）",
 }
 

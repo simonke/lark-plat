@@ -1,7 +1,8 @@
 r"""P6 (AIOps E6 受控自动处置·L4 + E7/E8 weighted) contract locks — @单元 lock-first, add-only.
 
-Frozen contract: @架构 **P6 tuple r1** (seq3560) + @需求 **§30** (`p6-requirements-product-design-v0.1.md`,
-att `att_xu8e5uz7faa3xa`). Base = release **M11 `6740d22a3854798ab2a49725b8d397d37238aa15`** (master).
+Frozen contract: @架构 **P6 tuple r1** (seq3560 + notes r1.1-r1.6) + @需求 **§30**
+(`p6-requirements-product-design-v0.1.md`, att `att_dy3ayo0f5jnn3f`, v0.1.5).
+Base = release **M11 `6740d22a3854798ab2a49725b8d397d37238aa15`** (master).
 
 Pinned surface (r1 A–F):
   A perms        : shared `ai:use`/`ai:admin` (unchanged) => 16 endpoint codes; per-route:
@@ -101,7 +102,7 @@ P6_TABLES = ("remediation_policy", "automation_whitelist", "automation_level", "
 P6_FORBIDDEN_TABLES = ("remediation_run",)
 AI_ACTION_NEW_COLS = {"approval_mode", "policy_ref", "verification_ref", "rollback_ref"}
 APPROVAL_NEW_COLS = {"approval_mode", "policy_ref"}
-WHITELIST_COLS = {"action", "risk_level", "enabled"}
+WHITELIST_COLS = {"action", "risk_level", "enabled", "updated_by", "updated_at"}
 
 # r1 C②: authoritative ApprovalRequest construction sites (E6 must add none)
 APPROVAL_REQUEST_SITES = {

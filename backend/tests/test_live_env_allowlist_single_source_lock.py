@@ -27,6 +27,9 @@ Run (from the backend checkout, backend venv):
 from __future__ import annotations
 
 import importlib.util
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -34,6 +37,48 @@ _REPO_ROOT = BACKEND_DIR.parent
 _SMOKE_PATH = BACKEND_DIR / "tools" / "live_readiness_smoke.py"
 _LOCK_PATH = BACKEND_DIR / "tests" / "test_live_env_contract_lock.py"
 _DOCS_PATH = _REPO_ROOT / "docs" / "migration-shared-db-allowlist.md"
+
+# Named governance exception register (Tier1, policy-常驻): rev ∈ C that is already resident on
+# the shared dev DB and is an ancestor of the repo head, so it may dwell there. This is a
+# deliberate, bounded exception — NOT a general allow-list widening; the smoke gate's
+# `LIVE_REV_DWELL_OVERRIDE` (an INDEPENDENT declaration, no import of this lock) must equal
+# `frozenset(LIVE_REV_DWELL_REGISTER)`.
+#
+# Carrier split (arch seq3694③ / seq3710): Tier1 = THIS register (in-repo, policy-resident,
+# exercised on every CI run); Tier2 = a periodic ops/CI runner of live_readiness_smoke.py, which
+# is the only thing that can surface *runtime* drift continuously. The policy owner did NOT name a
+# Tier2 runner, so it is registered here as an explicit GAP: runtime drift is "visible when the
+# gate is run", NOT continuously. docs/migration-shared-db-allowlist.md is intentionally
+# unchanged (f5a6b7c8d9e0 already classified ∈ C, row 19).
+LIVE_REV_DWELL_REGISTER = {
+    "f5a6b7c8d9e0": {"first_resident": "M10", "in_C": True, "disjoint_A": True},
+}
+
+# Isolated-subprocess probe: loads the runtime gate, computes the real migration order, and calls
+# the pure classifier `_classify_db_rev` with an injected `live`/`required` (DB-free). Prints one
+# JSON line {verdict, detail}. The probe proves the RUN-TIME output shape (token present/absent),
+# which a static constant assertion cannot.
+_PROBE_SCRIPT = r"""
+import importlib.util
+import json
+import sys
+
+spec = importlib.util.spec_from_file_location("_smoke_probe", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+order = mod._migration_order(mod._repo_root(None) / "backend" / "alembic" / "versions")
+verdict, detail = mod._classify_db_rev(sys.argv[2], order=order, required=sys.argv[3])
+print(json.dumps({"verdict": verdict, "detail": detail}))
+"""
+
+
+def _probe_classify(live: str, required: str) -> dict:
+    proc = subprocess.run(
+        [sys.executable, "-c", _PROBE_SCRIPT, str(_SMOKE_PATH), live, required],
+        capture_output=True, text=True, cwd=str(BACKEND_DIR), timeout=120,
+    )
+    assert proc.returncode == 0, f"probe failed: {proc.stderr}"
+    return json.loads(proc.stdout.strip().splitlines()[-1])
 
 
 def _load(name: str, path: Path):
@@ -100,3 +145,66 @@ def test_w2_allowlist_docs_reference_every_classified_rev():
     assert not missing, (
         f"docs/migration-shared-db-allowlist.md is out of sync; unlisted rev(s): {missing}"
     )
+
+
+# ── W3: dwell-override (A2) governance exception ───────────────────────────────
+# Negative control (manual, one-off; record as evidence, do not commit the mutation):
+#   remove any member from LIVE_REV_DWELL_REGISTER (or the smoke override) -> the equality /
+#   boundedness test below MUST go red; change the smoke classifier to drop the `and not dwell`
+#   exemption -> the dwell-pass probe MUST go red; let the override swallow `code-required <= live`
+#   -> the `code-required above dwell` probe MUST go red.
+
+def test_w3_dwell_override_matches_register_and_is_bounded():
+    smoke = _smoke()
+    assert smoke.LIVE_REV_DWELL_OVERRIDE == frozenset(LIVE_REV_DWELL_REGISTER), (
+        "LIVE_REV_DWELL_OVERRIDE (smoke) must equal LIVE_REV_DWELL_REGISTER keys (lock): "
+        f"smoke={sorted(smoke.LIVE_REV_DWELL_OVERRIDE)} lock={sorted(LIVE_REV_DWELL_REGISTER)}"
+    )
+    assert LIVE_REV_DWELL_REGISTER, "dwell register must be a named, non-empty exception"
+    for rev, meta in LIVE_REV_DWELL_REGISTER.items():
+        assert rev in smoke.MIGRATION_LIVE_FORBIDDEN, (
+            f"dwell member {rev} must be a C (forbidden) member (D ⊆ C)"
+        )
+        assert rev not in smoke.LIVE_REV_ALLOWED, (
+            f"dwell member {rev} must NOT be in A LIVE_REV_ALLOWED (D ∩ A = ∅)"
+        )
+        assert meta.get("in_C") is True, f"{rev}: in_C must be True"
+        assert meta.get("disjoint_A") is True, f"{rev}: disjoint_A must be True"
+        assert meta.get("first_resident"), f"{rev}: first_resident must be set (pre-batch residency)"
+    assert set(LIVE_REV_DWELL_REGISTER) & smoke.LIVE_REV_ALLOWED == set(), (
+        "dwell register must be disjoint from A LIVE_REV_ALLOWED"
+    )
+
+
+def test_w3_smoke_declares_override_independently_of_lock():
+    src = _SMOKE_PATH.read_text(encoding="utf-8")
+    assert "test_live_env_contract_lock" not in src, "smoke must not import the static lock"
+    assert "test_live_env_allowlist_single_source_lock" not in src, (
+        "smoke must not import the single-source lock (must stay an independent recomputation)"
+    )
+    assert "LIVE_REV_DWELL_REGISTER" not in src, (
+        "smoke must declare LIVE_REV_DWELL_OVERRIDE independently, not reference the lock register"
+    )
+
+
+def test_w3_probe_dwell_pass_emits_token():
+    r = _probe_classify("f5a6b7c8d9e0", "c3d4e5f6a7b8")
+    assert r["verdict"] == "PASS", r
+    assert "dwell-exception=f5a6b7c8d9e0" in r["detail"], r
+
+
+def test_w3_probe_other_c_member_is_blocked():
+    r = _probe_classify("e8a1b2c3d4f5", "c3d4e5f6a7b8")
+    assert r["verdict"] == "BLOCKED", r
+
+
+def test_w3_probe_code_required_above_dwell_still_blocked():
+    # proves the override does NOT swallow the `code-required <= live` guard
+    r = _probe_classify("f5a6b7c8d9e0", "P6_REV")
+    assert r["verdict"] == "BLOCKED", r
+
+
+def test_w3_probe_plain_pass_has_no_dwell_token():
+    r = _probe_classify("c3d4e5f6a7b8", "c3d4e5f6a7b8")
+    assert r["verdict"] == "PASS", r
+    assert "dwell-exception" not in r["detail"], r

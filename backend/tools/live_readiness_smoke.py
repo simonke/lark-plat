@@ -41,6 +41,13 @@ MIGRATION_LIVE_APPLICABLE = {
 # P6 (AIOps E6 controlled auto-remediation·L4) migration rev (named symbol).
 P6_REV = "P6_REV"
 MIGRATION_LIVE_FORBIDDEN = {"e8a1b2c3d4f5", "c9e3f1a2b4d6", "e1f2a3b4c5d7", "f2a3b4c5d6e7", "a1b2c3d4e5f7", "b2c3d4e5f6a8", "e9d8c7b6a5f4", "f5a6b7c8d9e0", P6_REV}
+# D: named governance exception — revs ∈ C that are already resident on the shared dev DB and are
+# ancestors of the repo head, so they may dwell there. NOT a general allow-list widening: D only
+# exempts the C/A membership vetoes; the on-chain check and `code-required <= live` always apply,
+# so the override can never silently downgrade the contract. Declared independently of the static
+# lock's dwell register (a lock asserts cross-home equality). No new-apply
+# back door — see the governance register in docs.
+LIVE_REV_DWELL_OVERRIDE = frozenset({"f5a6b7c8d9e0"})
 TOUCH_ROUTE = "/auth/providers"
 
 PASS, BLOCKED, NOT_RUN = "PASS", "BLOCKED", "NOT RUN"
@@ -140,14 +147,34 @@ def _check_db_rev(repo: Path, dsn: str | None, code_required: str | None) -> tup
         (rev for rev in reversed(order) if rev in MIGRATION_LIVE_APPLICABLE), None)
     if not required:
         return NOT_RUN, "code-required undetermined; pass --code-required (never PASS)"
-    if live in MIGRATION_LIVE_FORBIDDEN:
+    return _classify_db_rev(live, order=order, required=required)
+
+
+def _classify_db_rev(
+    live: str, *, order: list[str], required: str
+) -> tuple[str, str]:
+    """Pure rev classification (no I/O) — the full decision core for `db_rev`.
+
+    `LIVE_REV_DWELL_OVERRIDE` (D) only exempts the C/A *membership vetoes*; the
+    on-chain check and `code-required <= live` ALWAYS apply, so the override can
+    never silently downgrade the contract (no fail-open). The distinguishing
+    `dwell-exception=<rev>` token is emitted ONLY for a dwell PASS, so a dwell pass
+    is machine-distinguishable from a plain PASS.
+    """
+    dwell = live in LIVE_REV_DWELL_OVERRIDE
+    if live in MIGRATION_LIVE_FORBIDDEN and not dwell:
         return BLOCKED, f"live rev {live} is forbidden on the shared DB"
-    if live not in LIVE_REV_ALLOWED:
+    if live not in LIVE_REV_ALLOWED and not dwell:
         return BLOCKED, f"live rev {live} not in allow-list {sorted(LIVE_REV_ALLOWED)}"
     if required not in order or live not in order:
         return NOT_RUN, f"rev not on repo chain (live={live}, required={required})"
     if order.index(live) < order.index(required):
         return BLOCKED, f"code requires {required} but live is {live}"
+    if dwell:
+        return PASS, (
+            f"live rev {live} dwell-exception={live} "
+            f"(rev in C, resident on shared dev since M10; governance-registered)"
+        )
     return PASS, f"live rev {live} >= code-required {required} (allow-list ok)"
 
 

@@ -68,7 +68,7 @@ lark-plat/
 > ⚠ 前端 `frontend/dist` 是**构建产物、不入库**（见 `frontend/DIST.md`），而 `deploy` 的 `web`（Nginx）**只读挂载**该目录 ⇒ **必须先在启动前构建前端**，否则页面空白。
 
 ```bash
-# 1) 构建前端静态资源（Node 24 / npm 11）
+# 1) 构建前端静态资源（Node 20+；CI 固定 20，本机 24 · npm 11）
 cd frontend && npm ci && npm run build && cd ..
 
 # 2) 配置环境变量
@@ -127,20 +127,26 @@ docker compose down -v                # 停止并删除数据卷（清空数据�
 
 ### 依赖
 
-Python 3.12、Node 24 / npm 11、Go 1.26、PostgreSQL 16、Redis 7。
+Python 3.12、Node 20+（CI 固定 20；本机 24 · npm 11）、Go 1.26、PostgreSQL 16、Redis 7。
 
 ### 后端
 
 ```bash
 cd backend
 python -m venv .venv
-# Windows (PowerShell): .venv\Scripts\pip install -e .
-# macOS/Linux:          source .venv/bin/activate && pip install -e .
+# 激活虚拟环境：
+#   Windows (PowerShell): .venv\Scripts\Activate.ps1
+#   macOS/Linux:          source .venv/bin/activate
+pip install -e ".[dev]"       # runtime + dev 依赖（ruff / pytest / websockets）
 
 cp .env.example .env          # 配置 DATABASE_URL / REDIS_URL / SECRET_KEY 等
 alembic upgrade head          # 建表 + 迁移到单头 P6_REV
 uvicorn app.main:app --reload --port 8000
+
+# 质量：ruff check app ；pytest（离线单测；live 集成 harness 需显式跑）
 ```
+
+> Seed 幂等：应用启动（lifespan）自动执行。定时/异步任务另起：`celery -A app.tasks.celery_app.celery_app worker --loglevel=INFO`（定时加 `beat`）。
 
 ### 前端
 

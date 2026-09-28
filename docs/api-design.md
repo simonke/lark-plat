@@ -81,6 +81,19 @@
 | DELETE | /assets/credentials/{id} | 删除 |
 | GET | /assets/options | 下拉数据（分组树+主机名+环境枚举），供前端选择器 |
 
+> **凭据密文与掩码语义（B1 契约）**
+> - **类型**：`type ∈ {password, key}`（创建缺省 `password`）。字段语义：`secret`＝密码型口令，`key`＝密钥本体，`passphrase`＝密钥型可选短语；`""`/`null`/缺省＝**未提供**。
+> - **写入矩阵**：
+>   - **创建（required）**：`password` 须非空 `secret`；`key` 须非空 `key`。
+>   - **创建∪编辑（按生效类型）**：`type ∉ {password,key}` ⇒ `400`；非空越界字段（`password` 带非空 `key`/`passphrase`、`key` 带非空 `secret`）⇒ `400`。
+> - **持久化**：`secret_enc` 按生效类型存「主密文」（password⇒口令；key⇒短语，可空），`key_enc` 仅 key 型存裸密钥；库内均 AES-GCM。
+> - **编辑（`PUT /assets/credentials/{id}`）**：生效类型＝`type`（提供时）否则存储类型；**仅真改型**时清空对向密文列＋复核必填；**同型且字段缺省＝逐字保留原密文**。
+> - **响应掩码**：`secret_mask = mask_secret(secret_enc)`，**按生效类型** — password⇒口令掩码；key⇒passphrase 掩码；**未设/空⇒`null`**；**密文不可解⇒`"***"`**；成功⇒掩码（示例 `ab******yz`，`≤4` 字符⇒`****`）。`key_mask`（`= mask_secret(key_enc)`·password 型⇒`null`）**仅**见主机详情 `GET /assets/hosts/{id}` 的 `credential` 对象；列表不下发。
+> - **write-only**：`secret`/`key`/`passphrase` 只入不出，任何响应不回明文。
+> - **已知限制**：列表列的 `secret_mask` 即「主密文」掩码 ⇒ **key 型只示 `passphrase` 掩码、私钥本体（`key_enc`）不在列表展示**（其掩码 `key_mask` 仅见主机详情 `credential`）。
+> - **FE 面**：**类型变更仅 API 层支持**；FE 两视图编辑态 `type` `select` 为 `:disabled`（裁定 (B)），不提供改型。
+> - **注**：credentials 端点现以未参数化 `Result` 信封返回 ⇒ 上列响应字段（`CredentialOut`/`secret_mask`/`key_mask`）**不在 `openapi.json`**；本段即契约来源（`Result[T]` 参数化＝后续加固项）。
+
 数据权限：所有 hosts/credentials 查询与操作按当前用户可见主机组过滤，越组返回 403/404。
 
 ## 5. 命令执行（核心）

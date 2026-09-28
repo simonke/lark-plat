@@ -95,6 +95,8 @@ docker compose up -d --build
 | ws://localhost:8000/api/v1/agent/ws | Agent WebSocket 接入 |
 
 > 对宿主机仅暴露 Nginx 的 `8000`；`backend` 的 `8000` 只在 Compose 网络内 `expose`（不映射）。`/`（SPA 回退）、`/docs`、`/openapi.json`、`/api/`、`/api/v1/{ws,agent}/` 均由 `deploy/nginx.conf` 反代至 `backend:8000`（同源，无 CORS 问题）。
+>
+> 更完整的**部署拓扑、备份、升级迁移与排障**见 **`docs/deployment.md`**。
 
 ### 默认账号（仅 dev / test）
 
@@ -216,6 +218,7 @@ go build -o lark-agent .
 
 | 文档 | 路径 |
 | --- | --- |
+| 部署、启动与运维手册 | `docs/deployment.md` |
 | 需求规格（主 PRD v1.0） | `docs/requirements.md` |
 | 架构设计 | `docs/architecture.md`、`docs/architecture-phase23.md` |
 | 接口契约 | `docs/api-design.md`、`docs/api-design-v3.md`、`docs/openapi.json` |

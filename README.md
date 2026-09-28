@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/logo-banner.svg" alt="lark-plat" width="640"/>
+</p>
+
 # lark-plat 自动化运维平台
 
 面向企业 IT 运维团队的统一 Web 运维工作台：把日常分散的登录服务器手工操作，收敛到一套**平台化、可审批、可审计**的工作台；覆盖主机纳管、批量命令/脚本执行、文件分发、定时任务、Web 终端、工单与审批、监控告警、通知中心、编排（Playbook）、CI/CD 集成、知识库，以及 AIOps 智能运维与**受控自动处置（L4）**。
@@ -61,15 +65,20 @@ lark-plat/
 
 ### 步骤
 
+> ⚠ 前端 `frontend/dist` 是**构建产物、不入库**（见 `frontend/DIST.md`），而 `deploy` 的 `web`（Nginx）**只读挂载**该目录 ⇒ **必须先在启动前构建前端**，否则页面空白。
+
 ```bash
-# 1) 配置环境变量
+# 1) 构建前端静态资源（Node 24 / npm 11）
+cd frontend && npm ci && npm run build && cd ..
+
+# 2) 配置环境变量
 cp deploy/.env.example  deploy/.env     # Compose 插值读取此文件（POSTGRES_* 必填）
 cp backend/.env.example backend/.env    # 应用密钥 / DB / Redis（见“配置项”）
 
 # 编辑 deploy/.env：至少设置强口令 POSTGRES_PASSWORD
 # 编辑 backend/.env：至少设置 SECRET_KEY、CREDENTIAL_ENCRYPT_KEY、（生产）SEED_ADMIN_PASSWORD
 
-# 2) 一键启动（首次会构建镜像）
+# 3) 一键启动（首次会构建后端镜像）
 cd deploy
 docker compose up -d --build
 ```
@@ -84,6 +93,8 @@ docker compose up -d --build
 | http://localhost:8000/docs | Swagger UI（OpenAPI） |
 | http://localhost:8000/openapi.json | OpenAPI 契约 |
 | ws://localhost:8000/api/v1/agent/ws | Agent WebSocket 接入 |
+
+> 对宿主机仅暴露 Nginx 的 `8000`；`backend` 的 `8000` 只在 Compose 网络内 `expose`（不映射）。`/`（SPA 回退）、`/docs`、`/openapi.json`、`/api/`、`/api/v1/{ws,agent}/` 均由 `deploy/nginx.conf` 反代至 `backend:8000`（同源，无 CORS 问题）。
 
 ### 默认账号（仅 dev / test）
 

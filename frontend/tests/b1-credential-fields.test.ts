@@ -3,12 +3,20 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import ElementPlus from 'element-plus'
 import CredentialsView from '../src/views/assets/CredentialsView.vue'
+import HostDetailView from '../src/views/assets/HostDetailView.vue'
 import { vPerm } from '../src/directives/perm'
 import { buildCredentialCreatePayload, clearNonApplicableSecretFields } from '../src/views/assets/credentialForm'
 
+vi.mock('vue-router', () => ({
+  useRoute: () => ({ params: { id: '1' } }),
+  useRouter: () => ({ push: vi.fn() })
+}))
+
 vi.mock('../src/api/assets', () => ({
-  getCredentials: vi.fn(),
   getHosts: vi.fn(),
+  getHost: vi.fn(),
+  checkConnection: vi.fn(),
+  getCredentials: vi.fn(),
   createCredential: vi.fn(),
   updateCredential: vi.fn(),
   deleteCredential: vi.fn()
@@ -32,14 +40,38 @@ const credRow = {
   created_at: '2026-09-28T10:00:00+08:00'
 }
 
+const hostRow = {
+  id: 1,
+  hostname: 'host-1',
+  ip: '1.1.1.1',
+  os_type: 'linux',
+  os_version: 'Ubuntu 22.04',
+  group_id: 1,
+  group_name: 'prod',
+  env: 'production',
+  status: 'online',
+  connector: 'agent',
+  sensitivity_level: 'normal',
+  tags: [],
+  remark: '',
+  created_at: '2026-09-28T10:00:00+08:00',
+  updated_at: '2026-09-28T10:00:00+08:00'
+}
+
+const stubGlobals = {
+  global: {
+    plugins: [ElementPlus],
+    directives: { perm: vPerm },
+    stubs: { teleport: true, ElSelect: true, ElOption: true }
+  }
+}
+
 function mountView() {
-  return mount(CredentialsView, {
-    global: {
-      plugins: [ElementPlus],
-      directives: { perm: vPerm },
-      stubs: { teleport: true, ElSelect: true, ElOption: true }
-    }
-  })
+  return mount(CredentialsView, stubGlobals)
+}
+
+function mountHostDetail() {
+  return mount(HostDetailView, stubGlobals)
 }
 
 function adminStore() {
@@ -102,9 +134,9 @@ describe('B1 credential type select is locked in edit mode', () => {
     vi.clearAllMocks()
   })
 
-  it('create mode: type select is editable', async () => {
+  it('CredentialsView: create mode editable, edit mode disabled', async () => {
     adminStore()
-    vi.mocked(assetsApi.getCredentials).mockResolvedValue([])
+    vi.mocked(assetsApi.getCredentials).mockResolvedValue([credRow])
     vi.mocked(assetsApi.getHosts).mockResolvedValue({ list: [{ id: 1, hostname: 'host-1', ip: '1.1.1.1' }], total: 1, page: 1, size: 1000 })
 
     const wrapper = mountView()
@@ -112,18 +144,22 @@ describe('B1 credential type select is locked in edit mode', () => {
 
     await buttonByText(wrapper, '新增凭据')!.trigger('click')
     await flushPromises()
+    let selects = wrapper.findAllComponents({ name: 'ElSelect' })
+    expect(selects[selects.length - 1].props('disabled')).toBeFalsy()
 
-    const selects = wrapper.findAllComponents({ name: 'ElSelect' })
-    const typeSelect = selects[selects.length - 1]
-    expect(typeSelect.props('disabled')).toBeFalsy()
+    await buttonByText(wrapper, '编辑')!.trigger('click')
+    await flushPromises()
+    selects = wrapper.findAllComponents({ name: 'ElSelect' })
+    expect(selects).toHaveLength(1)
+    expect(selects[0].props('disabled')).toBe(true)
   })
 
-  it('edit mode: type select is disabled (type immutable after create)', async () => {
+  it('HostDetailView: edit mode disables the credential type select', async () => {
     adminStore()
+    vi.mocked(assetsApi.getHost).mockResolvedValue(hostRow as never)
     vi.mocked(assetsApi.getCredentials).mockResolvedValue([credRow])
-    vi.mocked(assetsApi.getHosts).mockResolvedValue({ list: [{ id: 1, hostname: 'host-1', ip: '1.1.1.1' }], total: 1, page: 1, size: 1000 })
 
-    const wrapper = mountView()
+    const wrapper = mountHostDetail()
     await flushPromises()
 
     await buttonByText(wrapper, '编辑')!.trigger('click')

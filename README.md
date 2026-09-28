@@ -129,6 +129,8 @@ docker compose down -v                # 停止并删除数据卷（清空数据�
 
 Python 3.12、Node 20+（CI 固定 20；本机 24 · npm 11）、Go 1.26、PostgreSQL 16、Redis 7。
 
+> 只想用容器起依赖（PostgreSQL/Redis）、后端/前端跑本机：先 `cp deploy/.env.example deploy/.env` 并设 `POSTGRES_PASSWORD`（否则 compose fail-fast），再 `cd deploy && docker compose up -d postgres redis`。本机后端连 `localhost:5432` / `localhost:6379`。
+
 ### 后端
 
 ```bash

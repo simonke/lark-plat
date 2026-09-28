@@ -108,7 +108,7 @@ cd deploy && docker compose up -d --build backend
 ## 6. 数据与备份
 
 - 数据卷：`pgdata`（PostgreSQL 数据）、`redisdata`（Redis AOF）。
-- 备份数据库示例：
+- 备份数据库示例（默认在 `deploy/` 目录执行；若从仓库根执行，请加 `-f deploy/docker-compose.yml`）：
 
 ```bash
 docker compose exec postgres pg_dump -U lark lark_plat > backup_$(date +%F).sql

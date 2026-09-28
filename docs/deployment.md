@@ -67,7 +67,7 @@ curl http://localhost:8000/openapi.json -o /dev/null -w "%{http_code}\n"
 
 - `backend` 容器入口为 `backend/docker-entrypoint.sh`，先执行 `alembic upgrade head`，再 `uvicorn app.main:app`（单一权威启动定义；worker 数由 `UVICORN_WORKERS` 控制，默认 2）。
 - 应用启动（lifespan）会幂等 seed（权限点 / 默认角色 / 引导账号）。
-- compose 会将 `DATABASE_URL` / `REDIS_URL` / `CELERY_*_URL` 指向容器服务名（`postgres:5432`、`redis:6379`），覆盖 `backend/.env` 中的本地地址。
+- compose 会将 `DATABASE_URL` / `REDIS_URL` / `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND` 指向容器服务名（`postgres:5432`、`redis:6379`），覆盖 `backend/.env` 中的本地地址。
 - `deploy/init.sql` 仅在首次初始化数据卷时执行，创建只追加审计函数；阻断触发器与 `REVOKE` 由 alembic 迁移在表就绪后建立。
 
 ## 4. 环境变量

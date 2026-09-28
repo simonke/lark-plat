@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="400" viewBox="0 0 1280 400" role="img" aria-label="lark-plat 自动化运维平台">
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="400" viewBox="0 0 1280 400" role="img" aria-label="lark-plat 百灵鸟自动化运维平台">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#0b1220"/>
@@ -11,13 +11,18 @@
     </linearGradient>
   </defs>
   <rect width="1280" height="400" fill="url(#bg)"/>
-  <g transform="translate(96,80)">
-    <rect width="240" height="240" rx="54" fill="url(#g)"/>
-    <path d="M50 174 L184 116 L50 58 L50 106 L134 116 L50 126 Z" fill="#ffffff"/>
-    <circle cx="174" cy="58" r="9" fill="#a5f3fc"/>
-    <circle cx="196" cy="116" r="7" fill="#a5f3fc" opacity="0.9"/>
-    <circle cx="174" cy="174" r="5" fill="#a5f3fc" opacity="0.75"/>
+  <g transform="translate(96,80) scale(0.46875)">
+    <rect width="512" height="512" rx="116" fill="url(#g)"/>
+    <g fill="#ffffff">
+      <path d="M256 268 C 214 232 166 192 108 148 C 164 200 214 250 256 318 Z"/>
+      <path d="M256 268 C 298 232 346 192 404 148 C 348 200 298 250 256 318 Z"/>
+      <path d="M256 262 C 274 282 280 306 276 326 C 272 340 264 348 256 354
+               C 248 348 240 340 236 326 C 232 306 238 282 256 262 Z"/>
+      <path d="M256 312 C 244 348 228 386 206 420 C 228 388 246 356 252 332 Z"/>
+      <path d="M256 312 C 268 348 284 386 306 420 C 284 388 266 356 260 332 Z"/>
+    </g>
   </g>
-  <text x="400" y="205" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="104" font-weight="700" fill="#ffffff">lark-plat</text>
-  <text x="404" y="262" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="34" fill="#93c5fd">自动化运维平台 · Automated Ops Platform</text>
+  <text x="392" y="188" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="104" font-weight="700" fill="#ffffff">lark-plat</text>
+  <text x="396" y="250" font-family="Microsoft YaHei, PingFang SC, Noto Sans SC, Segoe UI, sans-serif" font-size="34" fill="#93c5fd">百灵鸟 · 自动化运维平台</text>
+  <text x="396" y="292" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="22" fill="#60a5fa">Skylark Automated Operations Platform</text>
 </svg>

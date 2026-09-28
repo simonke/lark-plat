@@ -7,7 +7,7 @@ on:
 
 jobs:
   backend:
-    name: Backend lint & compile
+    name: Backend lint, compile & test
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -23,8 +23,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install .
-          pip install "ruff==0.16.3"
+          pip install ".[dev]"
 
       - name: Lint (ruff)
         run: ruff check app
@@ -35,8 +34,11 @@ jobs:
       - name: App boots
         run: python -c "from app.main import app; assert len(app.openapi()['paths']) > 0"
 
+      - name: Run unit tests (offline)
+        run: pytest
+
   frontend:
-    name: Frontend type-check & build
+    name: Frontend type-check, test & build
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -50,4 +52,19 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - run: npm run type-check
+      - run: npm run test
       - run: npm run build
+
+  docker:
+    name: Docker build & compose config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare env files
+        run: |
+          cp backend/.env.example backend/.env
+          cp deploy/.env.example deploy/.env
+      - name: Validate compose (interpolation + env_file)
+        run: docker compose -f deploy/docker-compose.yml config -q
+      - name: Build backend image
+        run: docker build -t lark-backend:ci backend/

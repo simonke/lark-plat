@@ -218,7 +218,8 @@ go build -o lark-agent .
 
 | 文档 | 路径 |
 | --- | --- |
-| 部署、启动与运维手册 | `docs/deployment.md` |
+| 部署、启动与运维手册（Docker Compose） | `docs/deployment.md` |
+| 原生（非 Docker）生产部署手册 | `docs/deployment-native.md` |
 | 需求规格（主 PRD v1.0） | `docs/requirements.md` |
 | 架构设计 | `docs/architecture.md`、`docs/architecture-phase23.md` |
 | 接口契约 | `docs/api-design.md`、`docs/api-design-v3.md`、`docs/openapi.json` |

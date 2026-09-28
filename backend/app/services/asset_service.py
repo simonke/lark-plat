@@ -378,16 +378,39 @@ def create_credential(db: Session, user, data: sch.CredentialCreate) -> int:
     repo = CredentialRepository(db)
     if repo.by_host(data.host_id):
         raise ConflictError("credential already exists for this host")
-    if data.type == "password" and not data.secret:
-        raise BadRequestError("secret required for password credential")
-    if data.type == "key" and not data.key:
-        raise BadRequestError("key required for key credential")
+
+    ctype = data.type or "password"
+    if ctype not in ("password", "key"):
+        raise BadRequestError("unsupported credential type")
+    secret = data.secret or None
+    key = data.key or None
+    passphrase = data.passphrase or None
+
+    # B1 (P″): type-scoped field matrix. ""/None == not provided; a key
+    # credential keeps its (optional) passphrase in secret_enc, its bare private
+    # key in key_enc; a password credential keeps its password in secret_enc.
+    if ctype == "password":
+        if not secret:
+            raise BadRequestError("secret required for password credential")
+        if key:
+            raise BadRequestError("key not allowed for password credential")
+        if passphrase:
+            raise BadRequestError("passphrase not allowed for password credential")
+        secret_enc, key_enc = encrypt_secret(secret), None
+    else:  # key
+        if not key:
+            raise BadRequestError("key required for key credential")
+        if secret:
+            raise BadRequestError("secret not allowed for key credential")
+        secret_enc = encrypt_secret(passphrase) if passphrase else None
+        key_enc = encrypt_secret(key)
+
     cred = HostCredential(
         host_id=data.host_id,
-        type=data.type,
+        type=ctype,
         username=data.username,
-        secret_enc=encrypt_secret(data.secret) if data.secret else None,
-        key_enc=encrypt_secret(data.key) if data.key else None,
+        secret_enc=secret_enc,
+        key_enc=key_enc,
         key_version=1,
         updated_by=user.id,
     )
@@ -405,14 +428,59 @@ def update_credential(db: Session, user, cred_id: int, data: sch.CredentialUpdat
     host = HostRepository(db).get(cred.host_id)
     if host and not _host_visible(user, host):
         raise ForbiddenError("no data permission for this host")
-    if data.type:
-        cred.type = data.type
+
+    # B1 (P″): snapshot the stored type BEFORE any mutation, so a same-type PATCH
+    # (type omitted or identical) preserves both columns while a real type change
+    # clears the now-inapplicable column.
+    old_type = cred.type
+    new_type = data.type or None
+    if new_type is not None and new_type not in ("password", "key"):
+        raise BadRequestError("unsupported credential type")
+    effective_type = new_type or old_type
+    changed_type = new_type is not None and new_type != old_type
+
+    secret = data.secret or None
+    key = data.key or None
+    passphrase = data.passphrase or None
+
+    # type-scoped field matrix — reject non-empty incompatible fields
+    if effective_type == "password":
+        if passphrase:
+            raise BadRequestError("passphrase not allowed for password credential")
+        if key:
+            raise BadRequestError("key not allowed for password credential")
+    else:  # key
+        if secret:
+            raise BadRequestError("secret not allowed for key credential")
+
+    secret_enc = cred.secret_enc
+    key_enc = cred.key_enc
+    if changed_type:
+        if effective_type == "key":
+            if not key:
+                raise BadRequestError("key required when switching to key credential")
+            key_enc = encrypt_secret(key)
+            secret_enc = encrypt_secret(passphrase) if passphrase else None
+        else:  # -> password
+            if not secret:
+                raise BadRequestError("secret required when switching to password credential")
+            secret_enc = encrypt_secret(secret)
+            key_enc = None
+    else:
+        if effective_type == "key":
+            if key:
+                key_enc = encrypt_secret(key)
+            if passphrase:
+                secret_enc = encrypt_secret(passphrase)
+        else:  # password (same type)
+            if secret:
+                secret_enc = encrypt_secret(secret)
+
+    cred.type = effective_type
     if data.username:
         cred.username = data.username
-    if data.secret:
-        cred.secret_enc = encrypt_secret(data.secret)
-    if data.key:
-        cred.key_enc = encrypt_secret(data.key)
+    cred.secret_enc = secret_enc
+    cred.key_enc = key_enc
     cred.updated_by = user.id
     db.commit()
 

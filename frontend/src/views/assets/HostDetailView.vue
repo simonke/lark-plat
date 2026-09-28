@@ -70,7 +70,7 @@
           <el-input v-model="credForm.username" placeholder="请输入用户名" />
         </el-form-item>
         <el-form-item label="类型" prop="type">
-          <el-select v-model="credForm.type" placeholder="请选择">
+          <el-select v-model="credForm.type" placeholder="请选择" :disabled="isCredEdit">
             <el-option label="密码" value="password" />
             <el-option label="密钥" value="key" />
           </el-select>
@@ -94,13 +94,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance } from 'element-plus'
 import { useAuthStore } from '../../stores/auth'
 import { getHost, checkConnection, getCredentials, createCredential, updateCredential, deleteCredential } from '../../api/assets'
 import type { HostOut, CredentialOut } from '../../api/types'
 import { extractError } from '../../api/http'
+import { clearNonApplicableSecretFields, buildCredentialCreatePayload } from './credentialForm'
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -119,6 +120,8 @@ const credEditId = ref(0)
 const credSubmitLoading = ref(false)
 const credFormRef = ref<FormInstance>()
 const credForm = reactive({ username: '', type: 'password' as 'password' | 'key', secret: '', key: '', passphrase: '' })
+
+watch(() => credForm.type, () => clearNonApplicableSecretFields(credForm))
 
 const credRules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
@@ -207,7 +210,7 @@ async function handleCredSubmit() {
       await updateCredential(credEditId.value, payload)
       ElMessage.success('编辑成功')
     } else {
-      await createCredential({ host_id: hostId, ...credForm })
+      await createCredential(buildCredentialCreatePayload({ host_id: hostId, ...credForm }))
       ElMessage.success('创建成功')
     }
     credDialogVisible.value = false

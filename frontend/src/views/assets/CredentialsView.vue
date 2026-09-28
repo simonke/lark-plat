@@ -42,7 +42,7 @@
           <el-input v-model="form.username" placeholder="请输入用户名" />
         </el-form-item>
         <el-form-item label="类型" prop="type">
-          <el-select v-model="form.type" placeholder="请选择">
+          <el-select v-model="form.type" placeholder="请选择" :disabled="isEdit">
             <el-option label="密码" value="password" />
             <el-option label="密钥" value="key" />
           </el-select>
@@ -66,12 +66,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, watch } from 'vue'
 import { ElMessage, type FormInstance } from 'element-plus'
 import { useAuthStore } from '../../stores/auth'
 import { getCredentials, createCredential, updateCredential, deleteCredential, getHosts } from '../../api/assets'
 import type { CredentialOut, HostOut } from '../../api/types'
 import { extractError } from '../../api/http'
+import { clearNonApplicableSecretFields, buildCredentialCreatePayload } from './credentialForm'
 
 const auth = useAuthStore()
 
@@ -84,7 +85,9 @@ const isEdit = ref(false)
 const editId = ref(0)
 const submitLoading = ref(false)
 const formRef = ref<FormInstance>()
-const form = reactive({ host_id: 0, username: '', type: 'password', secret: '', key: '', passphrase: '' })
+const form = reactive({ host_id: 0, username: '', type: 'password' as 'password' | 'key', secret: '', key: '', passphrase: '' })
+
+watch(() => form.type, () => clearNonApplicableSecretFields(form))
 
 const rules = {
   host_id: [{ required: true, message: '请选择主机', trigger: 'change' }],
@@ -141,7 +144,7 @@ async function handleSubmit() {
       await updateCredential(editId.value, payload)
       ElMessage.success('编辑成功')
     } else {
-      await createCredential({ host_id: form.host_id, username: form.username, type: form.type as 'password' | 'key', secret: form.secret, key: form.key, passphrase: form.passphrase })
+      await createCredential(buildCredentialCreatePayload({ host_id: form.host_id, username: form.username, type: form.type, secret: form.secret, key: form.key, passphrase: form.passphrase }))
       ElMessage.success('创建成功')
     }
     dialogVisible.value = false

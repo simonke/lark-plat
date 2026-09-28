@@ -277,7 +277,7 @@ export interface CredentialOut {
   host_hostname: string
   type: string
   username: string
-  secret_mask: string
+  secret_mask: string | null
   created_at: string
 }
 

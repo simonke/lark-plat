@@ -1,0 +1,7 @@
+# Line-ending policy (see backend/docker-entrypoint.sh cold-start incident).
+#
+# Shell entrypoints must always be LF. On Windows checkouts with
+# core.autocrlf=true, a CRLF docker-entrypoint.sh ships into the container where
+# dash reads `set -e\r` and aborts with "set: Illegal option -", sending the
+# backend into a crash loop. Pin LF for .sh regardless of local git config.
+*.sh text eol=lf

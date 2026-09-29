@@ -38,6 +38,11 @@ async def lifespan(app: FastAPI):
     try:
         run_seed(db)
     except Exception:
+        # Clear the failed transaction before reusing this session for
+        # resolve_store_config below: an un-rolled-back seed failure leaves the
+        # session "pending rollback" and turns the next query into a
+        # PendingRollbackError, which would abort startup entirely.
+        db.rollback()
         logger = logging.getLogger(__name__)
         logger.exception("seed data failed; continuing startup")
     try:

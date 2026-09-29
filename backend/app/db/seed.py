@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -644,7 +644,30 @@ def seed_config_rules(db: Session) -> int:
     return created
 
 
+# Cluster-wide advisory-lock key serializing `run_seed` across concurrent
+# startup workers (arbitrary but stable; "lark" in hex).
+_SEED_LOCK_KEY = 0x6C61726B
+
+
+def _acquire_seed_lock(db: Session) -> None:
+    """Serialize seeding on PostgreSQL (no-op elsewhere).
+
+    Cold start with `uvicorn --workers N`: every worker runs lifespan and calls
+    run_seed at the same time. The SELECT-then-INSERT existence checks in
+    seed_permissions/seed_roles race on the unique index
+    (ix_sys_permission_code) -> UniqueViolation, which (before the sibling
+    rollback fix) aborted a worker's startup. A transaction-scoped advisory
+    lock makes seeding single-writer: the loser blocks, then observes the
+    committed rows as already-present. The lock auto-releases on the commit at
+    the end of run_seed, on rollback, or on disconnect.
+    """
+    bind = db.get_bind()
+    if bind is not None and bind.dialect.name == "postgresql":
+        db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _SEED_LOCK_KEY})
+
+
 def run_seed(db: Session) -> dict:
+    _acquire_seed_lock(db)
     perms = seed_permissions(db)
     roles = seed_roles(db)
     users = seed_bootstrap_users(db)

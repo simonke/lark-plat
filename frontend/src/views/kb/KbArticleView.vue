@@ -1,5 +1,6 @@
 <template>
   <div class="page" v-loading="loading">
+    <FeatureOffAlert v-if="featureOff" module-name="知识库" flag-id="feature.kb" />
     <el-card>
       <template #header>
         <div class="toolbar">
@@ -119,11 +120,14 @@ import type {
   KbVisibility,
 } from '../../api/types'
 import { extractError } from '../../api/http'
+import { isFeatureDisabled } from '../../api/featureGate'
+import FeatureOffAlert from '../../components/FeatureOffAlert.vue'
 
 const route = useRoute()
 const router = useRouter()
 const articleId = Number(route.params.id)
 
+const featureOff = ref(false)
 const loading = ref(false)
 const editing = ref(false)
 const article = ref<KbArticleDetail | null>(null)
@@ -187,7 +191,14 @@ async function load() {
     fillForm(article.value)
     const vres = await listVersions(articleId)
     versions.value = vres.list
+    featureOff.value = false
   } catch (e) {
+    if (isFeatureDisabled(e)) {
+      featureOff.value = true
+      article.value = null
+      versions.value = []
+      return
+    }
     ElMessage.error(extractError(e))
   } finally {
     loading.value = false

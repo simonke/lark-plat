@@ -1,5 +1,6 @@
 <template>
   <div class="page">
+    <FeatureOffAlert v-if="featureOff" module-name="CMDB 拓扑" flag-id="feature.cmdb_topology" />
     <el-card>
       <el-form :inline="true" @submit.prevent>
         <el-form-item label="实体类型">
@@ -73,10 +74,12 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { getTopology, getImpact } from '../../api/assets'
+import { getTopology, getImpact, getRelations } from '../../api/assets'
 import { extractError } from '../../api/http'
+import { isFeatureDisabled } from '../../api/featureGate'
+import FeatureOffAlert from '../../components/FeatureOffAlert.vue'
 import type { Topology, CmdbImpact, RelationEntityType, CmdbRelType } from '../../api/types'
 
 const ENTITY_TYPES: { value: RelationEntityType; label: string }[] = [
@@ -93,6 +96,17 @@ const REL_LABELS: Record<CmdbRelType, string> = {
 
 const loading = ref(false)
 const impactLoading = ref(false)
+const featureOff = ref(false)
+
+async function probeFeature() {
+  try {
+    await getRelations({ page: 1, size: 1 })
+    featureOff.value = false
+  } catch (e) {
+    if (isFeatureDisabled(e)) featureOff.value = true
+  }
+}
+onMounted(probeFeature)
 const topo = ref<Topology | null>(null)
 const impact = ref<CmdbImpact | null>(null)
 
@@ -131,6 +145,11 @@ async function runTopology() {
       depth: q.depth,
     })
   } catch (e) {
+    if (isFeatureDisabled(e)) {
+      featureOff.value = true
+      topo.value = null
+      return
+    }
     ElMessage.error(extractError(e))
   } finally {
     loading.value = false
@@ -148,6 +167,11 @@ async function runImpact() {
       depth: q.depth,
     })
   } catch (e) {
+    if (isFeatureDisabled(e)) {
+      featureOff.value = true
+      impact.value = null
+      return
+    }
     ElMessage.error(extractError(e))
   } finally {
     impactLoading.value = false

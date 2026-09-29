@@ -1,10 +1,11 @@
 <template>
   <div class="page">
+    <FeatureOffAlert v-if="featureOff" module-name="工单管理" flag-id="feature.ticket" />
     <el-card>
       <template #header>
         <div class="toolbar">
           <span class="title">工单管理</span>
-          <el-button type="primary" v-perm="'ticket:create'" @click="openCreate">新建工单</el-button>
+          <el-button type="primary" v-perm="'ticket:create'" :disabled="featureOff" @click="openCreate">新建工单</el-button>
         </div>
       </template>
 
@@ -125,10 +126,13 @@ import { listUsers } from '../../api/system'
 import { useAuthStore } from '../../stores/auth'
 import type { TicketOut, TicketQuery, TicketCreate, TicketCategory, TicketPriority, UserOut } from '../../api/types'
 import { extractError } from '../../api/http'
+import { isFeatureDisabled } from '../../api/featureGate'
+import FeatureOffAlert from '../../components/FeatureOffAlert.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
 const canAssign = computed(() => auth.hasPerm('ticket:assign'))
+const featureOff = ref(false)
 const loading = ref(false)
 const rows = ref<TicketOut[]>([])
 const total = ref(0)
@@ -191,7 +195,14 @@ async function load() {
     const page = await listTickets({ ...query })
     rows.value = page.list
     total.value = page.total
+    featureOff.value = false
   } catch (e) {
+    if (isFeatureDisabled(e)) {
+      featureOff.value = true
+      rows.value = []
+      total.value = 0
+      return
+    }
     ElMessage.error(extractError(e))
   } finally {
     loading.value = false

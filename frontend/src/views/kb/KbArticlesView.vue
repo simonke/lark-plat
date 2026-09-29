@@ -1,5 +1,6 @@
 <template>
   <div class="page">
+    <FeatureOffAlert v-if="featureOff" module-name="知识库" flag-id="feature.kb" />
     <el-row :gutter="12">
       <el-col :span="6">
         <el-card>
@@ -151,8 +152,11 @@ import type {
   KbVisibility,
 } from '../../api/types'
 import { extractError } from '../../api/http'
+import { isFeatureDisabled } from '../../api/featureGate'
+import FeatureOffAlert from '../../components/FeatureOffAlert.vue'
 
 const router = useRouter()
+const featureOff = ref(false)
 const loading = ref(false)
 const saving = ref(false)
 const rows = ref<KbArticleOut[]>([])
@@ -196,6 +200,11 @@ async function loadCategories() {
     const res = await listCategories()
     treeData.value = res.tree
   } catch (e) {
+    if (isFeatureDisabled(e)) {
+      featureOff.value = true
+      treeData.value = []
+      return
+    }
     ElMessage.error(extractError(e))
   }
 }
@@ -222,7 +231,14 @@ async function load() {
     const page = await listArticles({ ...query })
     rows.value = page.list
     total.value = page.total
+    featureOff.value = false
   } catch (e) {
+    if (isFeatureDisabled(e)) {
+      featureOff.value = true
+      rows.value = []
+      total.value = 0
+      return
+    }
     ElMessage.error(extractError(e))
   } finally {
     loading.value = false

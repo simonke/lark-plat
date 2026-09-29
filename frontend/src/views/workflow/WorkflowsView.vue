@@ -1,12 +1,13 @@
 <template>
   <div class="page">
+    <FeatureOffAlert v-if="featureOff" module-name="编排 Playbook" flag-id="feature.workflow" />
     <el-card>
       <template #header>
         <div class="toolbar">
           <span class="title">编排 Playbook</span>
           <div class="actions">
-            <el-button v-if="auth.hasPerm('ai:use')" @click="suggestVisible = true">AI 生成预案</el-button>
-            <el-button type="primary" v-perm="'workflow:add'" @click="openCreate">新建编排</el-button>
+            <el-button v-if="auth.hasPerm('ai:use')" :disabled="featureOff" @click="suggestVisible = true">AI 生成预案</el-button>
+            <el-button type="primary" v-perm="'workflow:add'" :disabled="featureOff" @click="openCreate">新建编排</el-button>
           </div>
         </div>
       </template>
@@ -99,6 +100,8 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { listWorkflows, createWorkflow, deleteWorkflow } from '../../api/workflow'
 import { extractError } from '../../api/http'
+import { isFeatureDisabled } from '../../api/featureGate'
+import FeatureOffAlert from '../../components/FeatureOffAlert.vue'
 import { useAuthStore } from '../../stores/auth'
 import type { Workflow, WorkflowDefinition, WorkflowQuery } from '../../api/types'
 import { formatDefinition, formatTime, kindLabel, kindTag, parseDefinition } from './helpers'
@@ -106,6 +109,7 @@ import PlaybookSuggestDialog from './PlaybookSuggestDialog.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
+const featureOff = ref(false)
 const loading = ref(false)
 const saving = ref(false)
 const rows = ref<Workflow[]>([])
@@ -128,7 +132,14 @@ async function load(page?: number) {
     })
     rows.value = res.list
     total.value = res.total
+    featureOff.value = false
   } catch (e) {
+    if (isFeatureDisabled(e)) {
+      featureOff.value = true
+      rows.value = []
+      total.value = 0
+      return
+    }
     ElMessage.error(extractError(e))
   } finally {
     loading.value = false

@@ -1,5 +1,6 @@
 <template>
   <div class="page">
+    <FeatureOffAlert v-if="featureOff" module-name="运行记录" flag-id="feature.workflow" />
     <el-card>
       <template #header>
         <div class="toolbar">
@@ -72,10 +73,13 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { listWorkflowRuns } from '../../api/workflow'
 import { extractError } from '../../api/http'
+import { isFeatureDisabled } from '../../api/featureGate'
+import FeatureOffAlert from '../../components/FeatureOffAlert.vue'
 import type { WorkflowRun, WorkflowRunQuery } from '../../api/types'
 import { RUN_STATUS_OPTIONS, formatTime, runStatusLabel, runStatusTag, triggerLabel } from './helpers'
 
 const router = useRouter()
+const featureOff = ref(false)
 const loading = ref(false)
 const rows = ref<WorkflowRun[]>([])
 const total = ref(0)
@@ -93,7 +97,14 @@ async function load(page?: number) {
     })
     rows.value = res.list
     total.value = res.total
+    featureOff.value = false
   } catch (e) {
+    if (isFeatureDisabled(e)) {
+      featureOff.value = true
+      rows.value = []
+      total.value = 0
+      return
+    }
     ElMessage.error(extractError(e))
   } finally {
     loading.value = false

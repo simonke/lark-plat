@@ -1,5 +1,6 @@
 <template>
   <div class="page" v-loading="loading">
+    <FeatureOffAlert v-if="featureOff" module-name="运行记录" flag-id="feature.workflow" />
     <el-card>
       <template #header>
         <div class="toolbar">
@@ -82,6 +83,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getWorkflowRun, cancelWorkflowRun, retryWorkflowRun } from '../../api/workflow'
 import { extractError } from '../../api/http'
+import { isFeatureDisabled } from '../../api/featureGate'
+import FeatureOffAlert from '../../components/FeatureOffAlert.vue'
 import { useWorkflowRunRealtime } from '../../composables/useWorkflowRunRealtime'
 import type { WorkflowNodeRun, WorkflowRun } from '../../api/types'
 import { callbackOutput, formatTime, nodeStatusLabel, nodeStatusTag, nodeTypeLabel, runStatusLabel, runStatusTag, triggerLabel } from './helpers'
@@ -90,6 +93,7 @@ const route = useRoute()
 const router = useRouter()
 const runId = Number(route.params.id)
 
+const featureOff = ref(false)
 const loading = ref(false)
 const run = ref<WorkflowRun | null>(null)
 const nodes = ref<WorkflowNodeRun[]>([])
@@ -120,7 +124,14 @@ async function load() {
     const detail = await getWorkflowRun(runId)
     run.value = detail.run
     nodes.value = detail.nodes
+    featureOff.value = false
   } catch (e) {
+    if (isFeatureDisabled(e)) {
+      featureOff.value = true
+      run.value = null
+      nodes.value = []
+      return
+    }
     ElMessage.error(extractError(e))
   } finally {
     loading.value = false

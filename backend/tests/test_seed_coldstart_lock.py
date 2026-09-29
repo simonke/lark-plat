@@ -20,9 +20,20 @@ from app.db.seed import _SEED_LOCK_KEY, _acquire_seed_lock, run_seed
 
 
 def test_run_seed_acquires_seed_lock_before_writing():
-    """run_seed must serialize on the advisory lock before touching the DB."""
+    """run_seed must take the seed lock before any write-bearing seed call.
+
+    Order assertion (not mere presence): a drift that moved the lock after the
+    seed_* calls would still pass a substring check but reintroduce the race.
+    """
     src = inspect.getsource(run_seed)
-    assert "_acquire_seed_lock(db)" in src, "run_seed must take the seed lock"
+    lock_idx = src.index("_acquire_seed_lock(db)")
+    for call in (
+        "seed_permissions(db)",
+        "seed_roles(db)",
+        "seed_bootstrap_users(db)",
+        "seed_config_rules(db)",
+    ):
+        assert lock_idx < src.index(call), f"seed lock must precede {call}"
 
 
 def test_seed_lock_uses_pg_advisory_xact_lock():

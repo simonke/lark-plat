@@ -1,5 +1,6 @@
 <template>
   <div class="page">
+    <FeatureOffAlert v-if="featureOff" module-name="CMDB 关系" flag-id="feature.cmdb_topology" />
     <el-card>
       <div class="toolbar">
         <el-form :inline="true" @submit.prevent>
@@ -87,7 +88,11 @@ import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getRelations, createRelation, deleteRelation } from '../../api/assets'
 import { extractError } from '../../api/http'
+import { isFeatureDisabled } from '../../api/featureGate'
+import FeatureOffAlert from '../../components/FeatureOffAlert.vue'
 import type { EntityRelation, RelationEntityType, CmdbRelType } from '../../api/types'
+
+const featureOff = ref(false)
 
 const ENTITY_TYPES: { value: RelationEntityType; label: string }[] = [
   { value: 'host', label: '主机' },
@@ -136,7 +141,14 @@ async function load(page = query.page) {
     })
     rows.value = res.list
     total.value = res.total
+    featureOff.value = false
   } catch (e) {
+    if (isFeatureDisabled(e)) {
+      featureOff.value = true
+      rows.value = []
+      total.value = 0
+      return
+    }
     ElMessage.error(extractError(e))
   } finally {
     loading.value = false

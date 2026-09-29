@@ -1,10 +1,11 @@
 <template>
   <div class="page">
+    <FeatureOffAlert v-if="featureOff" module-name="CI/CD 凭据" flag-id="feature.cicd" />
     <el-card>
       <template #header>
         <div class="toolbar">
           <span class="title">CI/CD 凭据</span>
-          <el-button type="primary" v-perm="'cicd:provider:add'" @click="openCreate">新建凭据</el-button>
+          <el-button type="primary" v-perm="'cicd:provider:add'" :disabled="featureOff" @click="openCreate">新建凭据</el-button>
         </div>
       </template>
 
@@ -114,10 +115,13 @@ import {
   testCicdProvider,
 } from '../../api/cicd'
 import { extractError } from '../../api/http'
+import { isFeatureDisabled } from '../../api/featureGate'
+import FeatureOffAlert from '../../components/FeatureOffAlert.vue'
 import type { CicdProviderOut, CicdProviderQuery, CicdProviderType } from '../../api/types'
 import { PROVIDER_TYPE_OPTIONS, formatTime, providerStatusTag, providerTypeLabel } from './helpers'
 
 const loading = ref(false)
+const featureOff = ref(false)
 const saving = ref(false)
 const testingId = ref<number | null>(null)
 const rows = ref<CicdProviderOut[]>([])
@@ -146,7 +150,14 @@ async function load(page?: number) {
     })
     rows.value = res.list
     total.value = res.total
+    featureOff.value = false
   } catch (e) {
+    if (isFeatureDisabled(e)) {
+      featureOff.value = true
+      rows.value = []
+      total.value = 0
+      return
+    }
     ElMessage.error(extractError(e))
   } finally {
     loading.value = false

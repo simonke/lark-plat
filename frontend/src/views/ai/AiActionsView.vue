@@ -1,5 +1,6 @@
 <template>
   <div class="page">
+    <FeatureOffAlert v-if="featureOff" module-name="AI 审计" flag-id="ai.enabled" />
     <el-card>
       <template #header>
         <div class="toolbar">
@@ -99,6 +100,8 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { listAiActions } from '../../api/ai'
 import { extractError } from '../../api/http'
+import { isFeatureDisabled } from '../../api/featureGate'
+import FeatureOffAlert from '../../components/FeatureOffAlert.vue'
 import type { AiAction, AiActionQuery } from '../../api/types'
 import {
   AI_ACTION_DECISIONS,
@@ -112,6 +115,7 @@ import {
 import EvidenceCard from './EvidenceCard.vue'
 
 const loading = ref(false)
+const featureOff = ref(false)
 const rows = ref<AiAction[]>([])
 const total = ref(0)
 const query = reactive<AiActionQuery>({ page: 1, size: 20 })
@@ -140,9 +144,14 @@ async function load() {
     const page = await listAiActions({ ...query })
     rows.value = page.list
     total.value = page.total
+    featureOff.value = false
   } catch (e) {
     rows.value = []
     total.value = 0
+    if (isFeatureDisabled(e)) {
+      featureOff.value = true
+      return
+    }
     ElMessage.warning(extractError(e))
   } finally {
     loading.value = false

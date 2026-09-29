@@ -1,5 +1,6 @@
 <template>
   <div class="page" v-loading="loading">
+    <FeatureOffAlert v-if="featureOff" module-name="编排 Playbook" flag-id="feature.workflow" />
     <el-card>
       <template #header>
         <div class="toolbar">
@@ -130,11 +131,14 @@ import {
   runWorkflow,
 } from '../../api/workflow'
 import { extractError } from '../../api/http'
+import { isFeatureDisabled } from '../../api/featureGate'
+import FeatureOffAlert from '../../components/FeatureOffAlert.vue'
 import type { WorkflowDefinition, WorkflowOut, WorkflowVersion } from '../../api/types'
 import { formatDefinition, formatTime, nodeTypeLabel, parseDefinition } from './helpers'
 
 const route = useRoute()
 const router = useRouter()
+const featureOff = ref(false)
 const workflowId = Number(route.params.id)
 
 const loading = ref(false)
@@ -162,7 +166,14 @@ async function load() {
     editForm.enabled = wf.value.enabled
     const vres = await listWorkflowVersions(workflowId)
     versions.value = vres.list
+    featureOff.value = false
   } catch (e) {
+    if (isFeatureDisabled(e)) {
+      featureOff.value = true
+      wf.value = null
+      versions.value = []
+      return
+    }
     ElMessage.error(extractError(e))
   } finally {
     loading.value = false

@@ -1,5 +1,6 @@
 <template>
   <div class="page">
+    <FeatureOffAlert v-if="featureOff" module-name="运维事件" flag-id="ai.events" />
     <el-row :gutter="12">
       <el-col :span="7">
         <el-card>
@@ -109,6 +110,8 @@ import { ElMessage } from 'element-plus'
 import { listEvents, kbAnswer } from '../../api/ai'
 import { createArticle } from '../../api/kb'
 import { extractError } from '../../api/http'
+import { isFeatureDisabled } from '../../api/featureGate'
+import FeatureOffAlert from '../../components/FeatureOffAlert.vue'
 import type { OpsEvent, OpsEventQuery, KbAnswerResult } from '../../api/types'
 import { OPS_EVENT_SOURCES, sourceLabel, sourceTag, eventSummary } from '../ai/helpers'
 import EventTimeline from './EventTimeline.vue'
@@ -118,6 +121,7 @@ import AnswerCard from '../ai/AnswerCard.vue'
 
 const router = useRouter()
 const loading = ref(false)
+const featureOff = ref(false)
 const aiLoading = ref(false)
 const rows = ref<OpsEvent[]>([])
 const total = ref(0)
@@ -150,10 +154,15 @@ async function load() {
     if (!selected.value && rows.value.length) {
       selected.value = rows.value[0]
     }
+    featureOff.value = false
   } catch (e) {
     // flag off => HTTP 400 (feature-first); render 未启用 empty state rather than crash.
     rows.value = []
     total.value = 0
+    if (isFeatureDisabled(e)) {
+      featureOff.value = true
+      return
+    }
     ElMessage.warning(extractError(e))
   } finally {
     loading.value = false

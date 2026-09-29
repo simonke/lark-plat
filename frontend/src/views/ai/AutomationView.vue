@@ -218,6 +218,7 @@ import {
   getCircuitBreaker,
 } from '../../api/automation'
 import { extractError } from '../../api/http'
+import { isFeatureDisabled } from '../../api/featureGate'
 import type {
   AutomationLevel,
   AutomationRiskLevel,
@@ -242,7 +243,6 @@ const auth = useAuthStore()
 const canAdmin = computed(() => auth.hasPerm('ai:admin'))
 
 const featureOff = ref(false)
-
 // ---- level
 const level = ref<AutomationLevel | null>(null)
 const levelDraft = ref('')
@@ -291,8 +291,12 @@ async function loadLevel() {
     levelDraft.value = level.value.current
     featureOff.value = false
   } catch (e) {
-    featureOff.value = true
     level.value = null
+    if (isFeatureDisabled(e)) {
+      featureOff.value = true
+      return
+    }
+    featureOff.value = false
     ElMessage.warning(extractError(e))
   } finally {
     loadingLevel.value = false
@@ -330,6 +334,10 @@ async function loadCircuit() {
     cb.value = await getCircuitBreaker()
   } catch (e) {
     cb.value = null
+    if (isFeatureDisabled(e)) {
+      featureOff.value = true
+      return
+    }
     ElMessage.warning(extractError(e))
   } finally {
     loadingCb.value = false
@@ -345,6 +353,10 @@ async function loadWhitelist() {
   } catch (e) {
     rows.value = []
     total.value = 0
+    if (isFeatureDisabled(e)) {
+      featureOff.value = true
+      return
+    }
     ElMessage.warning(extractError(e))
   } finally {
     loadingWhitelist.value = false

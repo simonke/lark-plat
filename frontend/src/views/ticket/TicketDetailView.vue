@@ -1,5 +1,6 @@
 <template>
   <div class="page" v-loading="loading">
+    <FeatureOffAlert v-if="featureOff" module-name="工单管理" flag-id="feature.ticket" />
     <el-card>
       <template #header>
         <div class="toolbar">
@@ -222,6 +223,8 @@ import { listUsers } from '../../api/system'
 import { useAuthStore } from '../../stores/auth'
 import type { TicketDetail, TicketUpdate, UserOut, TicketSuggestion, SimilarTicket } from '../../api/types'
 import { extractError } from '../../api/http'
+import { isFeatureDisabled } from '../../api/featureGate'
+import FeatureOffAlert from '../../components/FeatureOffAlert.vue'
 import { ticketSuggest, ticketSimilar, aiFeedback } from '../../api/ai'
 import EvidenceCard from '../ai/EvidenceCard.vue'
 
@@ -229,6 +232,7 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const canAssign = computed(() => auth.hasPerm('ticket:assign'))
+const featureOff = ref(false)
 const ticketId = Number(route.params.id)
 
 const loading = ref(false)
@@ -322,7 +326,13 @@ async function load() {
   loading.value = true
   try {
     ticket.value = await getTicket(ticketId)
+    featureOff.value = false
   } catch (e) {
+    if (isFeatureDisabled(e)) {
+      featureOff.value = true
+      ticket.value = null
+      return
+    }
     ElMessage.error(extractError(e))
   } finally {
     loading.value = false

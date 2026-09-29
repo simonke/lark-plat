@@ -111,6 +111,7 @@ import {
   severityTag,
 } from '../ai/helpers'
 import RcaPanel from '../ai/RcaPanel.vue'
+import { isFeatureDisabled } from '../../api/featureGate'
 
 const loading = ref(false)
 const disabled = ref(false)
@@ -139,7 +140,11 @@ async function load() {
   } catch (e) {
     rows.value = []
     total.value = 0
-    disabled.value = true
+    if (isFeatureDisabled(e)) {
+      disabled.value = true
+      return
+    }
+    disabled.value = false
     ElMessage.warning(extractError(e))
   } finally {
     loading.value = false

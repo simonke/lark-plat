@@ -1,5 +1,6 @@
 <template>
   <div class="page">
+    <FeatureOffAlert v-if="featureOff" module-name="知识助手" flag-id="ai.kb_assist" />
     <el-card>
       <template #header>
         <div class="toolbar">
@@ -73,12 +74,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { kbAnswer, kbSearchSemantic } from '../../api/ai'
 import { createArticle } from '../../api/kb'
 import { extractError } from '../../api/http'
+import { isFeatureDisabled } from '../../api/featureGate'
+import FeatureOffAlert from '../../components/FeatureOffAlert.vue'
 import type { KbAnswerResult, SemanticHit } from '../../api/types'
 import { branchLabel, articleIdFromDocRef } from './helpers'
 import AnswerCard from './AnswerCard.vue'
@@ -91,6 +94,17 @@ const answer = ref<KbAnswerResult | null>(null)
 const hits = ref<SemanticHit[]>([])
 const asking = ref(false)
 const searching = ref(false)
+const featureOff = ref(false)
+
+async function probeFeature() {
+  try {
+    await kbSearchSemantic({ q: 'a', mode: 'fts' })
+    featureOff.value = false
+  } catch (e) {
+    if (isFeatureDisabled(e)) featureOff.value = true
+  }
+}
+onMounted(probeFeature)
 
 async function ask() {
   if (!q.value.trim()) {
@@ -100,8 +114,13 @@ async function ask() {
   asking.value = true
   try {
     answer.value = await kbAnswer({ q: q.value, entity_type: entityType.value || undefined })
+    featureOff.value = false
   } catch (e) {
     answer.value = { answer: '', citations: [], authoritative: false, fail_closed: true }
+    if (isFeatureDisabled(e)) {
+      featureOff.value = true
+      return
+    }
     ElMessage.warning(extractError(e))
   } finally {
     asking.value = false
@@ -117,8 +136,13 @@ async function search() {
   try {
     const res = await kbSearchSemantic({ q: q.value, mode: mode.value, entity_type: entityType.value || undefined })
     hits.value = res.list
+    featureOff.value = false
   } catch (e) {
     hits.value = []
+    if (isFeatureDisabled(e)) {
+      featureOff.value = true
+      return
+    }
     ElMessage.warning(extractError(e))
   } finally {
     searching.value = false

@@ -110,7 +110,7 @@ async function loadCredentials() {
 
 async function loadHosts() {
   try {
-    const result = await getHosts({ size: 1000 })
+    const result = await getHosts({ size: 100 })
     hostList.value = result.list
   } catch {
     // ignore
